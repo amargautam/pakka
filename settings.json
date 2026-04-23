@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.netrc)",
+      "Bash(git reset --hard*)",
+      "Bash(git push --force*)",
+      "Bash(rm -rf /*)",
+      "Bash(curl * | sh*)",
+      "Bash(wget * | sh*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(npm publish*)",
+      "Bash(cargo publish*)",
+      "Bash(gh release*)",
+      "WebFetch"
+    ],
+    "allow": [
+      "Read(./**)",
+      "Edit(./**)",
+      "Write(./**)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git stash*)",
+      "Bash(git checkout*)"
+    ]
+  },
+  "pakka": {
+    "display": { "statusLine": true },
+    "compress": { "mode": "fast" },
+    "review": { "confidenceThreshold": 80 },
+    "audit": { "path": "~/.pakka/audit" },
+    "meter":  { "path": "~/.pakka/meter" }
+  }
+}

@@ -1,0 +1,25 @@
+# Binaries — release artifacts (bin/pakka-core-<os>-<arch>) ARE committed at release time.
+# These patterns cover locally-built binaries and IDE artifacts only.
+/bin/pakka-core
+/bin/pakka-core.exe
+
+# Go build artifacts
+*.test
+*.out
+*.prof
+coverage.*
+
+# Local Pakka state (per-user, never committed)
+.pakka/
+.claude/settings.local.json
+
+# Benchmark output
+/benchmarks/results/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.tmp
