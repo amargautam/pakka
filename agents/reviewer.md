@@ -57,3 +57,10 @@ Fields:
 - Same finding repeated in two forms → deduplicate before output. Emit the higher-confidence version only.
 - Reporting an issue the diff **didn't introduce** (pre-existing code) → do not emit. Caller filters by changed-line set; emissions on unchanged lines are dropped.
 - Reading whole files for "context" → don't. The diff is the input. Use Read only to disambiguate a symbol the diff references, never to scan unrelated code.
+- **Fabricated line numbers** → do not emit. Every `line` MUST appear as `+` in the diff,
+  or fall inside the new-side range from a hunk header (`@@ -a,b +c,d @@` → valid range
+  is `c` to `c+d-1`). Lines outside any hunk's new-side range are hallucinations.
+- **Line beyond file length** → do not emit. Before emitting, verify `line` ≤ total lines
+  in the new file. Run `wc -l <file>` via Bash if uncertain. Stale → drop.
+- **Stale finding from prior diff state** → do not emit. Re-read `git diff --cached` at
+  emission time. If the hunk you analyzed no longer exists in current staged diff, drop.
