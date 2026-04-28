@@ -28,6 +28,7 @@ import (
 	"github.com/amargautam/pakka/internal/bench"
 	"github.com/amargautam/pakka/internal/commitgate"
 	"github.com/amargautam/pakka/internal/compress"
+	"github.com/amargautam/pakka/internal/diffscope"
 	evalPkg "github.com/amargautam/pakka/internal/eval"
 	"github.com/amargautam/pakka/internal/guard"
 	"github.com/amargautam/pakka/internal/hookevent"
@@ -863,20 +864,42 @@ func gatherReviewState(cfg *commitgate.Config) *commitgate.State {
 		}
 	}
 
-	// Load error findings from latest review (only if no recent pass)
+	// Load error findings from latest review (only if no recent pass).
+	// Filter by the changed-line set so pre-existing-code findings cannot
+	// block a commit that doesn't touch those lines. The unfiltered
+	// findings remain on disk (.pakka/reviews/<id>.jsonl) for debugging.
 	if !state.HasRecentPass {
-		state.ErrorFindings = loadLatestErrors(cfg.ConfidenceThreshold)
+		state.ErrorFindings = loadLatestErrors(cfg.ConfidenceThreshold, scopeFromStagedDiff())
 	}
 
 	return state
+}
+
+// scopeFromStagedDiff returns the (file, line) set of additions/modifications
+// in the staged diff, used to scope review findings to changed lines only.
+// Returns an empty (non-nil) Scope on git failure or empty diff — the
+// resulting filter drops everything, which is the safe default for the gate
+// (no scope → no findings can fire → no false-positive block).
+func scopeFromStagedDiff() diffscope.Scope {
+	out, err := exec.Command("git", "diff", "--cached", "--unified=0").Output()
+	if err != nil {
+		return diffscope.Scope{}
+	}
+	return diffscope.ChangedLines(string(out))
 }
 
 // loadLatestErrors reads the most recent findings file from .pakka/reviews/.
 // Naming convention:
 //   - verdict-*.jsonl — written by commit-gate, contains pass/fail verdicts
 //   - *.jsonl (without verdict- prefix) — written by /pakka:review, contains findings
-// This function only reads findings files (skips verdict-* files).
-func loadLatestErrors(threshold int) []commitgate.Finding {
+//
+// This function only reads findings files (skips verdict-* files). It applies
+// two filters: (1) severity=error AND confidence >= threshold, (2) (file, line)
+// must be in scope (staged-diff change set). Findings outside scope come from
+// pre-existing code that the current commit does not touch and must not block
+// it. The on-disk file is left intact so the audit trail keeps the unfiltered
+// findings for debugging.
+func loadLatestErrors(threshold int, scope diffscope.Scope) []commitgate.Finding {
 	entries, err := os.ReadDir(".pakka/reviews")
 	if err != nil {
 		return nil
@@ -924,7 +947,8 @@ func loadLatestErrors(threshold int) []commitgate.Finding {
 			findings = append(findings, f)
 		}
 	}
-	return findings
+	// Scope filter: drop findings on lines the staged diff does not touch.
+	return diffscope.Filter(findings, scope)
 }
 
 // writeVerdict writes a verdict file to .pakka/reviews/.

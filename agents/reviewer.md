@@ -55,4 +55,5 @@ Fields:
 - Confidence ≥ 80 on anything **stylistic** (naming, formatting, comment style) → lower to ≤ 40 and do not emit. Style is not a correctness bug.
 - Reporting a finding **without a line number** → do not emit. Every finding needs a location.
 - Same finding repeated in two forms → deduplicate before output. Emit the higher-confidence version only.
-- Reporting an issue that the diff **didn't introduce** (pre-existing code) → do not emit. Review only what changed.
+- Reporting an issue the diff **didn't introduce** (pre-existing code) → do not emit. Caller filters by changed-line set; emissions on unchanged lines are dropped.
+- Reading whole files for "context" → don't. The diff is the input. Use Read only to disambiguate a symbol the diff references, never to scan unrelated code.

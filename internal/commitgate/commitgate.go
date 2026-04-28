@@ -60,6 +60,12 @@ type Finding struct {
 	Fix        string `json:"fix"`
 }
 
+// GetFile and GetLine make Finding satisfy diffscope.Finding so the gate
+// can drop findings whose (file, line) is not in the staged-diff scope.
+// Kept here (not in diffscope) so commitgate has no dependency on diffscope.
+func (f Finding) GetFile() string { return f.File }
+func (f Finding) GetLine() int    { return f.Line }
+
 // Decision is the outcome of Evaluate.
 type Decision struct {
 	Allow     bool   // true = exit 0, false = exit 2
