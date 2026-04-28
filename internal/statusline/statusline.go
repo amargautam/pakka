@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,15 @@ type metrics struct {
 	bugsCaught     int
 }
 
+// pctRound returns round(num*100/denom) as int64. Returns 0 when denom <= 0.
+// Uses math.Round so 0.4→0, 0.5→1, 24.6→25.
+func pctRound(num, denom int64) int64 {
+	if denom <= 0 {
+		return 0
+	}
+	return int64(math.Round(float64(num) * 100 / float64(denom)))
+}
+
 // compute gathers all status-line metrics from disk.
 func compute(event *hookevent.Event, compressMode string) metrics {
 	sid := shortSID(event.SessionID)
@@ -44,11 +54,8 @@ func compute(event *hookevent.Event, compressMode string) metrics {
 	tokensUsed, _, tokensSavedEst, meterOutputTokens := readMeter(meterPath)
 	sessionStart := meterSessionStart(meterPath)
 
-	// Calculate input savings percentage.
-	var inPct int64
-	if denom := tokensUsed + tokensSavedEst; denom > 0 {
-		inPct = tokensSavedEst * 100 / denom
-	}
+	// Calculate input savings percentage (integer-rounded).
+	inPct := pctRound(tokensSavedEst, tokensUsed+tokensSavedEst)
 
 	if compressMode == "" {
 		compressMode = "strict"
@@ -71,10 +78,8 @@ func compute(event *hookevent.Event, compressMode string) metrics {
 	mult := outputMultiplier[compressMode]
 	outSaved := int64(float64(outTokens) * mult)
 
-	var outPct int64
-	if denom := outTokens + outSaved; denom > 0 {
-		outPct = outSaved * 100 / denom
-	}
+	// Output savings percentage (integer-rounded). When unmeasured this is 0.
+	outPct := pctRound(outSaved, outTokens+outSaved)
 
 	// Count bugs caught from review findings (scoped to current session).
 	cwd := event.CWD
@@ -112,32 +117,19 @@ func utf8Capable() bool {
 
 // formatLine renders the status-line body using the supplied glyphs.
 // inArrow/outArrow are the prefix tokens; sep is the separator between sections.
+//
+// New format (Pass 4.x): show only integer-rounded percentages — no raw counts,
+// no `--` placeholder, no `[meas]/[est]` labels. When output is unmeasured the
+// outPct is 0, which renders identically to a measured-but-rounds-down 0%.
 func formatLine(m metrics, inArrow, outArrow, sep string) string {
-	in := fmtNumWithPct(m.tokensSavedEst, m.inPct, true)
-	var out string
-	if !m.outTokensKnown {
-		// Output tokens unmeasured (no transcript and no meter entry).
-		out = "-- (--)"
-	} else {
-		out = fmtNumWithPct(m.outSavedEst, m.outPct, true)
-	}
-	return fmt.Sprintf("[%s] %s %s%s / %s%s tok saved %s %d bugs caught",
-		m.compressMode, sep, inArrow, in, outArrow, out, sep, m.bugsCaught)
-}
-
-// fmtNumWithPct returns "<num> (<pct>%)" or just "<num>" when pct is zero
-// and hidePctOnZero is true.
-func fmtNumWithPct(n, pct int64, hidePctOnZero bool) string {
-	if pct == 0 && hidePctOnZero {
-		return fmtTokens(n)
-	}
-	return fmt.Sprintf("%s (%d%%)", fmtTokens(n), pct)
+	return fmt.Sprintf("[%s] %s %s%d%% / %s%d%% tok saved %s %d bugs caught",
+		m.compressMode, sep, inArrow, m.inPct, outArrow, m.outPct, sep, m.bugsCaught)
 }
 
 // Run prints the pakka status line to w.
 //
-// Format (UTF-8): pakka [strict] · ↓480 (35%) / ↑158 (28%) tok saved · 0 bugs caught
-// Format (ascii): pakka [strict] | in 480 (35%) / out 158 (28%) tok saved | 0 bugs caught
+// Format (UTF-8): pakka [strict] · ↓0% / ↑25% tok saved · 0 bugs caught
+// Format (ascii): pakka [strict] | in 0% / out 25% tok saved | 0 bugs caught
 //
 // Purpose: Emit compact one-line session summary for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
@@ -229,16 +221,6 @@ func shortSID(sid string) string {
 		return sid[:8]
 	}
 	return sid
-}
-
-func fmtTokens(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	if n >= 1000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprintf("%d", n)
 }
 
 // meterEntry matches the JSONL written by the meter subcommand (Pass 2+).
