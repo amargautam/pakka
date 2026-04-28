@@ -193,7 +193,8 @@ func runCompress() {
 
 	saved := int64(result.OriginalSize - result.CompressedSize)
 	if saved > 0 {
-		_ = meter.WriteSavings(sessionID, saved)
+		cwd, _ := os.Getwd()
+		_ = meter.WriteSavings(sessionID, meter.RepoKey(cwd), saved)
 	}
 }
 
@@ -249,6 +250,7 @@ func collectContextPaths(dir string) []string {
 // If no candidates are found and dir is not /, it retries with the parent directory.
 func autoCompressContextFiles(dir, mode, sessionID string) {
 	m := compress.ParseMode(mode)
+	repo := meter.RepoKey(dir)
 
 	// Collect candidate paths: root + immediate subdirectories.
 	paths := collectContextPaths(dir)
@@ -274,7 +276,7 @@ func autoCompressContextFiles(dir, mode, sessionID string) {
 			if ci, err := os.Stat(p); err == nil {
 				saved := backupSize - ci.Size()
 				if saved > 0 {
-					_ = meter.WriteSavings(sessionID, saved)
+					_ = meter.WriteSavings(sessionID, repo, saved)
 				}
 			}
 			continue
@@ -302,7 +304,7 @@ func autoCompressContextFiles(dir, mode, sessionID string) {
 
 		saved := int64(result.OriginalSize - result.CompressedSize)
 		if saved > 0 {
-			_ = meter.WriteSavings(sessionID, saved)
+			_ = meter.WriteSavings(sessionID, repo, saved)
 		}
 
 		fmt.Fprintf(os.Stderr, "pakka: compressed %s — %.0f%% (%s → %s)\n",
@@ -440,7 +442,7 @@ func runCompressToolResult(event *hookevent.Event) {
 	// Log savings to meter
 	saved := int64(len(response) - len(truncated))
 	if saved > 0 {
-		_ = meter.WriteSavings(event.SessionID, saved)
+		_ = meter.WriteSavings(event.SessionID, meter.RepoKey(event.CWD), saved)
 	}
 
 	debugLogf("compress tool-result: %s %s → %s (%d lines truncated)",
@@ -500,7 +502,7 @@ func runCompressSubagentReturn(event *hookevent.Event) {
 
 	saved := int64(result.OriginalSize - result.CompressedSize)
 	if saved > 0 {
-		_ = meter.WriteSavings(event.SessionID, saved)
+		_ = meter.WriteSavings(event.SessionID, meter.RepoKey(event.CWD), saved)
 	}
 }
 

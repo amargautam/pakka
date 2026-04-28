@@ -2,27 +2,65 @@
 //
 // Each entry records tokens consumed (from tool usage) or bytes saved
 // (from compression) with a derived token estimate. The status-line
-// reads these to report session totals.
+// reads these to report cumulative-per-repo totals.
 package meter
 
 import (
 	"encoding/json"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/amargautam/pakka/internal/hookevent"
 )
 
 // Entry is one line in the meter JSONL file.
+//
+// Repo is the canonical absolute path of the repo this entry was produced
+// from (git toplevel of cwd, or cwd if not a git repo). Empty on legacy
+// entries written before the repo tag was introduced — readers must skip
+// or bucket them under no-repo.
 type Entry struct {
 	TS             string `json:"ts"`
 	SessionID      string `json:"session_id"`
+	Repo           string `json:"repo,omitempty"`
 	TokensUsed     int64  `json:"tokens_used"`
 	BytesSaved     int64  `json:"bytes_saved"`
 	TokensSavedEst int64  `json:"tokens_saved_est"`
 	OutputTokens   int64  `json:"output_tokens,omitempty"`
+}
+
+// RepoKey returns the canonical repo identifier for a working directory.
+//
+// Purpose: Tag meter entries and filter status-line aggregates by repo.
+// Strategy: `git rev-parse --show-toplevel`; fall back to the absolute form
+// of cwd when not a git repo. Returns "" only if cwd resolves to "".
+// Errors: Never errors; always returns a string suitable as a tag.
+func RepoKey(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return ""
+	}
+	// Try git toplevel. Fast path; failure → fallback.
+	cmd := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err == nil {
+		top := strings.TrimSpace(string(out))
+		if top != "" {
+			if abs, err := filepath.Abs(top); err == nil {
+				return abs
+			}
+			return top
+		}
+	}
+	// Fallback: absolute cwd.
+	if abs, err := filepath.Abs(cwd); err == nil {
+		return abs
+	}
+	return cwd
 }
 
 // Run appends a token-usage entry for the given hook event.
@@ -41,6 +79,7 @@ func Run(event *hookevent.Event) error {
 	entry := Entry{
 		TS:         time.Now().UTC().Format(time.RFC3339Nano),
 		SessionID:  event.SessionID,
+		Repo:       RepoKey(event.CWD),
 		TokensUsed: estimateTokens(event),
 	}
 
@@ -51,7 +90,7 @@ func Run(event *hookevent.Event) error {
 //
 // Purpose: Record bytes saved by compression with a derived token estimate.
 // Errors: Returns error on filesystem failures.
-func WriteSavings(sessionID string, bytesSaved int64) error {
+func WriteSavings(sessionID, repo string, bytesSaved int64) error {
 	dir, err := meterDir()
 	if err != nil {
 		return err
@@ -63,6 +102,7 @@ func WriteSavings(sessionID string, bytesSaved int64) error {
 	entry := Entry{
 		TS:             time.Now().UTC().Format(time.RFC3339Nano),
 		SessionID:      sessionID,
+		Repo:           repo,
 		BytesSaved:     bytesSaved,
 		TokensSavedEst: int64(math.Round(float64(bytesSaved) / 3.5)),
 	}
@@ -76,7 +116,7 @@ func WriteSavings(sessionID string, bytesSaved int64) error {
 // Purpose: Record output tokens read from a Claude Code transcript so the
 // status-line can compute output savings.
 // Errors: Returns error on filesystem failures.
-func WriteOutputTokens(sessionID string, outputTokens int64) error {
+func WriteOutputTokens(sessionID, repo string, outputTokens int64) error {
 	dir, err := meterDir()
 	if err != nil {
 		return err
@@ -88,6 +128,7 @@ func WriteOutputTokens(sessionID string, outputTokens int64) error {
 	entry := Entry{
 		TS:           time.Now().UTC().Format(time.RFC3339Nano),
 		SessionID:    sessionID,
+		Repo:         repo,
 		OutputTokens: outputTokens,
 	}
 

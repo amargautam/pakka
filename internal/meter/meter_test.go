@@ -78,7 +78,7 @@ func TestWriteSavings(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	if err := WriteSavings("savings1session", 4200); err != nil {
+	if err := WriteSavings("savings1session", "/repo/x", 4200); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,13 +101,16 @@ func TestWriteSavings(t *testing.T) {
 	if entry.TokensUsed != 0 {
 		t.Errorf("tokens_used = %d, want 0 for savings entry", entry.TokensUsed)
 	}
+	if entry.Repo != "/repo/x" {
+		t.Errorf("repo = %q, want /repo/x", entry.Repo)
+	}
 }
 
 func TestWriteOutputTokens(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	if err := WriteOutputTokens("outtoks1session", 1234); err != nil {
+	if err := WriteOutputTokens("outtoks1session", "/repo/y", 1234); err != nil {
 		t.Fatal(err)
 	}
 

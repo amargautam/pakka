@@ -1,4 +1,19 @@
 // Package statusline prints a compact pakka session summary to stdout.
+//
+// Metrics are aggregated cumulative-per-repo:
+//   - Input tokens come from every transcript under ~/.claude/projects/ whose
+//     decoded cwd resolves (via git toplevel) to the same repo as the current
+//     session. Cost-weighted: input × 1× + cache_creation × 1.25× +
+//     cache_read × 0.1×, plus tokensSavedEst × 1× as the savings numerator.
+//   - Output tokens are summed across the same transcripts. Output savings
+//     remain the mode coefficient (lite/strict/ultra/audit).
+//   - tokensSavedEst is summed across every meter file with matching repo tag.
+//   - bugsCaught is an all-time count across the repo's review findings.
+//
+// Override hooks for tests:
+//
+//	statusline.OverrideHome — points at a fake $HOME (meter dir + projects dir).
+//	statusline.OverrideRepoKey — substitute repo identity (no git invocation).
 package statusline
 
 import (
@@ -10,10 +25,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/amargautam/pakka/internal/hookevent"
+	"github.com/amargautam/pakka/internal/meter"
 )
+
+// Cost weights reflect Anthropic billing ratios. Input baseline 1×;
+// cache_creation 1.25×; cache_read 0.1×. Numerator (tokensSavedEst) is 1×
+// because truncated tool result bytes would have been fresh input.
+const (
+	costWeightInput          = 1.0
+	costWeightCacheCreation  = 1.25
+	costWeightCacheRead      = 0.1
+)
+
+// OverrideHome, when non-empty, substitutes for os.UserHomeDir(). Used by
+// tests to redirect ~/.pakka/meter and ~/.claude/projects lookups.
+var OverrideHome string
+
+// OverrideRepoKey, when non-nil, replaces meter.RepoKey for repo resolution.
+// Used by tests to avoid invoking git on synthetic paths.
+var OverrideRepoKey func(cwd string) string
 
 // Uncalibrated multipliers for v0.1.0. Pass 5 bench replaces these with measured values.
 var outputMultiplier = map[string]float64{
@@ -25,16 +57,14 @@ var outputMultiplier = map[string]float64{
 
 // metrics holds computed status-line values.
 type metrics struct {
-	compressMode   string
-	tokensSavedEst int64
-	inTokens       int64 // input tokens used as inPct denominator base
-	inTokensKnown  bool  // true if input tokens came from transcript or meter
-	inPct          int64
-	outTokens      int64 // assistant output tokens this session (0 if unknown)
-	outTokensKnown bool  // true if we successfully read transcript or meter
-	outSavedEst    int64
-	outPct         int64
-	bugsCaught     int
+	compressMode    string
+	inSavedTokens   int64 // tokensSavedEst summed across repo's meter files
+	inCostUnits     int64 // cost-weighted input denominator
+	inPct           int64
+	outTokens       int64 // assistant output tokens summed across repo's transcripts
+	outSavedEst     int64
+	outPct          int64
+	bugsCaught      int
 }
 
 // pctRound returns round(num*100/denom) as int64. Returns 0 when denom <= 0.
@@ -46,81 +76,70 @@ func pctRound(num, denom int64) int64 {
 	return int64(math.Round(float64(num) * 100 / float64(denom)))
 }
 
+// resolveHome returns OverrideHome if set, else os.UserHomeDir().
+func resolveHome() string {
+	if OverrideHome != "" {
+		return OverrideHome
+	}
+	h, _ := os.UserHomeDir()
+	return h
+}
+
+// resolveRepoKey returns OverrideRepoKey(cwd) if set, else meter.RepoKey.
+func resolveRepoKey(cwd string) string {
+	if OverrideRepoKey != nil {
+		return OverrideRepoKey(cwd)
+	}
+	return meter.RepoKey(cwd)
+}
+
 // compute gathers all status-line metrics from disk.
 func compute(event *hookevent.Event, compressMode string) metrics {
-	sid := shortSID(event.SessionID)
-	home, _ := os.UserHomeDir()
-
-	// Read meter data (populated by Pass 2+).
-	meterPath := filepath.Join(home, ".pakka", "meter", sid+".jsonl")
-	meterTokensUsed, _, tokensSavedEst, meterOutputTokens := readMeter(meterPath)
-	sessionStart := meterSessionStart(meterPath)
-
 	if compressMode == "" {
 		compressMode = "strict"
 	}
 
-	// Resolve input + output tokens from transcript (authoritative when present).
-	// Fall back to meter values when transcript is missing/unparseable.
-	var transcriptIn, transcriptOut int64
-	transcriptOK := false
-	if event.TranscriptPath != "" {
-		if in, out, ok := readTranscript(event.TranscriptPath); ok {
-			transcriptIn = in
-			transcriptOut = out
-			transcriptOK = true
-		}
-	}
-
-	// Input tokens: transcript wins. Fall back to meter tokensUsed for sessions
-	// without a transcript path. When neither has signal, inPct renders 0%.
-	var inTokens int64
-	inKnown := false
-	if transcriptOK && transcriptIn > 0 {
-		inTokens = transcriptIn
-		inKnown = true
-	} else if meterTokensUsed > 0 {
-		inTokens = meterTokensUsed
-		inKnown = true
-	}
-
-	inPct := pctRound(tokensSavedEst, inTokens+tokensSavedEst)
-
-	// Output tokens: transcript wins. Fall back to meter output_tokens.
-	var outTokens int64
-	outKnown := false
-	if transcriptOK && transcriptOut > 0 {
-		outTokens = transcriptOut
-		outKnown = true
-	} else if meterOutputTokens > 0 {
-		outTokens = meterOutputTokens
-		outKnown = true
-	}
-
-	mult := outputMultiplier[compressMode]
-	outSaved := int64(float64(outTokens) * mult)
-
-	// Output savings percentage (integer-rounded). When unmeasured this is 0.
-	outPct := pctRound(outSaved, outTokens+outSaved)
-
-	// Count bugs caught from review findings (scoped to current session).
 	cwd := event.CWD
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	bugs := countBugsCaught(filepath.Join(cwd, ".pakka", "reviews"), sessionStart)
+	repo := resolveRepoKey(cwd)
+
+	home := resolveHome()
+	meterDir := filepath.Join(home, ".pakka", "meter")
+	projectsDir := filepath.Join(home, ".claude", "projects")
+
+	// Cumulative meter savings across all sessions for this repo.
+	savedTokens := readAllMeter(meterDir, repo)
+
+	// Cumulative transcript input/output across all sessions for this repo.
+	inTokens, cacheCreation, cacheRead, outTokens := readAllTranscripts(projectsDir, repo)
+
+	// Cost-weighted input denominator. Numerator (savedTokens) keeps 1× weight.
+	costUnits := int64(math.Round(
+		float64(inTokens)*costWeightInput +
+			float64(cacheCreation)*costWeightCacheCreation +
+			float64(cacheRead)*costWeightCacheRead +
+			float64(savedTokens)*costWeightInput,
+	))
+	inPct := pctRound(savedTokens, costUnits)
+
+	mult := outputMultiplier[compressMode]
+	outSaved := int64(float64(outTokens) * mult)
+	outPct := pctRound(outSaved, outTokens+outSaved)
+
+	// All-time bug count across the repo's review findings.
+	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
 
 	return metrics{
-		compressMode:   compressMode,
-		tokensSavedEst: tokensSavedEst,
-		inTokens:       inTokens,
-		inTokensKnown:  inKnown,
-		inPct:          inPct,
-		outTokens:      outTokens,
-		outTokensKnown: outKnown,
-		outSavedEst:    outSaved,
-		outPct:         outPct,
-		bugsCaught:     bugs,
+		compressMode:  compressMode,
+		inSavedTokens: savedTokens,
+		inCostUnits:   costUnits,
+		inPct:         inPct,
+		outTokens:     outTokens,
+		outSavedEst:   outSaved,
+		outPct:        outPct,
+		bugsCaught:    bugs,
 	}
 }
 
@@ -140,11 +159,9 @@ func utf8Capable() bool {
 }
 
 // formatLine renders the status-line body using the supplied glyphs.
-// inArrow/outArrow are the prefix tokens; sep is the separator between sections.
 //
-// New format (Pass 4.x): show only integer-rounded percentages — no raw counts,
-// no `--` placeholder, no `[meas]/[est]` labels. When output is unmeasured the
-// outPct is 0, which renders identically to a measured-but-rounds-down 0%.
+// Format: percent-only, integer rounded; no raw counts, no `--` placeholder.
+// Unmeasured values render as 0% identically to measured-rounds-down-to-0%.
 func formatLine(m metrics, inArrow, outArrow, sep string) string {
 	return fmt.Sprintf("[%s] %s %s%d%% / %s%d%% tok saved %s %d bugs caught",
 		m.compressMode, sep, inArrow, m.inPct, outArrow, m.outPct, sep, m.bugsCaught)
@@ -155,9 +172,8 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 // Format (UTF-8): pakka [strict] · ↑0% / ↓25% tok saved · 0 bugs caught
 // Format (ascii): pakka [strict] | in 0% / out 25% tok saved | 0 bugs caught
 //
-// Arrows follow conventional download/upload semantics from the user's
-// perspective: ↑ = prompt going UP to the API (input), ↓ = response coming
-// DOWN (output).
+// Arrows follow conventional download/upload semantics: ↑ = input going UP to
+// the API, ↓ = output coming DOWN.
 //
 // Purpose: Emit compact one-line session summary for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
@@ -194,8 +210,10 @@ func Summary(event *hookevent.Event, compressMode string) string {
 
 // countBugsCaught scans findings JSONL files (not verdict-* files) in dir
 // and counts entries with severity=error and confidence >= 80.
-// Only files modified at or after since are counted.
-func countBugsCaught(dir string, since time.Time) int {
+//
+// All-time count: no time filter. Per-repo isolation comes from `dir` being
+// scoped to a specific <repo>/.pakka/reviews directory.
+func countBugsCaught(dir string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
@@ -209,14 +227,6 @@ func countBugsCaught(dir string, since time.Time) int {
 		}
 		// Skip verdict files — they contain pass/fail verdicts, not findings.
 		if strings.HasPrefix(name, "verdict-") {
-			continue
-		}
-
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Before(since) {
 			continue
 		}
 
@@ -251,17 +261,184 @@ func shortSID(sid string) string {
 	return sid
 }
 
-// meterEntry matches the JSONL written by the meter subcommand (Pass 2+).
+// meterEntry matches the JSONL written by the meter package.
 type meterEntry struct {
-	TokensUsed     int64 `json:"tokens_used"`
-	BytesSaved     int64 `json:"bytes_saved"`
-	TokensSavedEst int64 `json:"tokens_saved_est"`
-	OutputTokens   int64 `json:"output_tokens"`
+	Repo           string `json:"repo"`
+	TokensSavedEst int64  `json:"tokens_saved_est"`
 }
 
-// readMeter reads meter JSONL and sums usage, savings, and output tokens.
-// Returns (0, 0, 0, 0) if file doesn't exist or is unreadable.
-func readMeter(path string) (used, bytesSaved, tokensSavedEst, outputTokens int64) {
+// readAllMeter walks meterDir, reads every .jsonl file, and sums
+// tokens_saved_est across entries whose `repo` field matches the supplied
+// repo. Legacy entries (no repo field) are skipped.
+//
+// Returns 0 when meterDir is missing or unreadable.
+func readAllMeter(meterDir, repo string) (savedTokens int64) {
+	if repo == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(meterDir)
+	if err != nil {
+		return 0
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(meterDir, e.Name())
+		savedTokens += sumMeterFile(path, repo)
+	}
+	return savedTokens
+}
+
+// sumMeterFile returns the sum of tokens_saved_est across entries in path
+// whose `repo` field equals the supplied repo.
+func sumMeterFile(path, repo string) int64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 1024*1024)
+
+	var total int64
+	for sc.Scan() {
+		var e meterEntry
+		if json.Unmarshal(sc.Bytes(), &e) != nil {
+			continue
+		}
+		if e.Repo != repo {
+			continue
+		}
+		total += e.TokensSavedEst
+	}
+	return total
+}
+
+// decodeProjectDir converts a Claude Code project subdir name back into a
+// best-effort original cwd. Claude encodes both '/' AND '.' as '-' in the
+// directory name, so the mapping is genuinely ambiguous; this helper exists
+// for tests where we know the encoding fits the simple '/'→'-' form.
+//
+// readAllTranscripts does NOT rely on this for production resolution; it
+// reads the literal `cwd` field embedded in transcript lines instead.
+func decodeProjectDir(name string) string {
+	if name == "" {
+		return ""
+	}
+	return strings.ReplaceAll(name, "-", "/")
+}
+
+// readProjectCWD scans transcript files in dir for the first line carrying a
+// `cwd` field. Claude Code embeds the original working directory in many
+// event lines (permission-mode, user, assistant, etc.), which lets us
+// resolve a project subdir back to its real cwd unambiguously — sidestepping
+// the dash-encoding ambiguity (since '.' and '/' both encode to '-').
+//
+// Returns "" when no transcript yields a cwd.
+func readProjectCWD(dir string) string {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(dir, f.Name())
+		fp, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(fp)
+		buf := make([]byte, 0, 64*1024)
+		sc.Buffer(buf, 4*1024*1024)
+		for sc.Scan() {
+			var probe struct {
+				CWD string `json:"cwd"`
+			}
+			if json.Unmarshal(sc.Bytes(), &probe) == nil && probe.CWD != "" {
+				fp.Close()
+				return probe.CWD
+			}
+		}
+		fp.Close()
+	}
+	return ""
+}
+
+// readAllTranscripts walks projectsDir, resolves each subdirectory to its
+// real cwd by reading the embedded `cwd` field from the transcripts inside,
+// computes the repo key, and (if it matches the supplied repo) sums
+// input/output usage across every transcript .jsonl in that subdirectory.
+//
+// Falls back to a naive '-'→'/' decoding when no transcript exposes a cwd
+// field (older Claude Code versions). The literal absolute fallback rarely
+// matches a real repo, so most foreign dirs are silently skipped.
+func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead, out int64) {
+	if repo == "" {
+		return 0, 0, 0, 0
+	}
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return 0, 0, 0, 0
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dirPath := filepath.Join(projectsDir, e.Name())
+
+		// Prefer the embedded cwd from transcript contents (unambiguous);
+		// fall back to dash-decoding the directory name (ambiguous, used
+		// in tests with synthetic transcripts that don't include a cwd).
+		cwd := readProjectCWD(dirPath)
+		if cwd == "" {
+			cwd = decodeProjectDir(e.Name())
+		}
+		if cwd == "" {
+			continue
+		}
+		if resolveRepoKey(cwd) != repo {
+			continue
+		}
+
+		files, err := os.ReadDir(dirPath)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+				continue
+			}
+			ti, tcc, tcr, to := sumTranscriptFile(filepath.Join(dirPath, f.Name()))
+			in += ti
+			cacheCreation += tcc
+			cacheRead += tcr
+			out += to
+		}
+	}
+	return in, cacheCreation, cacheRead, out
+}
+
+// transcriptUsage matches the two candidate JSON shapes Claude Code emits.
+type transcriptUsage struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+}
+
+// sumTranscriptFile sums usage fields across all entries in a transcript.
+//
+// Returns (in, cacheCreation, cacheRead, out). Tolerates partial/missing
+// fields and the two candidate JSON shapes (message.usage vs top-level usage).
+func sumTranscriptFile(path string) (in, cacheCreation, cacheRead, out int64) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, 0, 0, 0
@@ -269,124 +446,39 @@ func readMeter(path string) (used, bytesSaved, tokensSavedEst, outputTokens int6
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
-	// Allow longer lines than the 64KB default — transcript-derived entries
-	// are tiny but defensive sizing is cheap.
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, 1024*1024)
-	for sc.Scan() {
-		var e meterEntry
-		if json.Unmarshal(sc.Bytes(), &e) == nil {
-			used += e.TokensUsed
-			bytesSaved += e.BytesSaved
-			tokensSavedEst += e.TokensSavedEst
-			outputTokens += e.OutputTokens
-		}
-	}
-	return used, bytesSaved, tokensSavedEst, outputTokens
-}
-
-// readTranscript opens a Claude Code transcript JSONL and sums input + output
-// tokens across assistant turns.
-//
-// Input is the sum of usage.input_tokens + usage.cache_read_input_tokens +
-// usage.cache_creation_input_tokens. Output is usage.output_tokens.
-//
-// Returns (inTokens, outTokens, true) when at least one line yielded a non-zero
-// in OR out total; (0, 0, false) otherwise (file missing, unreadable, or all
-// usage fields zero).
-//
-// Tolerates missing fields — transcript schemas vary across Claude Code
-// versions. Tries two candidate JSON shapes.
-func readTranscript(path string) (int64, int64, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, 0, false
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 4*1024*1024)
 
-	var inTotal, outTotal int64
-	parsed := false
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
 			continue
 		}
-		// Candidate shape A: {"message":{"usage":{...}}}
+		var u transcriptUsage
+		// Shape A: {"message":{"usage":{...}}}
 		var a struct {
 			Message struct {
-				Usage struct {
-					InputTokens              int64 `json:"input_tokens"`
-					OutputTokens             int64 `json:"output_tokens"`
-					CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-					CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-				} `json:"usage"`
+				Usage transcriptUsage `json:"usage"`
 			} `json:"message"`
 		}
-		if json.Unmarshal(line, &a) == nil {
-			u := a.Message.Usage
-			lineIn := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
-			if lineIn > 0 || u.OutputTokens > 0 {
-				inTotal += lineIn
-				outTotal += u.OutputTokens
-				parsed = true
+		if json.Unmarshal(line, &a) == nil &&
+			(a.Message.Usage.InputTokens|a.Message.Usage.OutputTokens|
+				a.Message.Usage.CacheReadInputTokens|a.Message.Usage.CacheCreationInputTokens) != 0 {
+			u = a.Message.Usage
+		} else {
+			// Shape B: top-level {"usage":{...}}
+			var b struct {
+				Usage transcriptUsage `json:"usage"`
+			}
+			if json.Unmarshal(line, &b) != nil {
 				continue
 			}
+			u = b.Usage
 		}
-		// Candidate shape B: {"usage":{...}}
-		var b struct {
-			Usage struct {
-				InputTokens              int64 `json:"input_tokens"`
-				OutputTokens             int64 `json:"output_tokens"`
-				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-			} `json:"usage"`
-		}
-		if json.Unmarshal(line, &b) == nil {
-			u := b.Usage
-			lineIn := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
-			if lineIn > 0 || u.OutputTokens > 0 {
-				inTotal += lineIn
-				outTotal += u.OutputTokens
-				parsed = true
-				continue
-			}
-		}
+		in += u.InputTokens
+		cacheCreation += u.CacheCreationInputTokens
+		cacheRead += u.CacheReadInputTokens
+		out += u.OutputTokens
 	}
-	if !parsed {
-		return 0, 0, false
-	}
-	return inTotal, outTotal, true
-}
-
-// meterSessionStart returns the timestamp of the first meter entry for the
-// current session. This is used to scope bug counts to the current session
-// rather than counting stale findings from previous sessions.
-func meterSessionStart(path string) time.Time {
-	f, err := os.Open(path)
-	if err != nil {
-		return time.Time{}
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	if !sc.Scan() {
-		return time.Time{}
-	}
-	var entry struct {
-		TS string `json:"ts"`
-	}
-	if json.Unmarshal(sc.Bytes(), &entry) != nil {
-		return time.Time{}
-	}
-	if t, err := time.Parse(time.RFC3339Nano, entry.TS); err == nil {
-		return t
-	}
-	if t, err := time.Parse(time.RFC3339, entry.TS); err == nil {
-		return t
-	}
-	return time.Time{}
+	return in, cacheCreation, cacheRead, out
 }
