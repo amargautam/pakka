@@ -1,9 +1,16 @@
-// Package eval implements the 3-layer eval gate for skill and agent files.
+// Package eval implements the 3-layer eval gate for skill, agent, and command files.
 //
 // Layer 1 performs static checks: frontmatter validation, banned-word
 // scanning, Red Flags section enforcement, and line-length limits.
 // Layers 2 and 3 are deferred to the skill wrapper (require LLM calls
 // and headless claude -p respectively).
+//
+// Schema scoping: schemas vary by file kind, detected from the target path.
+//   - skills/   → name + description required (current schema, unchanged).
+//   - agents/   → name + description required (current schema, unchanged).
+//   - commands/ → description required, name NOT required (Claude Code
+//                 commands derive their name from the filename).
+// All kinds share the banned-word, line-length, and Red Flags checks.
 //
 // Exit codes (when invoked via pakka-core eval): 0 pass, 2 fail.
 package eval
@@ -13,6 +20,35 @@ import (
 	"os"
 	"strings"
 )
+
+// fileKind classifies a target file by its path. The kind drives which
+// frontmatter fields are required.
+type fileKind int
+
+const (
+	kindSkill   fileKind = iota // skills/*/SKILL.md or unknown (default)
+	kindAgent                   // agents/*.md
+	kindCommand                 // commands/*.md
+)
+
+// classifyTarget infers the file kind from the path. The check looks for
+// the path segments "commands/", "agents/", or "skills/" (with either OS
+// separator) to be robust against absolute/relative paths.
+//
+// Purpose: Pick the right schema for layer-1 frontmatter validation.
+// Errors: None. Default is skill (strictest).
+func classifyTarget(path string) fileKind {
+	// Normalise Windows separators so the same substring check works.
+	p := strings.ReplaceAll(path, "\\", "/")
+	switch {
+	case strings.Contains(p, "/commands/") || strings.HasPrefix(p, "commands/"):
+		return kindCommand
+	case strings.Contains(p, "/agents/") || strings.HasPrefix(p, "agents/"):
+		return kindAgent
+	default:
+		return kindSkill
+	}
+}
 
 // LayerResult represents the outcome of one eval layer on one target.
 type LayerResult struct {
@@ -108,8 +144,9 @@ func runLayer1(target string) LayerResult {
 		return lr
 	}
 
-	// --- Frontmatter validation ---
-	body := checkFrontmatter(content, &lr)
+	// --- Frontmatter validation (schema varies by file kind) ---
+	kind := classifyTarget(target)
+	body := checkFrontmatter(content, kind, &lr)
 
 	// --- Banned words (scan body only, not frontmatter) ---
 	checkBannedWords(body, &lr)
@@ -133,9 +170,12 @@ func runLayer1(target string) LayerResult {
 // checkFrontmatter validates YAML frontmatter delimiters and required fields.
 // Returns the body text (everything after the closing ---).
 //
-// Purpose: Ensure skill/agent files have valid frontmatter with required fields.
+// Purpose: Ensure skill/agent/command files have valid frontmatter. The
+// required-field set varies by kind: skills and agents must declare name:
+// and description:; commands declare only description: (their name is
+// derived from the filename by Claude Code).
 // Errors: Appends to lr.Errors on failure.
-func checkFrontmatter(content string, lr *LayerResult) string {
+func checkFrontmatter(content string, kind fileKind, lr *LayerResult) string {
 	lines := strings.SplitAfter(content, "\n")
 
 	// Must start with ---
@@ -182,7 +222,9 @@ func checkFrontmatter(content string, lr *LayerResult) string {
 		}
 	}
 
-	if !hasName {
+	// Commands derive their name from the filename and have no name: field
+	// in frontmatter; skills and agents still require it.
+	if kind != kindCommand && !hasName {
 		lr.Passed = false
 		lr.Errors = append(lr.Errors, "frontmatter missing name field")
 	}

@@ -378,3 +378,123 @@ func collectErrors(r *Result) []string {
 	}
 	return all
 }
+
+// --- Path-scoped schema tests (commands vs. skills/agents) ---
+//
+// These tests prove the layer-1 frontmatter schema VARIES with the target
+// path, not just that Run() returns. Per memory: feedback_measurement_first.md.
+//
+// commandFile:   description present, no name field, has Red Flags.
+// skillFile:     description present, no name field, has Red Flags. Same body.
+// Same content, different parent dir → different verdicts.
+
+// writeAtPath writes content to dir/relPath (creating parent dirs) and
+// returns the absolute path. Used to control which dir the file appears in
+// (skills/, agents/, commands/) so classifyTarget picks the right schema.
+func writeAtPath(t *testing.T, relPath, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	full := filepath.Join(dir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
+
+// commandWithoutName mirrors a real Claude Code command file: no name field,
+// description present, Red Flags section present. Should pass under the
+// command schema; should fail under the skill/agent schema.
+const commandWithoutName = `---
+description: A test command for unit tests
+---
+
+Body of the command.
+
+## Red Flags
+
+- A failure mode worth flagging.
+`
+
+func TestLayer1_commandSchema_skipsNameField(t *testing.T) {
+	// File under commands/foo.md with no name: field — must PASS.
+	path := writeAtPath(t, "commands/foo.md", commandWithoutName)
+	result := Run([]string{path}, 1)
+
+	if !result.Passed {
+		t.Fatalf("expected pass for command without name field, got errors: %v", collectErrors(result))
+	}
+}
+
+func TestLayer1_commandSchema_requiresDescription(t *testing.T) {
+	// Command file missing description must FAIL with the right error.
+	const noDesc = `---
+argument-hint: "[args]"
+---
+
+Body.
+
+## Red Flags
+
+- Something.
+`
+	path := writeAtPath(t, "commands/bar.md", noDesc)
+	result := Run([]string{path}, 1)
+
+	if result.Passed {
+		t.Fatal("expected fail for command missing description, got pass")
+	}
+	var found bool
+	for _, lr := range result.Layers {
+		for _, e := range lr.Errors {
+			if strings.Contains(e, "missing description field") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected 'missing description field' error, got: %v", collectErrors(result))
+	}
+}
+
+func TestLayer1_skillSchema_stillRequiresName(t *testing.T) {
+	// Same file shape as commandWithoutName (no name field) — but placed
+	// under skills/foo/SKILL.md, the strict schema must still flag it.
+	// This is the path-scoping assertion: VARIES with target path.
+	skillPath := writeAtPath(t, "skills/foo/SKILL.md", commandWithoutName)
+	skillResult := Run([]string{skillPath}, 1)
+
+	if skillResult.Passed {
+		t.Fatal("expected fail for skill missing name field, got pass — schema not path-scoped")
+	}
+	var foundName bool
+	for _, lr := range skillResult.Layers {
+		for _, e := range lr.Errors {
+			if strings.Contains(e, "missing name field") {
+				foundName = true
+			}
+		}
+	}
+	if !foundName {
+		t.Errorf("expected 'missing name field' error for skill, got: %v", collectErrors(skillResult))
+	}
+
+	// Behavior assertion — same content, different path → different verdict.
+	cmdPath := writeAtPath(t, "commands/foo.md", commandWithoutName)
+	cmdResult := Run([]string{cmdPath}, 1)
+	if !cmdResult.Passed {
+		t.Fatalf("control: command path should pass with same content, got errors: %v", collectErrors(cmdResult))
+	}
+	if skillResult.Passed == cmdResult.Passed {
+		t.Fatal("schema did not vary with path: skill and command verdicts identical")
+	}
+
+	// Also verify agents/ keeps the strict schema.
+	agentPath := writeAtPath(t, "agents/foo.md", commandWithoutName)
+	agentResult := Run([]string{agentPath}, 1)
+	if agentResult.Passed {
+		t.Fatal("expected fail for agent missing name field, got pass — agents must keep strict schema")
+	}
+}

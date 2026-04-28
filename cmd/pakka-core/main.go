@@ -611,9 +611,11 @@ func runEval() {
 	}
 }
 
-// discoverEvalTargets finds skill and agent files under the plugin root.
+// discoverEvalTargets finds skill, agent, and command files under the
+// plugin root.
 //
 // Purpose: Auto-discover targets when none are provided on the command line.
+// The eval package classifies each path and applies the right schema.
 // Errors: Silently skips unreadable directories; returns nil if none found.
 func discoverEvalTargets(root string) []string {
 	var targets []string
@@ -641,6 +643,19 @@ func discoverEvalTargets(root string) []string {
 			}
 			if strings.HasSuffix(e.Name(), ".md") {
 				targets = append(targets, filepath.Join(agentsDir, e.Name()))
+			}
+		}
+	}
+
+	// commands/*.md
+	commandsDir := filepath.Join(root, "commands")
+	if entries, err := os.ReadDir(commandsDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(e.Name(), ".md") {
+				targets = append(targets, filepath.Join(commandsDir, e.Name()))
 			}
 		}
 	}

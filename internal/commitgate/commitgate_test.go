@@ -415,6 +415,68 @@ func TestSkipMarkerInProse(t *testing.T) {
 	}
 }
 
+// --- Skip-marker subject-vs-body tests ---
+//
+// These tests prove HasSkipMarker detection VARIES with marker position,
+// not just that the function returns. Per memory: feedback_measurement_first.md.
+//
+// The bug: the prior implementation ran HasSuffix against the whole message,
+// which fails the moment the commit has a body. End-of-subject markers were
+// silently missed.
+
+func TestHasSkipMarker_endOfSubjectWithBody(t *testing.T) {
+	// Marker at end of subject, with a body underneath → must detect.
+	cmd := "git commit -m \"feat: add foo [skip pakka]\n\nBody explaining the change.\""
+	if !HasSkipMarker(cmd) {
+		t.Error("end-of-subject marker with body must be detected")
+	}
+
+	// Behavior assertion: moving the marker into the body prose (not on its
+	// own line) MUST flip the verdict to false. Same function, different
+	// marker position → different result.
+	cmdProse := "git commit -m \"feat: add foo\n\nBody mentions [skip pakka] mid-sentence and continues.\""
+	if HasSkipMarker(cmdProse) {
+		t.Error("mid-prose marker in body must NOT be detected — VARIES check failed")
+	}
+}
+
+func TestHasSkipMarker_startOfSubjectWithBody(t *testing.T) {
+	// Marker at start of subject + body → must detect.
+	cmd := "git commit -m \"[skip pakka] quick fix\n\nDetailed body text.\""
+	if !HasSkipMarker(cmd) {
+		t.Error("start-of-subject marker with body must be detected")
+	}
+
+	// VARIES: same body, marker shifted into body prose → not a skip.
+	cmdShifted := "git commit -m \"quick fix\n\nDetailed body about [skip pakka] feature.\""
+	if HasSkipMarker(cmdShifted) {
+		t.Error("body-prose marker must not be detected when subject is clean")
+	}
+}
+
+func TestHasSkipMarker_inProseBody(t *testing.T) {
+	// Marker only embedded mid-sentence in body → must NOT match.
+	cmd := "git commit -m \"feat: explain feature\n\nThe [skip pakka] marker is documented here.\""
+	if HasSkipMarker(cmd) {
+		t.Error("mid-prose body marker must not be detected")
+	}
+}
+
+func TestHasSkipMarker_standaloneInBody(t *testing.T) {
+	// Marker on its own line in the body → must detect (preserve behavior).
+	cmd := "git commit -m \"feat: add validation\n\nLong body explaining things.\n\n[skip pakka]\""
+	if !HasSkipMarker(cmd) {
+		t.Error("standalone marker in body must be detected")
+	}
+
+	// VARIES: same body shape but marker padded with surrounding text on
+	// the same line → no longer standalone, must NOT detect.
+	cmdPadded := "git commit -m \"feat: add validation\n\nLong body.\n\nSee [skip pakka] for details.\""
+	if HasSkipMarker(cmdPadded) {
+		t.Error("non-standalone body marker must not be detected — VARIES check failed")
+	}
+}
+
 func TestSkipMarkerPositions(t *testing.T) {
 	tests := []struct {
 		name string

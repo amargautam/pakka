@@ -376,8 +376,14 @@ func HasTrailerB(cmd string) bool {
 }
 
 // HasSkipMarker reports whether the commit message contains [skip pakka]
-// in an intentional position (start of message, end of message, or own line).
-// Does NOT match [skip pakka] embedded in prose elsewhere in the command.
+// in an intentional position: at the start or end of the subject line, or
+// on its own line anywhere in the message body. Embedded mid-prose mentions
+// (in the subject or body) do NOT count as a skip.
+//
+// Subject vs. body: the subject is the first line of the message. Prefix
+// and suffix checks run against the trimmed subject so messages with a body
+// (e.g. "feat: foo [skip pakka]\n\nbody...") still detect correctly. The
+// standalone-line scan covers markers placed on their own line in the body.
 //
 // Purpose: Detect user opt-out per commit.
 // Errors: None.
@@ -386,13 +392,23 @@ func HasSkipMarker(cmd string) bool {
 	if !strings.Contains(msg, "[skip pakka]") {
 		return false
 	}
-	trimmed := strings.TrimSpace(msg)
-	if strings.HasPrefix(trimmed, "[skip pakka]") {
+
+	// Subject = first line of the message, trimmed. Prefix/suffix checks
+	// must target the subject only — running HasSuffix against the whole
+	// message fails the moment the commit has a body.
+	subject := msg
+	if nl := strings.IndexByte(msg, '\n'); nl >= 0 {
+		subject = msg[:nl]
+	}
+	subject = strings.TrimSpace(subject)
+	if strings.HasPrefix(subject, "[skip pakka]") {
 		return true
 	}
-	if strings.HasSuffix(trimmed, "[skip pakka]") {
+	if strings.HasSuffix(subject, "[skip pakka]") {
 		return true
 	}
+
+	// Standalone marker on its own line in the body (existing behavior).
 	for _, line := range strings.Split(msg, "\n") {
 		if strings.TrimSpace(line) == "[skip pakka]" {
 			return true
