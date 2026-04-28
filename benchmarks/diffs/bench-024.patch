@@ -1,0 +1,207 @@
+diff --git a/pydantic-core/python/pydantic_core/_pydantic_core.pyi b/pydantic-core/python/pydantic_core/_pydantic_core.pyi
+index 122c86faae3..146f072c3a3 100644
+--- a/pydantic-core/python/pydantic_core/_pydantic_core.pyi
++++ b/pydantic-core/python/pydantic_core/_pydantic_core.pyi
+@@ -1,6 +1,6 @@
+ import datetime
+ from collections.abc import Mapping
+-from typing import Any, Callable, Generic, Literal, TypeVar, final
++from typing import Any, Callable, Generic, Literal, TypeVar, final, overload
+ 
+ from _typeshed import SupportsAllComparisons
+ from typing_extensions import LiteralString, Self, TypeAlias
+@@ -625,14 +625,30 @@ class MultiHostUrl(SupportsAllComparisons):
+     def __str__(self) -> str: ...
+     def __deepcopy__(self, memo: dict) -> Self: ...
+     @classmethod
++    @overload
+     def build(
+         cls,
+         *,
+         scheme: str,
+-        hosts: list[MultiHostHost] | None = None,
++        hosts: list[MultiHostHost],
++        username: None = None,
++        password: None = None,
++        host: None = None,
++        port: None = None,
++        path: str | None = None,
++        query: str | None = None,
++        fragment: str | None = None,
++    ) -> Self: ...
++    @classmethod
++    @overload
++    def build(
++        cls,
++        *,
++        scheme: str,
++        hosts: None = None,
++        host: str,
+         username: str | None = None,
+         password: str | None = None,
+-        host: str | None = None,
+         port: int | None = None,
+         path: str | None = None,
+         query: str | None = None,
+diff --git a/pydantic-core/src/url.rs b/pydantic-core/src/url.rs
+index 7a92c259c3b..34756e6326c 100644
+--- a/pydantic-core/src/url.rs
++++ b/pydantic-core/src/url.rs
+@@ -622,10 +622,10 @@ impl FromPyObject<'_, '_> for UrlHostParts {
+         let py = ob.py();
+         let dict = ob.cast::<PyDict>()?;
+         Ok(UrlHostParts {
+-            username: dict.get_as(intern!(py, "username"))?,
+-            password: dict.get_as(intern!(py, "password"))?,
+-            host: dict.get_as(intern!(py, "host"))?,
+-            port: dict.get_as(intern!(py, "port"))?,
++            username: dict.get_as::<Option<String>>(intern!(py, "username"))?.flatten(),
++            password: dict.get_as::<Option<String>>(intern!(py, "password"))?.flatten(),
++            host: dict.get_as::<Option<String>>(intern!(py, "host"))?.flatten(),
++            port: dict.get_as::<Option<u16>>(intern!(py, "port"))?.flatten(),
+         })
+     }
+ }
+diff --git a/pydantic-core/tests/validators/test_url.py b/pydantic-core/tests/validators/test_url.py
+index d6d727acb1e..d3cc5ae285f 100644
+--- a/pydantic-core/tests/validators/test_url.py
++++ b/pydantic-core/tests/validators/test_url.py
+@@ -5,7 +5,16 @@
+ import pytest
+ from dirty_equals import HasRepr, IsInstance
+ 
+-from pydantic_core import CoreConfig, MultiHostUrl, SchemaError, SchemaValidator, Url, ValidationError, core_schema
++from pydantic_core import (
++    CoreConfig,
++    MultiHostHost,
++    MultiHostUrl,
++    SchemaError,
++    SchemaValidator,
++    Url,
++    ValidationError,
++    core_schema,
++)
+ 
+ from ..conftest import Err, PyAndJson
+ 
+@@ -1464,12 +1473,17 @@ def test_multi_url_build_hosts_empty_host() -> None:
+ 
+ def test_multi_url_build_hosts() -> None:
+     """Hosts can't be provided with any single url values."""
+-    hosts = [
++    hosts: list[MultiHostHost] = [
+         {'host': '127.0.0.1', 'password': 'testpassword', 'username': 'testuser', 'port': 5431},
+         {'host': '127.0.0.1', 'password': 'testpassword', 'username': 'testuser', 'port': 5433},
+     ]
+-    kwargs = dict(scheme='postgresql', hosts=hosts, path='database', query='sslmode=require', fragment='test')
+-    url = MultiHostUrl.build(**kwargs)
++    url = MultiHostUrl.build(
++        scheme='postgresql',
++        hosts=hosts,
++        path='database',
++        query='sslmode=require',
++        fragment='test',
++    )
+     assert url == MultiHostUrl(
+         'postgresql://testuser:testpassword@127.0.0.1:5431,testuser:testpassword@127.0.0.1:5433/database?sslmode=require#test'
+     )
+diff --git a/pydantic/networks.py b/pydantic/networks.py
+index 4015bad6b0d..579e46bfb60 100644
+--- a/pydantic/networks.py
++++ b/pydantic/networks.py
+@@ -8,7 +8,7 @@
+ from functools import lru_cache
+ from importlib.metadata import version
+ from ipaddress import IPv4Address, IPv4Interface, IPv4Network, IPv6Address, IPv6Interface, IPv6Network
+-from typing import TYPE_CHECKING, Annotated, Any, ClassVar
++from typing import TYPE_CHECKING, Annotated, Any, ClassVar, overload
+ 
+ from pydantic_core import (
+     MultiHostHost,
+@@ -438,6 +438,36 @@ def __hash__(self) -> int:
+     def __len__(self) -> int:
+         return len(str(self._url))
+ 
++    @classmethod
++    @overload
++    def build(
++        cls,
++        *,
++        scheme: str,
++        hosts: list[MultiHostHost],
++        username: None = None,
++        password: None = None,
++        host: None = None,
++        port: None = None,
++        path: str | None = None,
++        query: str | None = None,
++        fragment: str | None = None,
++    ) -> Self: ...
++    @classmethod
++    @overload
++    def build(
++        cls,
++        *,
++        scheme: str,
++        hosts: None = None,
++        host: str,
++        username: str | None = None,
++        password: str | None = None,
++        port: int | None = None,
++        path: str | None = None,
++        query: str | None = None,
++        fragment: str | None = None,
++    ) -> Self: ...
+     @classmethod
+     def build(
+         cls,
+@@ -472,12 +502,12 @@ def build(
+             An instance of `MultiHostUrl`
+         """
+         return cls(
+-            _CoreMultiHostUrl.build(
++            _CoreMultiHostUrl.build(  # pyright: ignore[reportCallIssue]
+                 scheme=scheme,
+-                hosts=hosts,
++                hosts=hosts,  # pyright: ignore[reportArgumentType]
+                 username=username,
+                 password=password,
+-                host=host,
++                host=host,  # pyright: ignore[reportArgumentType]
+                 port=port,
+                 path=path,
+                 query=query,
+diff --git a/tests/test_networks.py b/tests/test_networks.py
+index a9313793a21..1d760e29b72 100644
+--- a/tests/test_networks.py
++++ b/tests/test_networks.py
+@@ -2,7 +2,7 @@
+ from typing import Annotated, Any, Union
+ 
+ import pytest
+-from pydantic_core import PydanticCustomError, PydanticSerializationError, Url
++from pydantic_core import MultiHostHost, PydanticCustomError, PydanticSerializationError, Url
+ 
+ from pydantic import (
+     AfterValidator,
+@@ -1236,3 +1236,20 @@ def test_url_preserve_empty_path(type) -> None:
+     ta_constraint = TypeAdapter(Annotated[type, UrlConstraints(preserve_empty_path=True)])
+ 
+     assert str(ta_constraint.validate_python('http://example.com')) == 'http://example.com'
++
++
++def test_multi_url_build_hosts_with_none_values() -> None:
++    """https://github.com/pydantic/pydantic/issues/13007"""
++
++    hosts: list[MultiHostHost] = [
++        {'host': 'host-1.com', 'password': 'pass', 'username': 'user', 'port': 27017},
++        {'host': 'host-2.com', 'password': None, 'username': None, 'port': 27017},
++    ]
++    url = MongoDsn.build(
++        scheme='mongodb',
++        hosts=hosts,
++        path='db',
++        query='replicaSet=xxx&authSource=admin',
++    )
++    assert str(url) == 'mongodb://user:pass@host-1.com:27017,host-2.com:27017/db?replicaSet=xxx&authSource=admin'
++    assert url.hosts() == hosts

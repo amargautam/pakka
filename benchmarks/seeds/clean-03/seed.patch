@@ -1,0 +1,38 @@
+--- /dev/null
++++ b/db/products.py
+@@ -0,0 +1,35 @@
++import sqlite3
++from dataclasses import dataclass
++from typing import Optional
++
++
++@dataclass
++class Product:
++    id: int
++    name: str
++    price_cents: int
++    category: str
++
++
++def get_products_by_category(
++    db: sqlite3.Connection, category: str, limit: int = 50
++) -> list[Product]:
++    """Fetch products filtered by category using parameterized query."""
++    cursor = db.execute(
++        "SELECT id, name, price_cents, category FROM products "
++        "WHERE category = ? ORDER BY name LIMIT ?",
++        (category, limit),
++    )
++    return [Product(*row) for row in cursor.fetchall()]
++
++
++def get_product_by_id(db: sqlite3.Connection, product_id: int) -> Optional[Product]:
++    """Fetch a single product by ID using parameterized query."""
++    cursor = db.execute(
++        "SELECT id, name, price_cents, category FROM products WHERE id = ?",
++        (product_id,),
++    )
++    row = cursor.fetchone()
++    if row is None:
++        return None
++    return Product(*row)

@@ -1,0 +1,40 @@
+--- /dev/null
++++ b/metrics/counter.go
+@@ -0,0 +1,34 @@
++package metrics
++
++import "fmt"
++
++// BUG: requestCount is a package-level var modified from multiple
++// goroutines without synchronization — data race
++var requestCount int
++
++type Metrics struct {
++	Name string
++}
++
++func NewMetrics(name string) *Metrics {
++	return &Metrics{Name: name}
++}
++
++func (m *Metrics) RecordRequest() {
++	requestCount++
++}
++
++func (m *Metrics) RecordBatch(n int) {
++	for i := 0; i < n; i++ {
++		requestCount++
++	}
++}
++
++func (m *Metrics) Count() int {
++	return requestCount
++}
++
++func (m *Metrics) Reset() {
++	requestCount = 0
++}
++
++func (m *Metrics) String() string {
++	return fmt.Sprintf("%s: %d requests", m.Name, requestCount)
++}

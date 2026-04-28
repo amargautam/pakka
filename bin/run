@@ -1,0 +1,25 @@
+#!/bin/sh
+# Select the correct pakka-core binary for current OS/arch.
+# Invoked by hooks via: ${CLAUDE_PLUGIN_ROOT}/bin/run <subcommand> [args]
+set -e
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+OS="$(uname -s | tr 'A-Z' 'a-z')"
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64)  ARCH=amd64 ;;
+  aarch64) ARCH=arm64 ;;
+esac
+
+BIN="${DIR}/pakka-core-${OS}-${ARCH}"
+if [ ! -x "$BIN" ]; then
+  echo "pakka: no binary for ${OS}-${ARCH} at ${BIN}" >&2
+  exit 1
+fi
+
+# Trace-log every hook invocation to ~/.pakka/debug.log
+LOG_DIR="${HOME}/.pakka"
+mkdir -p "$LOG_DIR" 2>/dev/null
+printf '%s pid=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$*" >> "${LOG_DIR}/debug.log" 2>/dev/null
+
+exec "$BIN" "$@"

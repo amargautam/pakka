@@ -2,6 +2,10 @@
 # These patterns cover locally-built binaries and IDE artifacts only.
 /bin/pakka-core
 /bin/pakka-core.exe
+/pakka-core
+
+# Auto-compress backups (local-only, not committed)
+*.original.md
 
 # Go build artifacts
 *.test

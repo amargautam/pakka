@@ -1,4 +1,8 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/run status-line"
+  },
   "permissions": {
     "deny": [
       "Read(./.env*)",
@@ -36,9 +40,21 @@
   },
   "pakka": {
     "display": { "statusLine": true },
-    "compress": { "mode": "fast" },
-    "review": { "confidenceThreshold": 80 },
+    "compress": { "mode": "strict" },
+    "review": {
+      "confidenceThreshold": 80,
+      "autoGate": true,
+      "maxDiffBytes": 200000,
+      "skipPaths": []
+    },
+    "signature": true,
+    "coAuthor": true,
+    "guard": {
+      "deny_paths": [],
+      "allow_paths": [],
+      "audit_all_blocks": true
+    },
     "audit": { "path": "~/.pakka/audit" },
-    "meter":  { "path": "~/.pakka/meter" }
+    "meter": { "path": "~/.pakka/meter" }
   }
 }

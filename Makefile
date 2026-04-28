@@ -22,19 +22,27 @@ build:
 	$(GO) build -o $(BIN) $(PKG)
 
 cross:
-	@echo "Pass 5 target. See DESIGN.md §10 Pass 5."
-	@exit 1
+	GOOS=darwin GOARCH=arm64 $(GO) build -o bin/pakka-core-darwin-arm64 $(PKG)
+	GOOS=darwin GOARCH=amd64 $(GO) build -o bin/pakka-core-darwin-amd64 $(PKG)
+	GOOS=linux GOARCH=arm64 $(GO) build -o bin/pakka-core-linux-arm64 $(PKG)
+	GOOS=linux GOARCH=amd64 $(GO) build -o bin/pakka-core-linux-amd64 $(PKG)
+	GOOS=windows GOARCH=amd64 $(GO) build -o bin/pakka-core-windows-amd64.exe $(PKG)
 
 test:
 	$(GO) test ./...
 
 bench:
-	@echo "Pass 5 target. See DESIGN.md §9."
-	@exit 1
+	@echo "Running benchmark corpus (requires claude -p)..."
+	@mkdir -p benchmarks/results
+	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') bench \
+		--corpus=benchmarks/corpus.json \
+		--out=benchmarks/results/$$(date +%Y%m%d-%H%M%S).json
+	@echo "Results written. Update README claim numbers if changed."
 
 self-report:
-	@echo "Pass 5 target. See DESIGN.md §9.1."
-	@exit 1
+	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') report \
+		--format=md > RECEIPTS.md
+	@echo "RECEIPTS.md generated."
 
 clean:
 	rm -f bin/pakka-core bin/pakka-core.exe

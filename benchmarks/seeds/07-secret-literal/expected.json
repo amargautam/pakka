@@ -1,0 +1,1 @@
+{"kind":"security","severity":"error","file":"config/api.ts","line_approx":1,"bug_class":"secret-literal","description":"API key hardcoded in source code"}
