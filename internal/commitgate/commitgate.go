@@ -404,9 +404,20 @@ func HasSkipMarker(cmd string) bool {
 // InjectTrailer appends --trailer to a git commit command.
 //
 // Purpose: Rewrite git commit to include the pakka trailer.
+// Security: The trailer value is shell-quoted before concatenation. Single-quote
+// wrapping is content-agnostic — embedded quotes, $, backticks, backslashes, and
+// newlines are neutralised. Callers may pass attacker-controlled trailer text
+// without risk of shell injection in the resulting Bash command.
 // Errors: None.
 func InjectTrailer(cmd, trailer string) string {
-	return cmd + ` --trailer "` + trailer + `"`
+	return cmd + ` --trailer ` + shellQuote(trailer)
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single quote
+// via the standard '\'' sequence. Result is safe for direct interpolation
+// into a Bash command line; the shell will see exactly s as one argument.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Evaluate determines the commit-gate action for a Bash command.

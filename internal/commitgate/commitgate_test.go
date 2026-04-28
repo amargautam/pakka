@@ -1,6 +1,10 @@
 package commitgate
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -521,6 +525,201 @@ func TestParseGitCommitArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// --- Shell-injection tests for InjectTrailer ---
+
+// stubGitDir creates a temp dir containing a `git` shim that writes its argv
+// (one arg per line) to argvFile. It returns the dir path so tests can prepend
+// it to PATH. Assertions are performed by inspecting argvFile contents.
+func stubGitDir(t *testing.T, argvFile string) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> " + shellQuote(argvFile) + "\ndone\nexit 0\n"
+	path := filepath.Join(dir, "git")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub git: %v", err)
+	}
+	return dir
+}
+
+// runUnderShell executes shellCmd via `sh -c`, with PATH set so that the stub
+// `git` from gitDir is found first. Returns combined output (rarely useful;
+// tests assert via side-effect files).
+func runUnderShell(t *testing.T, gitDir, shellCmd string) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", shellCmd)
+	cmd.Env = append(os.Environ(), "PATH="+gitDir+":"+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("sh -c output: %s", string(out))
+		t.Fatalf("sh -c failed: %v", err)
+	}
+}
+
+// TestInjectTrailer_quoteInjection plants an attack payload in the trailer
+// value that, if not properly escaped, would `touch` a sentinel file via the
+// shell. After running the rewritten command through `sh -c`, the sentinel
+// must NOT exist — proving the trailer was treated as a literal argument.
+func TestInjectTrailer_quoteInjection(t *testing.T) {
+	tmp := t.TempDir()
+	sentinel := filepath.Join(tmp, "pwn-sentinel")
+	argvFile := filepath.Join(tmp, "argv.log")
+	gitDir := stubGitDir(t, argvFile)
+
+	// Classic shell-injection payloads. Each tries to break out of the quoted
+	// trailer arg and execute `touch <sentinel>` as a side-effect command.
+	payloads := []string{
+		`"; touch ` + sentinel + `; #`,
+		`'; touch ` + sentinel + `; #`,
+		"$(touch " + sentinel + ")",
+		"`touch " + sentinel + "`",
+		`\"; touch ` + sentinel + `; #`,
+	}
+	for _, p := range payloads {
+		t.Run("payload="+p, func(t *testing.T) {
+			_ = os.Remove(sentinel)
+			_ = os.Remove(argvFile)
+
+			rewritten := InjectTrailer(`git commit -m "x"`, p)
+			runUnderShell(t, gitDir, rewritten)
+
+			if _, err := os.Stat(sentinel); err == nil {
+				t.Fatalf("shell injection succeeded: sentinel %s exists; rewritten=%q", sentinel, rewritten)
+			}
+
+			// Also confirm the trailer reached git literally as a single arg.
+			data, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatalf("stub git did not run: %v", err)
+			}
+			if !strings.Contains(string(data), p) {
+				t.Fatalf("trailer %q not present verbatim in argv:\n%s", p, string(data))
+			}
+		})
+	}
+}
+
+// TestInjectTrailer_specialChars verifies trailers containing shell-meaningful
+// characters round-trip as a single literal argument when the result is parsed
+// by /bin/sh.
+func TestInjectTrailer_specialChars(t *testing.T) {
+	tmp := t.TempDir()
+	argvFile := filepath.Join(tmp, "argv.log")
+	gitDir := stubGitDir(t, argvFile)
+
+	cases := []struct {
+		name    string
+		trailer string
+	}{
+		{"double-quote", `He said "hi"`},
+		{"single-quote", `it's fine`},
+		{"dollar-var", `value=$HOME and $PATH`},
+		{"backtick", "ts=`date`"},
+		{"backslash", `a\b\c`},
+		{"newline", "line1\nline2"},
+		{"mixed", `mix: "x" 'y' $z \w ` + "`q`"},
+		{"empty", ``},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_ = os.Remove(argvFile)
+			rewritten := InjectTrailer(`git commit -m "x"`, tc.trailer)
+			runUnderShell(t, gitDir, rewritten)
+
+			data, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatalf("stub git did not run: %v (rewritten=%q)", err, rewritten)
+			}
+			// Stub git writes one arg per line. Strip exactly one trailing newline
+			// (printf '%s\n' always appends one); preserve trailing empty-arg lines.
+			s := string(data)
+			if strings.HasSuffix(s, "\n") {
+				s = s[:len(s)-1]
+			}
+			args := strings.Split(s, "\n")
+			var got string
+			found := false
+			for i, a := range args {
+				if a == "--trailer" && i+1 < len(args) {
+					got = args[i+1]
+					// Re-stitch any embedded newlines: the trailer value may
+					// have been split across multiple lines by the shim.
+					for j := i + 2; j < len(args); j++ {
+						got += "\n" + args[j]
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("--trailer arg not seen in argv:\n%s", string(data))
+			}
+			if got != tc.trailer {
+				t.Fatalf("trailer round-trip mismatch:\n  want %q\n   got %q\n  rewritten=%q", tc.trailer, got, rewritten)
+			}
+		})
+	}
+}
+
+// TestInjectTrailer_behaviorVariesWithInput proves the test harness actually
+// observes per-input behavior — not a stub that ignores its argument. Two
+// distinct trailer inputs must produce two distinct observed git invocations.
+// (Per memory: feedback_measurement_first.md.)
+func TestInjectTrailer_behaviorVariesWithInput(t *testing.T) {
+	tmp := t.TempDir()
+	gitDir := stubGitDir(t, "/dev/null") // discard; we use a fresh argvFile per run
+
+	run := func(trailer string) string {
+		argvFile := filepath.Join(tmp, fmt.Sprintf("argv-%x.log", []byte(trailer)))
+		_ = os.Remove(argvFile)
+		// Re-make the stub with this argvFile.
+		gitDir2 := stubGitDir(t, argvFile)
+		rewritten := InjectTrailer(`git commit -m "x"`, trailer)
+		runUnderShell(t, gitDir2, rewritten)
+		data, err := os.ReadFile(argvFile)
+		if err != nil {
+			t.Fatalf("argv read: %v", err)
+		}
+		return string(data)
+	}
+
+	a := run("foo")
+	b := run("bar")
+
+	if a == b {
+		t.Fatalf("expected different observed argv for different inputs, got identical:\n%s", a)
+	}
+	if !strings.Contains(a, "foo") {
+		t.Fatalf("argv for trailer=foo missing literal 'foo':\n%s", a)
+	}
+	if !strings.Contains(b, "bar") {
+		t.Fatalf("argv for trailer=bar missing literal 'bar':\n%s", b)
+	}
+	// Sanity: the unused gitDir is harmless — referenced to avoid unused-var
+	// complaints if the test is ever simplified.
+	_ = gitDir
+}
+
+// TestShellQuote_unitProperties checks the quoting primitive directly.
+// Empty input yields '' (valid empty sh string). Embedded single quote is
+// escaped via the standard '\'' sequence.
+func TestShellQuote_unitProperties(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", "''"},
+		{"abc", "'abc'"},
+		{"a'b", `'a'\''b'`},
+		{`'`, `''\'''`},
+		{`$x"y` + "`z`", `'$x"y` + "`z`" + `'`},
+	}
+	for _, c := range cases {
+		got := shellQuote(c.in)
+		if got != c.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
