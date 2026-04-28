@@ -27,6 +27,8 @@ var outputMultiplier = map[string]float64{
 type metrics struct {
 	compressMode   string
 	tokensSavedEst int64
+	inTokens       int64 // input tokens used as inPct denominator base
+	inTokensKnown  bool  // true if input tokens came from transcript or meter
 	inPct          int64
 	outTokens      int64 // assistant output tokens this session (0 if unknown)
 	outTokensKnown bool  // true if we successfully read transcript or meter
@@ -51,26 +53,46 @@ func compute(event *hookevent.Event, compressMode string) metrics {
 
 	// Read meter data (populated by Pass 2+).
 	meterPath := filepath.Join(home, ".pakka", "meter", sid+".jsonl")
-	tokensUsed, _, tokensSavedEst, meterOutputTokens := readMeter(meterPath)
+	meterTokensUsed, _, tokensSavedEst, meterOutputTokens := readMeter(meterPath)
 	sessionStart := meterSessionStart(meterPath)
-
-	// Calculate input savings percentage (integer-rounded).
-	inPct := pctRound(tokensSavedEst, tokensUsed+tokensSavedEst)
 
 	if compressMode == "" {
 		compressMode = "strict"
 	}
 
-	// Resolve output tokens. Transcript is authoritative; fall back to meter.
-	var outTokens int64
-	outKnown := false
+	// Resolve input + output tokens from transcript (authoritative when present).
+	// Fall back to meter values when transcript is missing/unparseable.
+	var transcriptIn, transcriptOut int64
+	transcriptOK := false
 	if event.TranscriptPath != "" {
-		if t, ok := readTranscript(event.TranscriptPath); ok {
-			outTokens = t
-			outKnown = true
+		if in, out, ok := readTranscript(event.TranscriptPath); ok {
+			transcriptIn = in
+			transcriptOut = out
+			transcriptOK = true
 		}
 	}
-	if !outKnown && meterOutputTokens > 0 {
+
+	// Input tokens: transcript wins. Fall back to meter tokensUsed for sessions
+	// without a transcript path. When neither has signal, inPct renders 0%.
+	var inTokens int64
+	inKnown := false
+	if transcriptOK && transcriptIn > 0 {
+		inTokens = transcriptIn
+		inKnown = true
+	} else if meterTokensUsed > 0 {
+		inTokens = meterTokensUsed
+		inKnown = true
+	}
+
+	inPct := pctRound(tokensSavedEst, inTokens+tokensSavedEst)
+
+	// Output tokens: transcript wins. Fall back to meter output_tokens.
+	var outTokens int64
+	outKnown := false
+	if transcriptOK && transcriptOut > 0 {
+		outTokens = transcriptOut
+		outKnown = true
+	} else if meterOutputTokens > 0 {
 		outTokens = meterOutputTokens
 		outKnown = true
 	}
@@ -91,6 +113,8 @@ func compute(event *hookevent.Event, compressMode string) metrics {
 	return metrics{
 		compressMode:   compressMode,
 		tokensSavedEst: tokensSavedEst,
+		inTokens:       inTokens,
+		inTokensKnown:  inKnown,
 		inPct:          inPct,
 		outTokens:      outTokens,
 		outTokensKnown: outKnown,
@@ -128,8 +152,12 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 
 // Run prints the pakka status line to w.
 //
-// Format (UTF-8): pakka [strict] · ↓0% / ↑25% tok saved · 0 bugs caught
+// Format (UTF-8): pakka [strict] · ↑0% / ↓25% tok saved · 0 bugs caught
 // Format (ascii): pakka [strict] | in 0% / out 25% tok saved | 0 bugs caught
+//
+// Arrows follow conventional download/upload semantics from the user's
+// perspective: ↑ = prompt going UP to the API (input), ↓ = response coming
+// DOWN (output).
 //
 // Purpose: Emit compact one-line session summary for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
@@ -139,7 +167,7 @@ func Run(event *hookevent.Event, w io.Writer, compressMode string) error {
 
 	var inArrow, outArrow, sep string
 	if utf8 {
-		inArrow, outArrow, sep = "↓", "↑", "·"
+		inArrow, outArrow, sep = "↑", "↓", "·"
 	} else {
 		inArrow, outArrow, sep = "in ", "out ", "|"
 	}
@@ -157,7 +185,7 @@ func Summary(event *hookevent.Event, compressMode string) string {
 
 	var inArrow, outArrow, sep string
 	if utf8 {
-		inArrow, outArrow, sep = "↓", "↑", "·"
+		inArrow, outArrow, sep = "↑", "↓", "·"
 	} else {
 		inArrow, outArrow, sep = "in ", "out ", "|"
 	}
@@ -257,16 +285,22 @@ func readMeter(path string) (used, bytesSaved, tokensSavedEst, outputTokens int6
 	return used, bytesSaved, tokensSavedEst, outputTokens
 }
 
-// readTranscript opens a Claude Code transcript JSONL and sums
-// usage.output_tokens across assistant turns. Returns (sum, true) on
-// any successful read where at least one line parsed; (0, false) otherwise.
+// readTranscript opens a Claude Code transcript JSONL and sums input + output
+// tokens across assistant turns.
+//
+// Input is the sum of usage.input_tokens + usage.cache_read_input_tokens +
+// usage.cache_creation_input_tokens. Output is usage.output_tokens.
+//
+// Returns (inTokens, outTokens, true) when at least one line yielded a non-zero
+// in OR out total; (0, 0, false) otherwise (file missing, unreadable, or all
+// usage fields zero).
 //
 // Tolerates missing fields — transcript schemas vary across Claude Code
-// versions. Tries a few candidate JSON paths.
-func readTranscript(path string) (int64, bool) {
+// versions. Tries two candidate JSON shapes.
+func readTranscript(path string) (int64, int64, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	defer f.Close()
 
@@ -274,42 +308,58 @@ func readTranscript(path string) (int64, bool) {
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 4*1024*1024)
 
-	var total int64
+	var inTotal, outTotal int64
 	parsed := false
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
 			continue
 		}
-		// Candidate shape A: {"message":{"usage":{"output_tokens":N}}}
+		// Candidate shape A: {"message":{"usage":{...}}}
 		var a struct {
 			Message struct {
 				Usage struct {
-					OutputTokens int64 `json:"output_tokens"`
+					InputTokens              int64 `json:"input_tokens"`
+					OutputTokens             int64 `json:"output_tokens"`
+					CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 				} `json:"usage"`
 			} `json:"message"`
 		}
-		if json.Unmarshal(line, &a) == nil && a.Message.Usage.OutputTokens > 0 {
-			total += a.Message.Usage.OutputTokens
-			parsed = true
-			continue
+		if json.Unmarshal(line, &a) == nil {
+			u := a.Message.Usage
+			lineIn := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+			if lineIn > 0 || u.OutputTokens > 0 {
+				inTotal += lineIn
+				outTotal += u.OutputTokens
+				parsed = true
+				continue
+			}
 		}
-		// Candidate shape B: {"usage":{"output_tokens":N}}
+		// Candidate shape B: {"usage":{...}}
 		var b struct {
 			Usage struct {
-				OutputTokens int64 `json:"output_tokens"`
+				InputTokens              int64 `json:"input_tokens"`
+				OutputTokens             int64 `json:"output_tokens"`
+				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
-		if json.Unmarshal(line, &b) == nil && b.Usage.OutputTokens > 0 {
-			total += b.Usage.OutputTokens
-			parsed = true
-			continue
+		if json.Unmarshal(line, &b) == nil {
+			u := b.Usage
+			lineIn := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+			if lineIn > 0 || u.OutputTokens > 0 {
+				inTotal += lineIn
+				outTotal += u.OutputTokens
+				parsed = true
+				continue
+			}
 		}
 	}
 	if !parsed {
-		return 0, false
+		return 0, 0, false
 	}
-	return total, true
+	return inTotal, outTotal, true
 }
 
 // meterSessionStart returns the timestamp of the first meter entry for the

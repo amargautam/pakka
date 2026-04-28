@@ -11,9 +11,8 @@ import (
 	"github.com/amargautam/pakka/internal/hookevent"
 )
 
-// runWith builds an event with the given session id, writes a meter file with
-// the given (used, savedEst) pair into HOME/.pakka/meter, and returns rendered
-// status line string. Caller must have already set HOME via t.Setenv.
+// runWith builds an event with the given session id, optional transcript path,
+// and renders status line via Run. Caller must have set HOME via t.Setenv.
 func runWith(t *testing.T, sid, mode string, transcriptPath string) string {
 	t.Helper()
 	event := &hookevent.Event{SessionID: sid, TranscriptPath: transcriptPath}
@@ -41,14 +40,35 @@ func writeMeter(t *testing.T, home, sid string, used, savedEst int64) {
 	}
 }
 
-// extractInPct parses ↓N% out of the rendered line. Returns -1 on miss.
-func extractInPct(s string) int {
-	return extractPctAfter(s, "↓")
+// writeTranscript writes a JSONL transcript file with assistant turns whose
+// usage fields produce the requested (input_tokens, output_tokens) totals.
+// Splits across two turns to exercise summing.
+func writeTranscript(t *testing.T, dir string, inTokens, outTokens int64) string {
+	t.Helper()
+	p := filepath.Join(dir, "transcript.jsonl")
+	in1 := inTokens / 2
+	in2 := inTokens - in1
+	out1 := outTokens / 2
+	out2 := outTokens - out1
+	body := fmt.Sprintf(
+		`{"type":"assistant","message":{"usage":{"input_tokens":%d,"output_tokens":%d}}}`+"\n"+
+			`{"type":"assistant","message":{"usage":{"input_tokens":%d,"output_tokens":%d}}}`+"\n",
+		in1, out1, in2, out2,
+	)
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
-// extractOutPct parses ↑N% out of the rendered line. Returns -1 on miss.
-func extractOutPct(s string) int {
+// extractInPct parses ↑N% (the input arrow under new convention).
+func extractInPct(s string) int {
 	return extractPctAfter(s, "↑")
+}
+
+// extractOutPct parses ↓N% (the output arrow under new convention).
+func extractOutPct(s string) int {
+	return extractPctAfter(s, "↓")
 }
 
 func extractPctAfter(s, marker string) int {
@@ -73,31 +93,48 @@ func TestRunOutput(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	out := runWith(t, "abc12345xyz", "strict", "")
 
-	// Compact (<200 chars; ANSI ~20 bytes plus body).
 	if len(out) >= 200 {
 		t.Errorf("output too long (%d chars): %q", len(out), out)
 	}
-	// No trailing newline.
 	if len(out) > 0 && out[len(out)-1] == '\n' {
 		t.Errorf("output must not end with newline: %q", out)
 	}
-	// Must contain key markers.
-	for _, want := range []string{"pakka", "tok saved", "bugs caught", "[strict]", "↓", "↑"} {
+	for _, want := range []string{"pakka", "tok saved", "bugs caught", "[strict]", "↑", "↓"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}
 	}
-
-	// New format: no `(--)` placeholder, no raw count abbreviations.
 	if strings.Contains(out, "(--)") || strings.Contains(out, "--") {
 		t.Errorf("legacy '--' placeholder must not appear: %q", out)
 	}
-	if strings.Contains(out, "k tok") || strings.Contains(out, "k /") {
-		t.Errorf("raw kilo-token counts must not appear: %q", out)
-	}
-	// Parens around (NN%) — also gone.
 	if strings.Contains(out, "(0%)") || strings.Contains(out, "(50%)") {
 		t.Errorf("legacy parenthesised pct must not appear: %q", out)
+	}
+}
+
+// Bug 1 regression: arrows follow conventional download/upload semantics.
+// ↑ precedes the input pct; ↓ precedes the output pct. The arrow ordering
+// in the rendered string is ↑...% / ↓...%.
+func TestArrowDirectionConventional(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("HOME", t.TempDir())
+	out := runWith(t, "arrow001", "strict", "")
+
+	upIdx := strings.Index(out, "↑")
+	downIdx := strings.Index(out, "↓")
+	slashIdx := strings.Index(out, "/")
+	if upIdx < 0 || downIdx < 0 || slashIdx < 0 {
+		t.Fatalf("missing arrows or separator: %q", out)
+	}
+	if !(upIdx < slashIdx && slashIdx < downIdx) {
+		t.Errorf("expected order ↑ < / < ↓, got upIdx=%d slashIdx=%d downIdx=%d in %q",
+			upIdx, slashIdx, downIdx, out)
+	}
+	if extractInPct(out) < 0 {
+		t.Errorf("↑ not followed by N%%: %q", out)
+	}
+	if extractOutPct(out) < 0 {
+		t.Errorf("↓ not followed by N%%: %q", out)
 	}
 }
 
@@ -124,44 +161,83 @@ func TestRunAsciiFallback(t *testing.T) {
 			t.Errorf("ascii fallback missing %q in %q", want, out)
 		}
 	}
-	// New ascii shape includes "in 0%" / "out 0%".
 	if !strings.Contains(out, "in 0%") {
 		t.Errorf("ascii fallback should render 'in 0%%' when unmeasured: %q", out)
 	}
+	inIdx := strings.Index(out, "in ")
+	outIdx := strings.Index(out, "out ")
+	if !(inIdx > 0 && outIdx > inIdx) {
+		t.Errorf("ascii: 'in ' should precede 'out ': %q", out)
+	}
 }
 
-// Output unmeasured (no transcript, no meter) must render '↑0%' — never '--'.
+// Output unmeasured (no transcript, no meter) must render '↓0%'.
 func TestRunOutputUnknownRendersZeroPct(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	t.Setenv("HOME", t.TempDir())
 	out := runWith(t, "unkn0wn1", "strict", "")
-	if !strings.Contains(out, "↑0%") {
-		t.Errorf("expected '↑0%%' for unknown output, got: %q", out)
+	if !strings.Contains(out, "↓0%") {
+		t.Errorf("expected '↓0%%' for unknown output, got: %q", out)
 	}
 	if strings.Contains(out, "--") {
 		t.Errorf("must NOT contain '--' placeholder: %q", out)
 	}
 }
 
-// Behavioral: increasing tokens_saved_est while holding tokens_used constant
-// must INCREASE inPct.
-func TestInPctIncreasesWithSavings(t *testing.T) {
+// Bug 2 regression: input % must update from transcript across turns even
+// when no tool calls fire (meter tokensUsed stays 0). Hold tokensSavedEst
+// constant; growing transcript input → smaller inPct.
+func TestInputPctUpdatesFromTranscriptNoToolCalls(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeMeter(t, home, "lowSv001", 1000, 100) // savedEst = 100
-	writeMeter(t, home, "highSv01", 1000, 900) // savedEst = 900
-	low := extractInPct(runWith(t, "lowSv001", "strict", ""))
-	high := extractInPct(runWith(t, "highSv01", "strict", ""))
+	const sid = "trnsIn01"
+	// Meter has only tokens_saved_est (e.g., from a CLAUDE.md compress); no
+	// tool calls in this scenario, so tokens_used stays 0.
+	writeMeter(t, home, sid, 0, 200)
+
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	t1 := writeTranscript(t, dir1, 800, 100)
+	t2 := writeTranscript(t, dir2, 5000, 100)
+
+	pct1 := extractInPct(runWith(t, sid, "strict", t1))
+	pct2 := extractInPct(runWith(t, sid, "strict", t2))
+
+	if pct1 < 0 || pct2 < 0 {
+		t.Fatalf("could not parse inPct: pct1=%d pct2=%d", pct1, pct2)
+	}
+	if !(pct1 > pct2) {
+		t.Errorf("inPct should decrease as transcript input grows: pct1=%d pct2=%d", pct1, pct2)
+	}
+	if pct1 == 0 {
+		t.Errorf("expected non-zero inPct on small transcript: %d", pct1)
+	}
+}
+
+// Bug 2 follow-up: inPct must rise monotonically with savings while transcript
+// input is held constant.
+func TestInputPctRisesWithSavings(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tdir := t.TempDir()
+	transcript := writeTranscript(t, tdir, 1000, 0)
+
+	writeMeter(t, home, "savLow01", 0, 100)
+	writeMeter(t, home, "savHi001", 0, 900)
+
+	low := extractInPct(runWith(t, "savLow01", "strict", transcript))
+	high := extractInPct(runWith(t, "savHi001", "strict", transcript))
 
 	if low < 0 || high < 0 {
-		t.Fatalf("could not parse inPct: low=%d high=%d", low, high)
+		t.Fatalf("parse fail: low=%d high=%d", low, high)
 	}
 	if !(high > low) {
-		t.Errorf("inPct should increase with savings: low=%d high=%d", low, high)
+		t.Errorf("inPct should rise with savings: low=%d high=%d", low, high)
 	}
-	// Sanity: 100/(1000+100) ≈ 9% rounded; 900/1900 ≈ 47% rounded.
 	if low != 9 {
 		t.Errorf("low inPct: want 9, got %d", low)
 	}
@@ -170,38 +246,56 @@ func TestInPctIncreasesWithSavings(t *testing.T) {
 	}
 }
 
-// Behavioral: doubling tokens_used while holding savings constant must
-// DECREASE inPct.
-func TestInPctDecreasesWithUsage(t *testing.T) {
+// Bug 2 hierarchy: when transcript has inTokens, meter tokensUsed is ignored.
+func TestTranscriptWinsOverMeterForInput(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeMeter(t, home, "useLo001", 500, 500)  // 50/50 → 50%
-	writeMeter(t, home, "useHi001", 1500, 500) // 25/75 → 25%
-	lo := extractInPct(runWith(t, "useLo001", "strict", ""))
-	hi := extractInPct(runWith(t, "useHi001", "strict", ""))
+	const sid = "winsT001"
+	writeMeter(t, home, sid, 1_000_000, 1000)
+	tdir := t.TempDir()
+	transcript := writeTranscript(t, tdir, 1000, 0)
 
-	if lo < 0 || hi < 0 {
-		t.Fatalf("could not parse inPct: lo=%d hi=%d", lo, hi)
+	pct := extractInPct(runWith(t, sid, "strict", transcript))
+	if pct < 0 {
+		t.Fatalf("parse fail: %d", pct)
 	}
-	if !(lo > hi) {
-		t.Errorf("inPct should decrease as usage grows: lo=%d hi=%d", lo, hi)
+	if pct != 50 {
+		t.Errorf("expected transcript-driven inPct=50, got %d (meter contamination?)", pct)
+	}
+	if pct < 5 {
+		t.Errorf("inPct=%d looks meter-driven; transcript should win", pct)
+	}
+}
+
+// Bug 2 fallback: when transcript missing/unparseable, meter tokensUsed IS used.
+func TestMeterFallbackForInputWhenNoTranscript(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeMeter(t, home, "fbk00001", 1000, 1000) // 50/50 → 50%
+	pctNoTranscript := extractInPct(runWith(t, "fbk00001", "strict", ""))
+	if pctNoTranscript != 50 {
+		t.Errorf("meter fallback (no transcript): want 50, got %d", pctNoTranscript)
+	}
+
+	writeMeter(t, home, "fbk00002", 2000, 1000) // 1000/3000 → 33%
+	pctMissing := extractInPct(runWith(t, "fbk00002", "strict", "/nonexistent/x.jsonl"))
+	if pctMissing != 33 {
+		t.Errorf("missing-transcript fallback: want 33, got %d", pctMissing)
 	}
 }
 
 // Behavioral: 0.4% rounds to 0%, 0.6% rounds to 1%, 24.6% rounds to 25%.
-// Together these prove rendering uses ROUND, not TRUNC.
 func TestInPctIsRounded(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// 4 saved / (4+996) = 0.4% → rounds to 0
 	writeMeter(t, home, "rndDn001", 996, 4)
-	// 6 saved / (6+994) = 0.6% → rounds to 1 (would be 0 with TRUNC)
 	writeMeter(t, home, "rndUp001", 994, 6)
-	// 246 / (246+754) = 24.6% → rounds to 25 (TRUNC would give 24)
 	writeMeter(t, home, "rndUp246", 754, 246)
 
 	dn := extractInPct(runWith(t, "rndDn001", "strict", ""))
@@ -219,19 +313,13 @@ func TestInPctIsRounded(t *testing.T) {
 	}
 }
 
-// Behavioral: outPct grows monotonically with mode coefficient. Same transcript;
-// only the mode changes. lite < strict < ultra; audit = 0.
+// outPct grows monotonically with mode coefficient.
 func TestOutPctMonotonicByMode(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	t.Setenv("HOME", t.TempDir())
 
 	tdir := t.TempDir()
-	transcript := filepath.Join(tdir, "transcript.jsonl")
-	body := `{"type":"assistant","message":{"usage":{"output_tokens":600}}}` + "\n" +
-		`{"type":"assistant","message":{"usage":{"output_tokens":400}}}` + "\n"
-	if err := os.WriteFile(transcript, []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
+	transcript := writeTranscript(t, tdir, 0, 1000)
 
 	pcts := map[string]int{}
 	for _, mode := range []string{"audit", "lite", "strict", "ultra"} {
@@ -248,37 +336,28 @@ func TestOutPctMonotonicByMode(t *testing.T) {
 	if !(pcts["lite"] < pcts["strict"] && pcts["strict"] < pcts["ultra"]) {
 		t.Errorf("expected lite<strict<ultra, got %v", pcts)
 	}
-	// Sanity: strict ≈ 0.33/(1+0.33) ≈ 25%; ultra ≈ 0.67/1.67 ≈ 40%; lite ≈ 0.11/1.11 ≈ 10%.
 	if pcts["strict"] < 20 || pcts["strict"] > 30 {
 		t.Errorf("strict outPct out of expected band: %d", pcts["strict"])
 	}
 }
 
-// Behavioral: unmeasured output and measured-but-rounds-down-to-0% render
-// identically. (Both '↑0%'.) Intentional per Pass 4.x decision.
+// Unmeasured output and measured-but-rounds-to-0% render identically.
 func TestUnmeasuredAndZeroOutRenderIdentically(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	t.Setenv("HOME", t.TempDir())
 
-	// Unmeasured: no transcript path.
 	unmeasured := runWith(t, "unmeas01", "strict", "")
 
-	// Measured but rounds to 0%: audit mode (multiplier=0) over a transcript.
 	tdir := t.TempDir()
-	transcript := filepath.Join(tdir, "transcript.jsonl")
-	body := `{"type":"assistant","message":{"usage":{"output_tokens":1000}}}` + "\n"
-	if err := os.WriteFile(transcript, []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
+	transcript := writeTranscript(t, tdir, 0, 1000)
 	measured := runWith(t, "meas0001", "audit", transcript)
 
-	if !strings.Contains(unmeasured, "↑0%") {
-		t.Errorf("unmeasured must render ↑0%%: %q", unmeasured)
+	if !strings.Contains(unmeasured, "↓0%") {
+		t.Errorf("unmeasured must render ↓0%%: %q", unmeasured)
 	}
-	if !strings.Contains(measured, "↑0%") {
-		t.Errorf("measured-zero must render ↑0%%: %q", measured)
+	if !strings.Contains(measured, "↓0%") {
+		t.Errorf("measured-zero must render ↓0%%: %q", measured)
 	}
-	// Neither path may emit '--'.
 	for _, s := range []string{unmeasured, measured} {
 		if strings.Contains(s, "--") {
 			t.Errorf("'--' must not appear: %q", s)
@@ -286,39 +365,30 @@ func TestUnmeasuredAndZeroOutRenderIdentically(t *testing.T) {
 	}
 }
 
-// Behavioral: no rendered output ever contains '(--)', '--', or kilo-token
-// abbreviations like '1.7k'. Sweep across modes and conditions.
+// Sweep: no rendered output ever contains '(--)', '--', or count-with-pct.
 func TestNoLegacyTokensInOutput(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	writeMeter(t, home, "sweep001", 5000, 1700)
-
 	tdir := t.TempDir()
-	transcript := filepath.Join(tdir, "transcript.jsonl")
-	body := `{"type":"assistant","message":{"usage":{"output_tokens":4200}}}` + "\n"
-	if err := os.WriteFile(transcript, []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
+	transcript := writeTranscript(t, tdir, 0, 4200)
 
 	for _, mode := range []string{"lite", "strict", "ultra", "audit"} {
 		out := runWith(t, "sweep001", mode, transcript)
-		// Banned substrings.
 		for _, bad := range []string{"(--)", "1.7k", "4.2k", "5.0k", "(0%)", "(50%)"} {
 			if strings.Contains(out, bad) {
 				t.Errorf("mode=%s: banned %q appears in %q", mode, bad, out)
 			}
 		}
-		// Must contain percent + slash + tok saved.
 		if !strings.Contains(out, "% / ") {
 			t.Errorf("mode=%s: missing '%% / ' in %q", mode, out)
 		}
 	}
 }
 
-// TestRunInputPercentWhenNonZero verifies the inPct branch with real meter
-// data. 100/(100+100) = 50% — and the format must be '↓50%' (no parens, no count).
+// 100/(100+100) = 50% — format must be '↑50%' (no parens, no count).
 func TestRunInputPercentWhenNonZero(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
@@ -326,8 +396,8 @@ func TestRunInputPercentWhenNonZero(t *testing.T) {
 	writeMeter(t, home, "pct12345", 100, 100)
 
 	out := runWith(t, "pct12345", "strict", "")
-	if !strings.Contains(out, "↓50%") {
-		t.Errorf("expected '↓50%%' in %q", out)
+	if !strings.Contains(out, "↑50%") {
+		t.Errorf("expected '↑50%%' in %q", out)
 	}
 	if strings.Contains(out, "(50%)") {
 		t.Errorf("legacy '(50%%)' format must not appear: %q", out)
@@ -344,33 +414,58 @@ func TestSummaryNoANSI(t *testing.T) {
 	if !strings.Contains(got, "tok saved") {
 		t.Errorf("Summary missing 'tok saved': %q", got)
 	}
-	// Summary must follow the same percent-only format.
-	if !strings.Contains(got, "↓0%") || !strings.Contains(got, "↑0%") {
-		t.Errorf("Summary must use percent-only format: %q", got)
+	if !strings.Contains(got, "↑0%") || !strings.Contains(got, "↓0%") {
+		t.Errorf("Summary must use percent-only format with conventional arrows: %q", got)
 	}
 }
 
-func TestReadTranscript(t *testing.T) {
+// readTranscript: behavioral — input sums input_tokens + cache reads + cache
+// creation; output sums output_tokens. Two candidate JSON shapes supported.
+func TestReadTranscriptSumsInAndOut(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "t.jsonl")
-	body := `{"type":"assistant","message":{"usage":{"output_tokens":500}}}` + "\n" +
+	body := `{"type":"assistant","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":25,"output_tokens":500}}}` + "\n" +
 		`{"type":"user","message":{}}` + "\n" +
-		`{"usage":{"output_tokens":120}}` + "\n"
+		`{"usage":{"input_tokens":10,"output_tokens":120}}` + "\n"
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := readTranscript(path)
+	in, out, ok := readTranscript(path)
 	if !ok {
 		t.Fatal("readTranscript returned ok=false")
 	}
-	if got != 620 {
-		t.Errorf("readTranscript = %d, want 620", got)
+	if in != 185 {
+		t.Errorf("readTranscript inTokens = %d, want 185", in)
+	}
+	if out != 620 {
+		t.Errorf("readTranscript outTokens = %d, want 620", out)
+	}
+}
+
+// Behavioral: doubling input_tokens in transcript → readTranscript inTokens
+// also doubles. Proves the value VARIES with input.
+func TestReadTranscriptVariesWithInput(t *testing.T) {
+	for _, n := range []int64{100, 200, 1000} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "t.jsonl")
+		body := fmt.Sprintf(`{"type":"assistant","message":{"usage":{"input_tokens":%d,"output_tokens":1}}}`+"\n", n)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		in, _, ok := readTranscript(path)
+		if !ok {
+			t.Fatalf("ok=false for n=%d", n)
+		}
+		if in != n {
+			t.Errorf("readTranscript inTokens = %d, want %d", in, n)
+		}
 	}
 }
 
 func TestReadTranscriptMissing(t *testing.T) {
-	if got, ok := readTranscript("/nonexistent/path.jsonl"); ok || got != 0 {
-		t.Errorf("readTranscript on missing = (%d, %v), want (0, false)", got, ok)
+	in, out, ok := readTranscript("/nonexistent/path.jsonl")
+	if ok || in != 0 || out != 0 {
+		t.Errorf("readTranscript on missing = (%d, %d, %v), want (0, 0, false)", in, out, ok)
 	}
 }
 
@@ -391,21 +486,19 @@ func TestShortSID(t *testing.T) {
 	}
 }
 
-// pctRound: behavioral — output must (a) be 0 when denom is 0, (b) increase
-// monotonically with num for fixed denom, (c) match math.Round semantics.
 func TestPctRound(t *testing.T) {
 	tests := []struct {
 		num, denom int64
 		want       int64
 	}{
-		{0, 0, 0},      // guard
-		{5, 0, 0},      // guard
-		{0, 100, 0},    // exact
-		{4, 1000, 0},   // 0.4 → 0
-		{6, 1000, 1},   // 0.6 → 1
+		{0, 0, 0},
+		{5, 0, 0},
+		{0, 100, 0},
+		{4, 1000, 0},
+		{6, 1000, 1},
 		{246, 1000, 25},
 		{500, 1000, 50},
-		{999, 1000, 100}, // 99.9 → 100
+		{999, 1000, 100},
 		{1000, 1000, 100},
 	}
 	for _, tt := range tests {
@@ -415,7 +508,6 @@ func TestPctRound(t *testing.T) {
 		}
 	}
 
-	// Monotonicity: prev < curr for increasing num at fixed denom.
 	const denom int64 = 1000
 	var prev int64 = -1
 	for n := int64(0); n <= 1000; n += 100 {
