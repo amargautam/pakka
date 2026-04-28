@@ -92,12 +92,19 @@ func run(t *testing.T, event *hookevent.Event, mode string) string {
 func extractInPct(s string) int  { return extractPctAfter(s, "↑") }
 func extractOutPct(s string) int { return extractPctAfter(s, "↓") }
 
+// extractPctAfter parses the percent from "<marker><abs> (<pct>%)" form.
+// Looks for the first "(" after the marker and reads digits up to "%".
 func extractPctAfter(s, marker string) int {
 	i := strings.Index(s, marker)
 	if i < 0 {
 		return -1
 	}
 	rest := s[i+len(marker):]
+	openIdx := strings.Index(rest, "(")
+	if openIdx < 0 {
+		return -1
+	}
+	rest = rest[openIdx+1:]
 	pctIdx := strings.Index(rest, "%")
 	if pctIdx <= 0 {
 		return -1
@@ -107,6 +114,24 @@ func extractPctAfter(s, marker string) int {
 		return -1
 	}
 	return n
+}
+
+// extractInAbs parses the humanized absolute saved-token string after "↑".
+// Returns the literal token like "0", "847", "12.4K", "1.2M".
+func extractInAbs(s string) string  { return extractAbsAfter(s, "↑") }
+func extractOutAbs(s string) string { return extractAbsAfter(s, "↓") }
+
+func extractAbsAfter(s, marker string) string {
+	i := strings.Index(s, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len(marker):]
+	spIdx := strings.Index(rest, " ")
+	if spIdx <= 0 {
+		return ""
+	}
+	return rest[:spIdx]
 }
 
 // extractBugs parses "<N> bugs caught" out of the rendered string.
@@ -143,7 +168,14 @@ func TestRunOutputBaseFormat(t *testing.T) {
 			t.Errorf("missing %q in %q", want, out)
 		}
 	}
-	for _, bad := range []string{"(--)", "--", "(0%)", "(50%)"} {
+	// Empty-fixture run: must show absolute zeros with parenthesized percent.
+	for _, want := range []string{"↑0 (0%)", "↓0 (0%)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %q", want, out)
+		}
+	}
+	// "--" placeholder must never appear; absolute counts replace it.
+	for _, bad := range []string{"(--)", "--"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("banned %q in %q", bad, out)
 		}
@@ -175,7 +207,8 @@ func TestRunAsciiFallback(t *testing.T) {
 	if strings.Contains(out, "↓") || strings.Contains(out, "↑") {
 		t.Errorf("expected ascii: %q", out)
 	}
-	for _, want := range []string{"in ", "out ", "|", "in 0%"} {
+	// Empty fixture → in/out absolute counts both 0 with 0%.
+	for _, want := range []string{"in ", "out ", "|", "in 0 (0%)", "out 0 (0%)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ascii missing %q in %q", want, out)
 		}
@@ -392,6 +425,121 @@ func TestBugsAllTimeNoTimeFilter(t *testing.T) {
 
 // --- helpers / unit checks ---
 
+// TestHumanize covers the formatter directly. Floor truncation is
+// intentional — verify the 999→"999" / 1000→"1.0K" boundary.
+func TestHumanize(t *testing.T) {
+	tests := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{999, "999"},        // boundary: still raw
+		{1000, "1.0K"},      // boundary: enters K
+		{1099, "1.0K"},      // floor: doesn't bump to 1.1K
+		{1100, "1.1K"},
+		{12450, "12.4K"},    // explicit spec example
+		{999_999, "999.9K"}, // boundary: just below M
+		{1_000_000, "1.0M"}, // boundary: enters M
+		{1_234_567, "1.2M"}, // explicit spec example
+		{12_500_000, "12.5M"},
+		{-5, "0"}, // negative clamped
+	}
+	for _, tt := range tests {
+		got := humanize(tt.in)
+		if got != tt.want {
+			t.Errorf("humanize(%d)=%q want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestStatusLineShowsBothAbsoluteAndPercent — explicit guard against the
+// percent-only regression. For two distinct inSavedTokens fixtures, the
+// rendered string must contain BOTH humanized absolute counts. A test that
+// only checks for "%" passes a percent-only regression; this one fails it.
+func TestStatusLineShowsBothAbsoluteAndPercent(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	render := func(saved int64) string {
+		home := t.TempDir()
+		useFakeHome(t, home)
+		useFakeRepoKey(t, map[string]string{"/repo/A": "/repo/A"})
+		writeMeterEntry(t, home, "varies01", map[string]any{
+			"ts": "t", "session_id": "varies01", "repo": "/repo/A",
+			"tokens_saved_est": saved,
+		})
+		// Add transcript input so denom > saved (rules out the trivial
+		// "always 100%" case where percent-only output would collide).
+		writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
+			{"input_tokens": saved * 9, "output_tokens": 0}, // pct ≈ 10
+		})
+		return run(t, &hookevent.Event{SessionID: "varies01", CWD: "/repo/A"}, "strict")
+	}
+
+	// Two distinct inputs → two distinct humanized values.
+	smallOut := render(800)    // < 1000 → "800"
+	largeOut := render(15_000) // → "15.0K"
+
+	if !strings.Contains(smallOut, "↑800 ") {
+		t.Errorf("small render missing absolute '↑800 ': %q", smallOut)
+	}
+	if !strings.Contains(largeOut, "↑15.0K ") {
+		t.Errorf("large render missing absolute '↑15.0K ': %q", largeOut)
+	}
+	// Critical: small absolute must NOT appear in large render and vice versa.
+	// Percent-only output for these two fixtures could collide on the same %;
+	// this assertion fails any percent-only regression.
+	if strings.Contains(largeOut, "↑800 ") {
+		t.Errorf("large render leaked small abs token: %q", largeOut)
+	}
+	if strings.Contains(smallOut, "↑15.0K") {
+		t.Errorf("small render leaked large abs token: %q", smallOut)
+	}
+	// Both must still carry the parenthesized percent.
+	for _, s := range []string{smallOut, largeOut} {
+		if !strings.Contains(s, "%)") {
+			t.Errorf("missing parenthesized percent: %q", s)
+		}
+	}
+	// Cross-check via the extractor: absolutes must differ.
+	if extractInAbs(smallOut) == extractInAbs(largeOut) {
+		t.Errorf("inAbs must vary across inputs: small=%q large=%q",
+			extractInAbs(smallOut), extractInAbs(largeOut))
+	}
+}
+
+// TestExtractPctNewFormat confirms the test helper handles the new format
+// "↑<abs> (<pct>%)" where <abs> may contain a period (e.g., "12.4K").
+// Guards against the bug where the old extractor read "12" from "12.4K (43%)".
+func TestExtractPctNewFormat(t *testing.T) {
+	cases := []struct {
+		s       string
+		inWant  int
+		outWant int
+		inAbsW  string
+		outAbsW string
+	}{
+		{"x ↑0 (0%) / ↓0 (0%) y", 0, 0, "0", "0"},
+		{"x ↑5K (5%) / ↓1K (3%) y", 5, 3, "5K", "1K"},
+		{"x ↑12.4K (43%) / ↓7.1K (33%) y", 43, 33, "12.4K", "7.1K"},
+		{"x ↑847 (88%) / ↓100 (12%) y", 88, 12, "847", "100"},
+	}
+	for _, c := range cases {
+		if g := extractInPct(c.s); g != c.inWant {
+			t.Errorf("extractInPct(%q)=%d want %d", c.s, g, c.inWant)
+		}
+		if g := extractOutPct(c.s); g != c.outWant {
+			t.Errorf("extractOutPct(%q)=%d want %d", c.s, g, c.outWant)
+		}
+		if g := extractInAbs(c.s); g != c.inAbsW {
+			t.Errorf("extractInAbs(%q)=%q want %q", c.s, g, c.inAbsW)
+		}
+		if g := extractOutAbs(c.s); g != c.outAbsW {
+			t.Errorf("extractOutAbs(%q)=%q want %q", c.s, g, c.outAbsW)
+		}
+	}
+}
+
 func TestPctRound(t *testing.T) {
 	tests := []struct {
 		num, denom int64
@@ -488,7 +636,8 @@ func TestSummaryNoANSI(t *testing.T) {
 	if strings.Contains(got, "\033[") {
 		t.Errorf("Summary should not contain ANSI escapes: %q", got)
 	}
-	for _, want := range []string{"tok saved", "↑0%", "↓0%"} {
+	// Both absolute saved counts AND percent must appear.
+	for _, want := range []string{"tok saved", "↑0 (0%)", "↓0 (0%)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Summary missing %q: %q", want, got)
 		}

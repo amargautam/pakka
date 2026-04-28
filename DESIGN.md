@@ -545,18 +545,20 @@ Net: 35-50% total cost reduction, dominated by output compression (V1).
 ## 6. Status-line format
 Printed to **stderr** by `pakka-core status-line` on `Stop`:
 ```
-pakka [strict] · 1.2k in saved · 3.8k out saved · 2 bugs caught
+UTF-8: pakka [strict] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 2 bugs caught
+ASCII: pakka [strict] | in 12.4K (43%) / out 7.1K (33%) tok saved | 2 bugs caught
 ```
+Both absolute saved-token counts AND percentages are shown. Percent alone hides scale — 50% of 200 reads identical to 50% of 200K. Counts humanize via floor truncation: <1000 raw integer, K/M with one decimal (12450 → "12.4K", 1234567 → "1.2M").
 Parts:
 - `[strict]`: active compression mode (lite/strict/ultra).
-- `in saved`: input token savings this session (file compression + tool result truncation + subagent return compression). Sum of `tokens_saved_est` from meter entries.
-- `out saved`: output token savings estimate (session output tokens × reduction factor from calibrated baseline). This is the high-value number — output tokens cost 3-5×.
+- `↑<abs> (<pct>%)`: input token savings this session (file compression + tool result truncation + subagent return compression). Sum of `tokens_saved_est` from meter entries; pct = saved / cost-weighted input denominator.
+- `↓<abs> (<pct>%)`: output token savings estimate (session output tokens × reduction factor from calibrated baseline). High-value number — output tokens cost 3-5×.
 - `bugs caught`: count of reviewer/security findings with `severity=error` and confidence ≥ threshold this session.
 Output savings measurement:
 - Baseline: median output tokens per session from `make bench` runs without output compression.
 - Session: actual output tokens from meter.
-- Savings: `baseline_median - actual`. Reported as `out saved`.
-- Until baseline is calibrated (pre-v0.1.0), `out saved` shows `--` instead of a number. No fake numbers.
+- Savings: `baseline_median - actual`. Reported as `↓<abs> (<pct>%)`.
+- Until baseline is calibrated, savings render as `↓0 (0%)` (no fake numbers).
 Togglable: `settings.json` → `"pakka.display.statusLine": false`.
 ---
 ## 7. Audit JSONL schema

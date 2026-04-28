@@ -14,3 +14,4 @@ All notable changes to pakka. Format follows [Keep a Changelog](https://keepacha
 
 ### Fixed
 - Status-line `-- out saved` placeholder replaced with measured value.
+- Status line now renders absolute saved tokens alongside percent for both input and output: `↑12.4K (43%) / ↓7.1K (33%) tok saved`. Percent-only output hid scale (50% of 200 vs 50% of 200K). Counts humanize via floor truncation — <1000 raw, K/M with one decimal.

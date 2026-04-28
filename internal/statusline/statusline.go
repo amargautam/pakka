@@ -158,19 +158,57 @@ func utf8Capable() bool {
 	return false
 }
 
+// humanize formats n as a compact human-readable token count.
+//
+// Rules:
+//   - n < 1000      → raw integer ("0", "999")
+//   - 1_000 ≤ n < 1_000_000 → one decimal "K", floor-truncated ("1.0K", "12.4K")
+//   - n ≥ 1_000_000 → one decimal "M", floor-truncated ("1.2M")
+//
+// Floor (not round) is intentional: predictable, never inflates a count,
+// matches `du -h` semantics. Boundary: 999 → "999", 1000 → "1.0K".
+// Negative inputs are clamped to "0" — the metrics this serves are
+// non-negative by construction (counters), so a negative value indicates
+// upstream bug, not signal we want to render.
+func humanize(n int64) string {
+	if n < 0 {
+		return "0"
+	}
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 1_000_000 {
+		// Floor to one decimal: integer divide tenths.
+		tenths := n / 100 // e.g. 12450 → 124
+		return fmt.Sprintf("%d.%dK", tenths/10, tenths%10)
+	}
+	tenths := n / 100_000 // e.g. 1234567 → 12
+	return fmt.Sprintf("%d.%dM", tenths/10, tenths%10)
+}
+
 // formatLine renders the status-line body using the supplied glyphs.
 //
-// Format: percent-only, integer rounded; no raw counts, no `--` placeholder.
-// Unmeasured values render as 0% identically to measured-rounds-down-to-0%.
+// Format: absolute saved tokens (humanized) + percent in parens, both shown.
+// Percent alone is meaningless without scale (50% of 200 vs 50% of 200K), so
+// the body always carries both. Unmeasured values render as "0 (0%)".
+//
+// UTF-8: [strict] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 0 bugs caught
+// ASCII: [strict] | in 12.4K (43%) / out 7.1K (33%) tok saved | 0 bugs caught
 func formatLine(m metrics, inArrow, outArrow, sep string) string {
-	return fmt.Sprintf("[%s] %s %s%d%% / %s%d%% tok saved %s %d bugs caught",
-		m.compressMode, sep, inArrow, m.inPct, outArrow, m.outPct, sep, m.bugsCaught)
+	return fmt.Sprintf("[%s] %s %s%s (%d%%) / %s%s (%d%%) tok saved %s %d bugs caught",
+		m.compressMode, sep,
+		inArrow, humanize(m.inSavedTokens), m.inPct,
+		outArrow, humanize(m.outSavedEst), m.outPct,
+		sep, m.bugsCaught)
 }
 
 // Run prints the pakka status line to w.
 //
-// Format (UTF-8): pakka [strict] · ↑0% / ↓25% tok saved · 0 bugs caught
-// Format (ascii): pakka [strict] | in 0% / out 25% tok saved | 0 bugs caught
+// Format (UTF-8): pakka [strict] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 0 bugs caught
+// Format (ascii): pakka [strict] | in 12.4K (43%) / out 7.1K (33%) tok saved | 0 bugs caught
+//
+// Both absolute saved-token counts (humanized to K/M, floor-truncated) and
+// percentages are shown — percent alone is meaningless without scale.
 //
 // Arrows follow conventional download/upload semantics: ↑ = input going UP to
 // the API, ↓ = output coming DOWN.
