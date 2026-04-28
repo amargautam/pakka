@@ -34,8 +34,11 @@ pakka/
 │   ├── reviewer.md
 │   └── security.md
 ├── commands/
-│   ├── pakka-review.md
-│   └── pakka-status.md
+│   ├── help.md         # /pakka:help
+│   ├── review.md       # /pakka:review (calls reviewer + security agents)
+│   ├── init.md         # /pakka:init     → wraps skill pakka-init
+│   ├── eval.md         # /pakka:eval     → wraps skill pakka-eval
+│   └── compress.md     # /pakka:compress → wraps skill pakka-compress
 ├── hooks/
 │   └── hooks.json
 ├── rules/
@@ -62,6 +65,8 @@ pakka/
 └── README.md
 ```
 **Convention:** every script invoked by hook is `bin/pakka-core <subcommand> [args]`. One binary, many subcommands — `compress`, `output-rules`, `output-reinforce`, `meter`, `audit`, `guard`, `eval`, `stack-detect`, `status-line`. Users install nothing; right binary is selected via Claude Code's `${CLAUDE_PLUGIN_ROOT}` + OS/arch at hook invocation.
+
+**Command/skill naming:** user-facing slash commands are bare (`/pakka:init`, `/pakka:eval`, `/pakka:compress`) for a uniform surface. Each is a thin wrapper that delegates to a skill named with the `pakka-` prefix (`pakka-init`, `pakka-eval`, `pakka-compress`) — the prefix keeps skills collision-safe in the global skill registry while the bare command name keeps the user surface clean. Wrappers pass `$ARGUMENTS` through verbatim; all behavior lives in the skill.
 ---
 ## 4. Components — what / where / why
 | # | Component | Files | Packaging | Why |

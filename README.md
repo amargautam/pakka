@@ -37,6 +37,18 @@ Claude Code harness: fewer tokens, fewer bugs, audit-ready.
 
 All local. No dial-home. No dashboards.
 
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `/pakka:help` | Show pakka status — what's on, what you can run. |
+| `/pakka:review` | Run reviewer + security on staged diff, print verdicts. `[--base=<ref>]` `[--install-hook]`. |
+| `/pakka:init` | One-time setup. Detect stack, write overlay, verify hooks. `[--force]`. |
+| `/pakka:eval` | 3-layer eval gate (static, LLM-judge, Monte Carlo) on skill/agent files. `[targets...] [--layer=N] [--n=N]`. |
+| `/pakka:compress` | Switch output level, restore originals, show stats. `[lite\|strict\|ultra\|restore\|status]`. |
+
+User-facing commands are bare (`/pakka:init`) for uniformity. Underlying skills keep the `pakka-` prefix (`pakka-init`, `pakka-eval`, `pakka-compress`) so they stay collision-safe in the global skill registry. Commands are thin wrappers — they pass `$ARGUMENTS` straight to the skill.
+
 ## Claims (v0.1.0)
 
 Three numbers will ship on this README when v0.1.0 lands, each reproducible via `make bench`:
