@@ -261,7 +261,7 @@ func debugLogf(format string, args ...interface{}) {
 	}
 	dir := filepath.Join(home, ".pakka")
 	_ = os.MkdirAll(dir, 0755)
-	f, err := os.OpenFile(filepath.Join(dir, "debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filepath.Join(dir, "debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return
 	}
@@ -298,6 +298,34 @@ func collectContextPaths(dir string) []string {
 	return paths
 }
 
+// trustedFallbackDir reports whether dir is safe to scan as a project-root
+// fallback when the original CWD has no context files. Trusted = either
+// inside the user's home directory, OR carries a project sentinel (a .git
+// or .pakka entry). Anything else (e.g., /tmp, /, another user's home) is
+// rejected so a crafted CWD cannot trick us into rewriting unrelated
+// CLAUDE.md/DESIGN.md files in an ancestor we never owned.
+func trustedFallbackDir(dir string) bool {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		homeAbs, err := filepath.Abs(home)
+		if err == nil {
+			rel, err := filepath.Rel(homeAbs, abs)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+				return true
+			}
+		}
+	}
+	for _, sentinel := range []string{".git", ".pakka"} {
+		if _, err := os.Stat(filepath.Join(abs, sentinel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // autoCompressContextFiles finds CLAUDE.md, DESIGN.md, BUILD.md in dir and
 // one level of subdirectories. For each file without an existing .original.md
 // backup, it compresses in place, writes the backup, and records savings.
@@ -313,9 +341,16 @@ func autoCompressContextFiles(dir, mode, sessionID string) {
 	// Fallback: if no candidates found and we're not at filesystem root,
 	// try the parent directory. Handles cases where CWD is a subdirectory
 	// of the project root (e.g., hook runner sets CWD to a child dir).
+	//
+	// Boundary check: a crafted CWD in a hook event could otherwise walk us
+	// into ancestor directories where unrelated CLAUDE.md/DESIGN.md files
+	// live (e.g., /Users/<other>/Projects). Only follow the fallback when
+	// the parent is either inside the user's home dir OR carries a project
+	// sentinel (.git or .pakka). Otherwise skip — better to no-op than to
+	// rewrite ancestor context files.
 	if len(paths) == 0 && dir != "/" {
 		parent := filepath.Dir(dir)
-		if parent != dir {
+		if parent != dir && trustedFallbackDir(parent) {
 			paths = collectContextPaths(parent)
 			debugLogf("compress: fallback dir=%s candidates=%d", parent, len(paths))
 		}
@@ -448,9 +483,6 @@ func runCompressToolResult(event *hookevent.Event) {
 		// Check if response indicates an error (exit code != 0)
 		// Claude Code sets tool_response to error text on non-zero exit
 		// We check for exit_code field in the event JSON
-		var rawEvent map[string]json.RawMessage
-		// Re-check: the event struct may have extra fields we don't capture.
-		// For Bash, the response on error typically starts with error indicators.
 		// Conservative: check if event has an exit_code field via ToolInput
 		var bashInput struct {
 			ExitCode *int `json:"exit_code"`
@@ -459,7 +491,6 @@ func runCompressToolResult(event *hookevent.Event) {
 		if bashInput.ExitCode != nil && *bashInput.ExitCode != 0 {
 			return // error output — pass through full
 		}
-		_ = rawEvent // suppress unused
 	}
 
 	maxBytes, headLines, tailLines := loadToolResultConfig()
@@ -479,7 +510,21 @@ func runCompressToolResult(event *hookevent.Event) {
 	}
 
 	truncatedLines := totalLines - headLines - tailLines
-	truncatedBytes := len(response) // approximate
+
+	// Compute byte size of head and tail slices we keep, so the message
+	// reports bytes actually removed (len(response) - kept), not total size.
+	headBytes := 0
+	for i := 0; i < headLines && i < totalLines; i++ {
+		headBytes += len(lines[i]) + 1 // +1 for newline separator
+	}
+	tailBytes := 0
+	for i := totalLines - tailLines; i < totalLines; i++ {
+		tailBytes += len(lines[i]) + 1
+	}
+	truncatedBytes := len(response) - headBytes - tailBytes
+	if truncatedBytes < 0 {
+		truncatedBytes = 0
+	}
 
 	var b strings.Builder
 	for i := 0; i < headLines && i < totalLines; i++ {
@@ -960,11 +1005,34 @@ func loadCommitGateConfig() *commitgate.Config {
 	return cfg
 }
 
+// repoRoot returns the absolute git repo root for the current working
+// directory, or "" if git cannot resolve one. Callers pass the result to
+// `git -C <root> ...` so commands behave the same regardless of which
+// subdirectory the hook is invoked from.
+func repoRoot() string {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func gatherReviewState(cfg *commitgate.Config) *commitgate.State {
 	state := &commitgate.State{}
 
+	// Resolve repo root so the diff works when the hook runs from a
+	// subdirectory. Without -C <root>, a CWD outside or below the repo
+	// boundary can yield an empty diff and cause the gate to block a
+	// legitimate commit.
+	root := repoRoot()
+
 	// Diff size via git
-	out, err := exec.Command("git", "diff", "--cached").Output()
+	diffArgs := []string{}
+	if root != "" {
+		diffArgs = append(diffArgs, "-C", root)
+	}
+	diffArgs = append(diffArgs, "diff", "--cached")
+	out, err := exec.Command("git", diffArgs...).Output()
 	if err == nil {
 		state.DiffBytes = len(out)
 	}

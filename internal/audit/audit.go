@@ -65,7 +65,7 @@ func Run(event *hookevent.Event, phase string) error {
 	var inputHash string
 	if len(event.ToolInput) > 0 {
 		h := sha256.Sum256(event.ToolInput)
-		inputHash = fmt.Sprintf("sha256:%x", h[:8])
+		inputHash = fmt.Sprintf("sha256:%x", h[:])
 	}
 
 	entry := Entry{
@@ -113,7 +113,7 @@ func RunBlock(event *hookevent.Event, reason string) error {
 	var inputHash string
 	if len(event.ToolInput) > 0 {
 		h := sha256.Sum256(event.ToolInput)
-		inputHash = fmt.Sprintf("sha256:%x", h[:8])
+		inputHash = fmt.Sprintf("sha256:%x", h[:])
 	}
 
 	entry := Entry{
