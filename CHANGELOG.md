@@ -4,6 +4,9 @@ All notable changes to pakka. Format follows [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed
+- **Pass 4.7 — fix PreToolUse stdout contract for trailer injection.** Auto-trailers (`Reviewed-by-pakka`, `Co-authored-by`, `pakka-session`) now actually land on Claude-authored commits. Pre-fix count: 0 trailers across the entire git history. The commit-gate hook was emitting the legacy `{"tool_input":{"command":"..."}}` envelope; the current Claude Code contract requires `{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"..."}}}`. Claude Code silently ignored the unknown shape, so the rewritten command (with trailers) never reached `git`. Test added in `cmd/pakka-core/main_test.go` to prevent regression — asserts envelope shape and varies-with-input.
+
 ### Added
 - **`claude -p` subprocess as primary semantic-rewrite engine** (Pass 4.6). Zero-config for Claude Code users — pakka reuses existing `claude` auth on `PATH`. `ANTHROPIC_API_KEY` is now an optional HTTP fallback. Resolution order: `claude` CLI → `ANTHROPIC_API_KEY` HTTP → deterministic strict (nil). New setting `pakka.compress.engine` (`claude-cli` | `anthropic-http` | `auto`, default `auto`). See DESIGN.md §5.16.
 

@@ -883,11 +883,36 @@ func runCommitGate() {
 	}
 
 	if d.Command != "" {
-		out := map[string]interface{}{
-			"tool_input": map[string]string{"command": d.Command},
-		}
-		_ = json.NewEncoder(os.Stdout).Encode(out)
+		_, _ = os.Stdout.Write(emitCommitRewrite(d.Command))
 	}
+}
+
+// emitCommitRewrite returns the JSON envelope Claude Code expects for a
+// PreToolUse Bash rewrite. The shape changed when Claude Code formalized the
+// hook contract: callers MUST emit
+//
+//	{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"..."}}}
+//
+// Pre-Pass-4.7 pakka emitted the legacy `{"tool_input":{"command":"..."}}`
+// shape. Claude Code silently ignored it, so every Claude-authored commit
+// from the introduction of auto-trailers through Pass 4.6 landed without
+// the Reviewed-by-pakka, Co-authored-by, or pakka-session trailers.
+// Diagnostic: `git log` showed 0 trailers across the entire history despite
+// the gate logging "passed" verdicts on every commit.
+//
+// Returns a complete line including the trailing newline emitted by
+// json.Encoder so callers can write the bytes directly to stdout.
+func emitCommitRewrite(cmd string) []byte {
+	out := map[string]interface{}{
+		"hookSpecificOutput": map[string]interface{}{
+			"hookEventName": "PreToolUse",
+			"updatedInput": map[string]string{
+				"command": cmd,
+			},
+		},
+	}
+	b, _ := json.Marshal(out)
+	return append(b, '\n')
 }
 
 func pluginRoot() string {
