@@ -785,6 +785,147 @@ func TestShellQuote_unitProperties(t *testing.T) {
 	}
 }
 
+// --- Pass 4.5 phase 2: wrapped commit shapes ---
+//
+// Builder subagents emit commits as `cd <repo> && git commit ...` or
+// `git -C <repo> commit ...` because their Bash invocations don't persist
+// cwd between calls. Phase 1 traced silent trailer drops to IsGitCommit
+// rejecting these shapes. These tests pin the recognized set: bare,
+// -C form, and single-segment cd-wrap. Chains and multi-segment cd
+// pipelines remain rejected — see DECISIONS.md "Trailer injection scope".
+
+// trailerSubstr is the literal substring proving Trailer A was injected.
+const trailerSubstr = "--trailer 'Reviewed-by-pakka:"
+
+// TestEvaluate_WrappedCommitShapesAreRecognized is the behavioural assertion:
+// commands of identical intent but different wrap shape must (a) all be
+// recognized and rewritten when the wrap is one of the three accepted forms,
+// and (b) be left untouched when the shape is rejected (chain, multi-cd, etc.).
+//
+// VARIES: the same gate-passed config produces a rewrite for some inputs and
+// no rewrite for others. The discriminator is solely the input shape.
+func TestEvaluate_WrappedCommitShapesAreRecognized(t *testing.T) {
+	cfg := DefaultConfig()
+	state := &State{HasRecentPass: true}
+
+	tests := []struct {
+		name        string
+		cmd         string
+		wantTrailer bool
+		wantSyntax  bool // run `bash -n` smoke check on the rewrite
+	}{
+		{
+			name:        "bare git commit (regression baseline)",
+			cmd:         `git commit -m "x"`,
+			wantTrailer: true,
+			wantSyntax:  true,
+		},
+		{
+			name:        "cd && git commit (single segment)",
+			cmd:         `cd /tmp/repo && git commit -m "x"`,
+			wantTrailer: true,
+			wantSyntax:  true,
+		},
+		{
+			name:        "git -C path commit",
+			cmd:         `git -C /tmp/repo commit -m "x"`,
+			wantTrailer: true,
+			wantSyntax:  true,
+		},
+		{
+			name:        "git -C \"path with space\" commit",
+			cmd:         `git -C "/tmp/path with space" commit -m "x"`,
+			wantTrailer: true,
+			wantSyntax:  true,
+		},
+		{
+			name:        "cd && git commit && git push (trailing chain → reject)",
+			cmd:         `cd /tmp/repo && git commit -m "x" && git push`,
+			wantTrailer: false,
+		},
+		{
+			name:        "git commit && git push (trailing chain → reject)",
+			cmd:         `git commit -m "x" && git push`,
+			wantTrailer: false,
+		},
+		{
+			name:        "git commit ; echo done (trailing semicolon → reject)",
+			cmd:         `git commit -m "x" ; echo done`,
+			wantTrailer: false,
+		},
+		{
+			name:        "cd /a && cd /b && git commit (multi-segment cd → reject)",
+			cmd:         `cd /a && cd /b && git commit -m "x"`,
+			wantTrailer: false,
+		},
+		{
+			name:        `echo "git commit" (commit inside string → reject)`,
+			cmd:         `echo "git commit"`,
+			wantTrailer: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := Evaluate(tt.cmd, cfg, state)
+			gotTrailer := strings.Contains(d.Command, trailerSubstr)
+			if gotTrailer != tt.wantTrailer {
+				t.Fatalf("input %q → wantTrailer=%v, got=%v\n  Command=%q",
+					tt.cmd, tt.wantTrailer, gotTrailer, d.Command)
+			}
+			if tt.wantSyntax && d.Command != "" {
+				cmd := exec.Command("bash", "-n", "-c", d.Command)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Errorf("rewritten command failed `bash -n` syntax check: %v\n  cmd=%q\n  output=%s",
+						err, d.Command, string(out))
+				}
+			}
+		})
+	}
+}
+
+// TestIsGitCommit_WrappedShapes pins the unit-level matcher across the same
+// shape set, so a future regression is caught at the cheapest layer too.
+func TestIsGitCommit_WrappedShapes(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want bool
+	}{
+		// Recognized.
+		{`git commit -m "x"`, true},
+		{`cd /tmp/repo && git commit -m "x"`, true},
+		{`git -C /tmp/repo commit -m "x"`, true},
+		{`git -C "/tmp/path with space" commit -m "x"`, true},
+		{`cd /tmp/repo && git commit`, true}, // editor mode, wrapped
+		{`git -C /tmp/repo commit --amend`, true},
+
+		// Rejected — trailing chain.
+		{`cd /tmp/repo && git commit -m "x" && git push`, false},
+		{`git commit -m "x" && git push`, false},
+		{`git commit -m "x"; echo done`, false},
+		{`git commit -m "x" | tee log`, false},
+		{`git commit -m "x" > out.txt`, false},
+
+		// Rejected — multi-segment cd chain.
+		{`cd /a && cd /b && git commit -m "x"`, false},
+
+		// Rejected — string literal containing the phrase.
+		{`echo "git commit"`, false},
+		{`echo 'git commit'`, false},
+
+		// Rejected — wrong prefix or wrong subcommand.
+		{`pushd /tmp/repo && git commit -m "x"`, false}, // not cd
+		{`cd /tmp/repo; git commit -m "x"`, false},      // ; not &&
+		{`git -c user.name=x commit -m "x"`, false},     // -c (lowercase) is not -C
+	}
+	for _, tt := range tests {
+		got := IsGitCommit(tt.cmd)
+		if got != tt.want {
+			t.Errorf("IsGitCommit(%q) = %v, want %v", tt.cmd, got, tt.want)
+		}
+	}
+}
+
 func BenchmarkEvaluateRewrite(b *testing.B) {
 	cfg := DefaultConfig()
 	state := &State{HasRecentPass: true}

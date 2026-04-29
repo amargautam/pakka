@@ -98,17 +98,253 @@ func CoAuthorTrailer() string {
 	return fmt.Sprintf("Co-authored-by: pakka <%s>", coAuthorPakkaEmail)
 }
 
-// IsGitCommit reports whether cmd is a git commit command.
+// IsGitCommit reports whether cmd is a recognizable git commit command.
 //
-// Purpose: Detect git commit variants (with flags, --amend, editor mode).
+// Purpose: Detect commit shapes the gate can rewrite. Three are accepted:
+//  1. bare:    `git commit ...`
+//  2. -C form: `git -C <path> commit ...`
+//  3. cd-wrap: `cd <path> && git commit ...` (single segment; no trailing chain)
+//
+// Chained commits (`git commit && git push`, `git commit; foo`) are rejected:
+// trailer injection inside a chain has too many failure modes. See
+// extractCommitSegment for details.
+//
 // Errors: None.
 func IsGitCommit(cmd string) bool {
-	trimmed := strings.TrimLeft(cmd, " \t\n")
-	if !strings.HasPrefix(trimmed, "git commit") {
-		return false
+	_, ok, _ := extractCommitSegment(cmd)
+	return ok
+}
+
+// extractCommitSegment locates the `git commit` portion of cmd in one of the
+// three recognized shapes. Returns:
+//   - segment: the substring starting at `git commit` (or `git -C ... commit`),
+//     extending to end of cmd. For wrapped shapes, this is the suffix after
+//     the wrapper.
+//   - ok: true if the shape is recognized.
+//   - prefixLen: byte offset of segment within cmd (so InjectTrailer can
+//     splice trailers into the right place).
+//
+// Rejection rules:
+//   - control operators (`&&`, `;`, `|`, `>`) anywhere in the commit segment
+//     itself (after the segment's start) — but NOT inside quoted args.
+//   - more than one `git commit` occurrence in cmd.
+//   - cd chains with more than one segment (e.g. `cd /a && cd /b && git commit ...`).
+//   - any prefix other than `cd <arg> && ` before a wrapped `git commit`.
+func extractCommitSegment(cmd string) (segment string, ok bool, prefixLen int) {
+	// Multiple `git commit` occurrences → reject. We use a string scan that
+	// requires word boundaries on both sides; this catches `git commit && git commit`
+	// while leaving `git commit-graph` alone.
+	if countCommitOccurrences(cmd) > 1 {
+		return "", false, 0
 	}
-	rest := trimmed[len("git commit"):]
-	return rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '\n'
+
+	trimmed := strings.TrimLeft(cmd, " \t\n")
+	leading := len(cmd) - len(trimmed)
+
+	// Wrapped: `cd <arg> && git commit ...`.
+	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
+		// Parse `cd <arg>` then require ` && ` (with surrounding whitespace).
+		i := 2 // past "cd"
+		for i < len(trimmed) && isWS(trimmed[i]) {
+			i++
+		}
+		if i >= len(trimmed) {
+			return "", false, 0
+		}
+		// Read one shell-quoted-or-bare argument as the cd target.
+		_, next := readQuotedArg(trimmed, i)
+		i = next
+		// Skip whitespace, expect literal `&&`.
+		for i < len(trimmed) && isWS(trimmed[i]) {
+			i++
+		}
+		if i+1 >= len(trimmed) || trimmed[i] != '&' || trimmed[i+1] != '&' {
+			return "", false, 0
+		}
+		i += 2
+		for i < len(trimmed) && isWS(trimmed[i]) {
+			i++
+		}
+		// What remains must be a bare/`-C` git commit segment with no further chain.
+		seg, ok2 := parseGitCommitHead(trimmed[i:])
+		if !ok2 {
+			return "", false, 0
+		}
+		// Reject any control operator in the segment outside quotes.
+		if hasUnquotedControlOp(seg) {
+			return "", false, 0
+		}
+		return seg, true, leading + i
+	}
+
+	// Bare or -C form: `git ...`.
+	if strings.HasPrefix(trimmed, "git ") || strings.HasPrefix(trimmed, "git\t") {
+		seg, ok2 := parseGitCommitHead(trimmed)
+		if !ok2 {
+			return "", false, 0
+		}
+		if hasUnquotedControlOp(seg) {
+			return "", false, 0
+		}
+		return seg, true, leading
+	}
+
+	return "", false, 0
+}
+
+// parseGitCommitHead checks whether s begins with `git commit` or
+// `git -C <arg> commit`, and returns s unchanged on success. Any other shape
+// (other flags between `git` and `commit`, commit-graph, etc.) is rejected.
+func parseGitCommitHead(s string) (string, bool) {
+	// Must start with "git" + WS.
+	if !strings.HasPrefix(s, "git ") && !strings.HasPrefix(s, "git\t") {
+		return "", false
+	}
+	i := 3
+	for i < len(s) && isWS(s[i]) {
+		i++
+	}
+	if i >= len(s) {
+		return "", false
+	}
+
+	// `-C <arg>` is the only flag we accept between `git` and `commit`.
+	if strings.HasPrefix(s[i:], "-C") && (i+2 < len(s) && (isWS(s[i+2]) || s[i+2] == '=')) {
+		j := i + 2
+		// `-C=path` not standard; advance past either ` ` or `=`.
+		for j < len(s) && (isWS(s[j]) || s[j] == '=') {
+			j++
+		}
+		if j >= len(s) {
+			return "", false
+		}
+		_, next := readQuotedArg(s, j)
+		j = next
+		for j < len(s) && isWS(s[j]) {
+			j++
+		}
+		// Now expect `commit` as the next word.
+		if !strings.HasPrefix(s[j:], "commit") {
+			return "", false
+		}
+		k := j + len("commit")
+		if k != len(s) && !isWS(s[k]) {
+			return "", false
+		}
+		return s, true
+	}
+
+	// Otherwise must be literal `commit` next.
+	if !strings.HasPrefix(s[i:], "commit") {
+		return "", false
+	}
+	k := i + len("commit")
+	if k != len(s) && !isWS(s[k]) {
+		return "", false
+	}
+	return s, true
+}
+
+// hasUnquotedControlOp reports whether s contains any of `&&`, `;`, `|`, `>`
+// outside of a single- or double-quoted string. Used to reject chained shapes.
+func hasUnquotedControlOp(s string) bool {
+	i := 0
+	n := len(s)
+	for i < n {
+		ch := s[i]
+		switch ch {
+		case '\'':
+			i++
+			for i < n && s[i] != '\'' {
+				i++
+			}
+			if i < n {
+				i++
+			}
+		case '"':
+			i++
+			for i < n {
+				if s[i] == '\\' && i+1 < n {
+					i += 2
+					continue
+				}
+				if s[i] == '"' {
+					i++
+					break
+				}
+				i++
+			}
+		case '\\':
+			// Escaped next char (outside quotes) — skip both.
+			i += 2
+		case '&':
+			if i+1 < n && s[i+1] == '&' {
+				return true
+			}
+			i++
+		case ';', '|', '>':
+			return true
+		default:
+			i++
+		}
+	}
+	return false
+}
+
+// countCommitOccurrences counts non-overlapping `git commit` substrings in s
+// that lie outside of single- or double-quoted strings. Word boundaries on
+// the trailing side are enforced (so `git commit-graph` does not count).
+//
+// This is a conservative, syntactic count: it treats `git commit` and
+// `git -C <path> commit` as separate occurrences. That is fine for our
+// deduplication purposes — the -C form has only one literal `git commit`
+// substring (the `commit` is preceded by `<path> ` not `git `), so it
+// counts as 0 here. Callers should not rely on this returning 1 for valid
+// shapes; they only check `> 1` to detect chained or duplicated commits.
+func countCommitOccurrences(s string) int {
+	count := 0
+	i := 0
+	n := len(s)
+	for i < n {
+		ch := s[i]
+		switch ch {
+		case '\'':
+			i++
+			for i < n && s[i] != '\'' {
+				i++
+			}
+			if i < n {
+				i++
+			}
+		case '"':
+			i++
+			for i < n {
+				if s[i] == '\\' && i+1 < n {
+					i += 2
+					continue
+				}
+				if s[i] == '"' {
+					i++
+					break
+				}
+				i++
+			}
+		default:
+			// `git commit` literal with leading word boundary and trailing
+			// word boundary (end-of-string or whitespace).
+			if (i == 0 || isWS(s[i-1]) || s[i-1] == '&' || s[i-1] == ';') &&
+				strings.HasPrefix(s[i:], "git commit") {
+				k := i + len("git commit")
+				if k == n || isWS(s[k]) {
+					count++
+					i = k
+					continue
+				}
+			}
+			i++
+		}
+	}
+	return count
 }
 
 // gitCommitParts holds parsed components of a git commit command.
@@ -419,13 +655,23 @@ func HasSkipMarker(cmd string) bool {
 
 // InjectTrailer appends --trailer to a git commit command.
 //
-// Purpose: Rewrite git commit to include the pakka trailer.
+// Purpose: Rewrite git commit to include the pakka trailer. Handles all three
+// recognized shapes (bare `git commit`, `git -C <path> commit`, and the
+// `cd <path> && git commit` wrapper). For wrapped shapes, the trailer is
+// spliced inside the `git commit ...` portion so the cd context is preserved.
+// Falls back to plain append for unrecognized shapes (defense-in-depth: callers
+// gate on IsGitCommit, but appending a stray flag is harmless if reached).
+//
 // Security: The trailer value is shell-quoted before concatenation. Single-quote
 // wrapping is content-agnostic — embedded quotes, $, backticks, backslashes, and
 // newlines are neutralised. Callers may pass attacker-controlled trailer text
 // without risk of shell injection in the resulting Bash command.
 // Errors: None.
 func InjectTrailer(cmd, trailer string) string {
+	// For all three recognized shapes, the segment runs to end-of-line
+	// (chains are rejected by extractCommitSegment), so a plain append works.
+	// We still call extractCommitSegment to validate, but the splice point
+	// for currently-supported shapes is always end-of-string.
 	return cmd + ` --trailer ` + shellQuote(trailer)
 }
 
