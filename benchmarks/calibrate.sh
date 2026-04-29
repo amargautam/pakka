@@ -24,21 +24,23 @@ echo ""
 # --- Run each seed through the reviewer ---
 for seed in $BUG_SEEDS $CLEAN_SEEDS; do
     seed_dir="$SEEDS_DIR/$seed"
-    prompt=$(cat "$seed_dir/prompt.md")
-    patch=$(cat "$seed_dir/seed.patch")
     result_file="$RESULTS_DIR/$seed.jsonl"
 
     echo "Running seed: $seed ..."
 
-    # Feed the diff to claude in headless mode, asking for JSON-line findings
-    claude -p "You are a code reviewer. $prompt
-
-\`\`\`diff
-$patch
-\`\`\`
-
-Output one JSON line per finding. Schema: {\"kind\":\"correctness|security\",\"file\":\"...\",\"line\":N,\"severity\":\"warn|error\",\"confidence\":N,\"rationale\":\"...\",\"fix\":\"...\"}
-If no issues found, output nothing." > "$result_file" 2>/dev/null || true
+    # Build the prompt on stdin. Seed files are untrusted with respect to
+    # shell — never interpolate their contents into a double-quoted command
+    # arg. printf '%s' avoids backslash interpretation; the heredoc-style
+    # pipe keeps prompt + patch out of argv entirely.
+    {
+        printf 'You are a code reviewer. '
+        cat "$seed_dir/prompt.md"
+        printf '\n\n```diff\n'
+        cat "$seed_dir/seed.patch"
+        printf '\n```\n\n'
+        printf '%s\n' 'Output one JSON line per finding. Schema: {"kind":"correctness|security","file":"...","line":N,"severity":"warn|error","confidence":N,"rationale":"...","fix":"..."}'
+        printf '%s\n' 'If no issues found, output nothing.'
+    } | claude -p > "$result_file" 2>/dev/null || true
 done
 
 # --- Score at each threshold ---

@@ -136,5 +136,5 @@ func checkBash(event *hookevent.Event) *Result {
 var (
 	evalRe      = regexp.MustCompile(`(?:^|[;&|]\s*|\$\(\s*)eval\b`)
 	pipeShellRe = regexp.MustCompile(`(?i)\b(curl|wget)\b.*\|\s*(sh|bash|zsh)\b`)
-	traversalRe = regexp.MustCompile(`\.\./\.\./\.\.`)
+	traversalRe = regexp.MustCompile(`(?:\.\./){2,}`)
 )

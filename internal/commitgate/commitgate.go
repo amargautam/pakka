@@ -559,12 +559,25 @@ func messageHasTrailer(msg, marker string) bool {
 			lastBlank = i
 		}
 	}
-	if lastBlank < 0 {
+	if lastBlank >= 0 {
+		// Real trailer block (lines after the last blank line). Any
+		// trailer-shaped line containing the marker counts as a hit.
+		for _, line := range lines[lastBlank+1:] {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, marker) && looksLikeTrailer(trimmed) {
+				return true
+			}
+		}
 		return false
 	}
-	for _, line := range lines[lastBlank+1:] {
+	// No blank-line separator (e.g., single-line `-m` message that is
+	// itself a trailer like `Reviewed-by-pakka: v0.1.0`). Scan every line
+	// but require the line to START with the marker so a prose mention
+	// like `docs: explain the Reviewed-by-pakka: trailer format` does not
+	// accidentally suppress trailer injection.
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, marker) && looksLikeTrailer(trimmed) {
+		if strings.HasPrefix(trimmed, marker) && looksLikeTrailer(trimmed) {
 			return true
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -125,12 +126,31 @@ func isTestFile(path string) bool {
 	return false
 }
 
-// runCommand executes a shell command with a timeout.
+// shellMetaRe matches shell metacharacters that would enable command
+// injection if the command string were handed to `sh -c`. Any match
+// causes runCommand to refuse to execute.
+var shellMetaRe = regexp.MustCompile("[;|&`>]|\\$\\(")
+
+// runCommand executes a configured stack command (lint/test) with a timeout.
+//
+// The command string comes from .pakka/stack.json which is writable by anyone
+// who can edit the repo. To prevent arbitrary code execution on every
+// Edit/Write, we tokenize via strings.Fields and exec the binary directly
+// instead of routing through `sh -c`. Commands containing shell metacharacters
+// (; | & ` > $( ) are rejected outright.
 func runCommand(command, cwd string) *Result {
+	if shellMetaRe.MatchString(command) {
+		return &Result{Passed: false, Output: "stack-gate: refusing to run command with shell metacharacters"}
+	}
+	argv := strings.Fields(command)
+	if len(argv) == 0 {
+		return &Result{Passed: true}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), lintTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}

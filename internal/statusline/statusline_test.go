@@ -344,8 +344,10 @@ func TestRun_DefaultLevelLabel(t *testing.T) {
 // --- behavioral aggregation tests ---
 
 // Cross-session aggregation: 3 meter files for same repo, savings 100/200/300.
-// Combined inSavedTokens=600 → with no transcripts denom=600, pct=100%.
-// Then add transcript input to confirm the SUM (not just one file) drives denom.
+// Combined inSavedTokens=600. With no transcripts, denom (actual spend) is 0
+// so pct rounds to 0 — verify aggregation instead via the rendered ↑600.
+// Then add transcript input=900; denom = 900 (savings excluded);
+// pct = round(600/900*100) = 67.
 func TestCrossSessionAggregation(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
@@ -361,21 +363,22 @@ func TestCrossSessionAggregation(t *testing.T) {
 	}
 
 	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
-	if extractInPct(out) != 100 {
-		t.Errorf("aggregated inPct want 100, got %q", out)
+	if !strings.Contains(out, "↑600") {
+		t.Errorf("aggregation broken; expected ↑600 in %q", out)
+	}
+	if extractInPct(out) != 0 {
+		t.Errorf("with no spend pct should be 0, got %q", out)
 	}
 
-	// Add transcript input=900; denom = 900 + 600 saved = 1500; pct = round(600/1500*100) = 40.
+	// Add transcript input=900; denom = 900 (savings not in denom);
+	// pct = round(600/900*100) = 67.
 	writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
 		{"input_tokens": 900, "output_tokens": 0},
 	})
 	out2 := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	pct2 := extractInPct(out2)
-	if pct2 != 40 {
-		t.Errorf("after adding transcript inputs, want 40 got %d (out=%q)", pct2, out2)
-	}
-	if !(pct2 < 100) {
-		t.Errorf("inPct should drop with transcript input; got %d", pct2)
+	if pct2 != 67 {
+		t.Errorf("after adding transcript inputs, want 67 got %d (out=%q)", pct2, out2)
 	}
 }
 
@@ -400,9 +403,15 @@ func TestRepoIsolation(t *testing.T) {
 	})
 
 	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
-	// Only own session counted: denom = 500 → pct = 100%.
-	if extractInPct(out) != 100 {
-		t.Errorf("isolation broken; got %q", out)
+	// Only own session counted: rendered savings should be exactly 500
+	// (foreign + legacy entries excluded). pct rounds to 0 because there
+	// is no spend in the denominator — that is correct, not isolation
+	// breakage; verify via the rendered ↑500 marker instead.
+	if !strings.Contains(out, "↑500") {
+		t.Errorf("isolation broken; expected ↑500 in %q", out)
+	}
+	if strings.Contains(out, "9999") || strings.Contains(out, "10499") {
+		t.Errorf("foreign/legacy meter leaked into aggregation: %q", out)
 	}
 }
 

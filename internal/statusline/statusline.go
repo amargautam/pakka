@@ -145,12 +145,13 @@ func compute(event *hookevent.Event, outputLevel string) metrics {
 	// Cumulative transcript input/output across all sessions for this repo.
 	inTokens, cacheCreation, cacheRead, outTokens := readAllTranscripts(projectsDir, repo)
 
-	// Cost-weighted input denominator. Numerator (savedTokens) keeps 1× weight.
+	// Cost-weighted input denominator = actual spend only. savedTokens is the
+	// numerator (savings) and must not appear in the denominator, otherwise
+	// the savings % is understated.
 	costUnits := int64(math.Round(
 		float64(inTokens)*costWeightInput +
 			float64(cacheCreation)*costWeightCacheCreation +
-			float64(cacheRead)*costWeightCacheRead +
-			float64(savedTokens)*costWeightInput,
+			float64(cacheRead)*costWeightCacheRead,
 	))
 	inPct := pctRound(savedTokens, costUnits)
 
