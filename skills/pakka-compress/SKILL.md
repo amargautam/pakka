@@ -98,8 +98,12 @@ state on success. Inspect state directly with:
 ${CLAUDE_PLUGIN_ROOT}/bin/run orchestrator-status
 ```
 
-ANTHROPIC_API_KEY absent → orchestrator silently no-ops (logged but never
-warned during a session).
+Auth: by default the orchestrator uses your Claude Code session auth via a
+`claude -p` subprocess — no API key required. If `claude` is not on PATH it
+falls back to `ANTHROPIC_API_KEY` HTTP. If neither is available the
+orchestrator silently no-ops (logged but never warned during a session).
+Force a path via `pakka.compress.engine` (`claude-cli` | `anthropic-http` |
+`auto`).
 
 ### Semantic mode
 
@@ -118,12 +122,16 @@ mode runs a cherry-pick retry (max 2 retries) asking the model to put the
 dropped regions back. If retries exhaust, semantic mode returns the ORIGINAL
 input unchanged — never ships a partially corrupted file.
 
-API-key fallback: if `ANTHROPIC_API_KEY` is not set, semantic mode
-deterministically falls back to `--mode=strict` and logs a one-line note to
-`~/.pakka/debug.log`. Calls never fail because of a missing key.
+Auth resolution: (1) `claude` CLI subprocess (zero-config; reuses your
+Claude Code OAuth/keychain), (2) `ANTHROPIC_API_KEY` HTTP fallback, (3)
+deterministic strict fallback. Calls never fail because of a missing key —
+the worst case is dropping to deterministic compression with a one-line
+note in `~/.pakka/debug.log`.
 
-Model: defaults to `claude-haiku-4-5-20251001`. Override via the
-`PAKKA_COMPRESS_MODEL` env var.
+Model: when the HTTP fallback is used, defaults to
+`claude-haiku-4-5-20251001` (override via `PAKKA_COMPRESS_MODEL`). The
+`claude -p` path inherits the user's local Claude Code model preference
+unless the orchestrator settings pin one.
 
 ### Red Flags
 

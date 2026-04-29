@@ -549,6 +549,12 @@ With 4-vector compression:
 
 Net: 35-50% total cost reduction, dominated by output compression (V1).
 ```
+#### Auth resolution (Pass 4.6)
+Semantic compression and the SessionStart auto-orchestrator both pick a rewriter via the same resolution chain:
+1. **`claude` CLI subprocess (default).** When `claude` is on `PATH`, pakka shells out via `claude -p --output-format text --permission-mode bypassPermissions` and pipes the per-level prompt template to stdin. Reuses the user's existing Claude Code OAuth/keychain auth — zero-config for any Claude Code user. Note: `--bare` is deliberately NOT used; `--bare` strips OAuth and forces `ANTHROPIC_API_KEY`, defeating the point of this path (Pass 5b finding).
+2. **`ANTHROPIC_API_KEY` HTTP fallback.** If `claude` is missing from PATH but the env var is set, pakka calls the documented `/v1/messages` endpoint via `net/http`. Same templates, same validator gate, same retry budget.
+3. **Deterministic strict.** If neither auth path is available, semantic mode falls back to deterministic structural+linguistic compression and logs a one-line note to `~/.pakka/debug.log`. The orchestrator no-ops silently. Calls never fail because of missing auth.
+Forced via `pakka.compress.engine: "claude-cli" | "anthropic-http" | "auto"` (default `auto`). When forced, the orchestrator refuses to fall back — useful for debugging which path is actually running.
 ---
 ## 6. Status-line format
 Printed to **stderr** by `pakka-core status-line` on `Stop`:

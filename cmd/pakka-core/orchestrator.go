@@ -7,12 +7,27 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/amargautam/pakka/internal/compress/orchestrator"
 	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/meter"
+)
+
+// lookPath wraps exec.LookPath so tests can stub PATH resolution without
+// mutating $PATH (which would race other parallel tests).
+var lookPath = exec.LookPath
+
+// rewriterEngine names the auth path the orchestrator will use.
+type rewriterEngine string
+
+const (
+	engineClaudeCLI    rewriterEngine = "claude-cli"
+	engineAnthropicHTTP rewriterEngine = "anthropic-http"
+	engineAuto         rewriterEngine = "auto"
+	engineNone         rewriterEngine = ""
 )
 
 // orchestratorTargets returns the configured allowlist for the running
@@ -27,8 +42,8 @@ func orchestratorTargets() []string {
 
 // orchestratorEnabled returns whether the SessionStart auto-orchestrator is
 // allowed to run. It requires (a) compress.semantic=true in settings AND
-// (b) at least one target. ANTHROPIC_API_KEY absence is handled separately —
-// the orchestrator silently no-ops without one.
+// (b) at least one target. Auth (claude CLI or ANTHROPIC_API_KEY) is checked
+// later in resolveRewriter — the orchestrator silently no-ops without one.
 func orchestratorEnabled() bool {
 	s := loadSettings()
 	if s.Pakka.Compress.Semantic == nil || !*s.Pakka.Compress.Semantic {
@@ -64,7 +79,7 @@ func runOrchestrator(repo, level string) {
 	}
 	o := newOrchestrator(repo, level, fmt.Sprintf("orch-%d", os.Getpid()))
 	if o == nil {
-		debugLogf("orchestrator: refusing to run repo=%s level=%s (no api key or no targets)", repo, level)
+		debugLogf("orchestrator: refusing to run repo=%s level=%s (no rewriter or no targets)", repo, level)
 		return
 	}
 	if err := o.Run(context.Background()); err != nil {
@@ -72,17 +87,23 @@ func runOrchestrator(repo, level string) {
 	}
 }
 
-// newOrchestrator builds an Orchestrator wired to the production Anthropic
-// rewriter. Returns nil when the API key is missing — caller logs and skips.
+// newOrchestrator builds an Orchestrator wired to the best available
+// rewriter. Resolution order:
+//
+//  1. `pakka.compress.engine` setting (forces a path; useful for debugging).
+//  2. `claude` CLI on PATH → ClaudeCLI rewriter (zero-config OAuth path).
+//  3. ANTHROPIC_API_KEY set → AnthropicClient HTTP rewriter (legacy).
+//  4. Neither → nil (caller logs and skips).
+//
+// Logs to ~/.pakka/orchestrator.log which path was tried and why each
+// failed/succeeded. Never logs file contents — only paths, env-var presence
+// (boolean), and selected engine name.
 func newOrchestrator(repo, level, sessionID string) *orchestrator.Orchestrator {
 	if repo == "" {
 		return nil
 	}
-	client, ok := semantic.NewAnthropicClient()
-	if !ok {
-		// Note: callers may still want to construct without a rewriter for
-		// dry-run paths; today every invocation needs the rewriter, so we
-		// bail and log.
+	rewriter := resolveRewriter()
+	if rewriter == nil {
 		return nil
 	}
 	return &orchestrator.Orchestrator{
@@ -90,8 +111,78 @@ func newOrchestrator(repo, level, sessionID string) *orchestrator.Orchestrator {
 		Targets:   orchestratorTargets(),
 		Level:     level,
 		SessionID: sessionID,
-		Rewriter:  client,
+		Rewriter:  rewriter,
 	}
+}
+
+// resolveRewriter returns the best Rewriter for current settings + env, or
+// nil when neither auth path is available.
+//
+// Purpose: Single source of truth for the "which auth path?" decision. Used
+// by both the orchestrator wiring and the inline semantic path in
+// runCompress (so /pakka:compress and SessionStart pick the same engine).
+// Errors: Never errors. Falls through to nil with a log line.
+func resolveRewriter() semantic.Rewriter {
+	engine := configuredEngine()
+	switch engine {
+	case engineClaudeCLI:
+		if r := tryClaudeCLI(); r != nil {
+			debugLogf("orchestrator: engine=claude-cli (forced via settings)")
+			return r
+		}
+		debugLogf("orchestrator: engine=claude-cli forced but `claude` not on PATH; refusing fallback")
+		return nil
+	case engineAnthropicHTTP:
+		if r := tryAnthropicHTTP(); r != nil {
+			debugLogf("orchestrator: engine=anthropic-http (forced via settings)")
+			return r
+		}
+		debugLogf("orchestrator: engine=anthropic-http forced but ANTHROPIC_API_KEY missing; refusing fallback")
+		return nil
+	}
+	// engineAuto / unset: prefer CLI, fall back to HTTP.
+	if r := tryClaudeCLI(); r != nil {
+		debugLogf("orchestrator: engine=claude-cli (auto)")
+		return r
+	}
+	if r := tryAnthropicHTTP(); r != nil {
+		debugLogf("orchestrator: engine=anthropic-http (auto, claude CLI not on PATH)")
+		return r
+	}
+	debugLogf("orchestrator: no rewriter available — `claude` not on PATH and ANTHROPIC_API_KEY unset")
+	return nil
+}
+
+// configuredEngine reads pakka.compress.engine and normalizes it.
+func configuredEngine() rewriterEngine {
+	s := loadSettings()
+	switch s.Pakka.Compress.Engine {
+	case "claude-cli":
+		return engineClaudeCLI
+	case "anthropic-http":
+		return engineAnthropicHTTP
+	case "auto", "":
+		return engineAuto
+	default:
+		return engineAuto
+	}
+}
+
+// tryClaudeCLI returns a ClaudeCLI rewriter when `claude` is on PATH.
+func tryClaudeCLI() semantic.Rewriter {
+	if _, err := lookPath("claude"); err != nil {
+		return nil
+	}
+	return semantic.NewClaudeCLI()
+}
+
+// tryAnthropicHTTP returns an AnthropicClient when ANTHROPIC_API_KEY is set.
+func tryAnthropicHTTP() semantic.Rewriter {
+	c, ok := semantic.NewAnthropicClient()
+	if !ok {
+		return nil
+	}
+	return c
 }
 
 // runOrchestratorStatus prints the orchestrator state file as a table.

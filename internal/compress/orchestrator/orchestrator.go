@@ -186,7 +186,7 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 
 	// Semantic compress.
 	if o.Rewriter == nil {
-		o.logf("skip no-rewriter: %s (api key missing)", abs)
+		o.logf("skip no-rewriter: %s (no claude CLI on PATH and no ANTHROPIC_API_KEY)", abs)
 		// Don't record success — leave file as-is, leave state untouched.
 		return
 	}

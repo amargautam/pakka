@@ -205,18 +205,22 @@ func runCompress() {
 	m := compress.ParseMode(mode)
 
 	// Semantic path: try the LLM rewriter; fall back to deterministic strict
-	// when ANTHROPIC_API_KEY is not set. Never fail the call on missing key.
+	// when no auth path is available. Never fail the call on missing auth.
+	//
+	// Resolution: prefer `claude -p` subprocess (reuses Claude Code OAuth so
+	// no API key is required); fall back to ANTHROPIC_API_KEY HTTP; then
+	// finally to deterministic strict. See orchestrator.go: resolveRewriter.
 	if m == compress.ModeSemantic {
 		level := semantic.ParseLevel(levelStr)
-		client, ok := semantic.NewAnthropicClient()
-		if !ok {
-			debugLogf("compress semantic: ANTHROPIC_API_KEY missing, falling back to deterministic strict (level=%s, bytes=%d)", level, len(input))
+		rewriter := resolveRewriter()
+		if rewriter == nil {
+			debugLogf("compress semantic: no rewriter available (claude CLI absent and ANTHROPIC_API_KEY unset), falling back to deterministic strict (level=%s, bytes=%d)", level, len(input))
 			fallback := compress.Run(input, compress.ModeStrict)
 			emitCompressResult(fallback, sessionID)
 			return
 		}
 		result, err := compress.RunSemantic(input, compress.SemanticOptions{
-			Rewriter: client,
+			Rewriter: rewriter,
 			Level:    level,
 		})
 		if err != nil {
@@ -826,6 +830,7 @@ type settingsJSON struct {
 			SubagentReturn      *bool    `json:"subagentReturn"`
 			Semantic            *bool    `json:"semantic"`
 			SemanticTargets     []string `json:"semanticTargets"`
+			Engine              string   `json:"engine"`
 		} `json:"compress"`
 		Display struct {
 			StatusLine *bool `json:"statusLine"`
