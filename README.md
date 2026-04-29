@@ -11,6 +11,8 @@ Claude Code harness: fewer tokens, fewer bugs, audit-ready.
 /plugin install pakka@pakka-marketplace
 ```
 
+Zero-config. Pakka uses your existing Claude Code authentication via `claude -p` subprocess for semantic compression. `ANTHROPIC_API_KEY` is optional — only needed as an HTTP fallback if `claude` is not on `PATH`. Resolution order: `claude` CLI → `ANTHROPIC_API_KEY` HTTP → deterministic strict (no LLM). Override via `pakka.compress.engine` (`claude-cli` | `anthropic-http` | `auto`, default `auto`).
+
 ## What it does today
 
 - **Audit trail.** Every tool call appends a structured line to `~/.pakka/audit/<session>.jsonl` (hashed input, tokens, latency, result).

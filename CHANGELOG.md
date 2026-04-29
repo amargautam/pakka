@@ -4,6 +4,9 @@ All notable changes to pakka. Format follows [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+- **`claude -p` subprocess as primary semantic-rewrite engine** (Pass 4.6). Zero-config for Claude Code users — pakka reuses existing `claude` auth on `PATH`. `ANTHROPIC_API_KEY` is now an optional HTTP fallback. Resolution order: `claude` CLI → `ANTHROPIC_API_KEY` HTTP → deterministic strict (nil). New setting `pakka.compress.engine` (`claude-cli` | `anthropic-http` | `auto`, default `auto`). See DESIGN.md §5.16.
+
 ### Changed
 - **Default output compression level flipped from `strict` to `ultra`** (Pass 4.4). pakka's brand thesis is fewer tokens; the default reflects it. `lite` and `strict` remain available; `super-ultra` for power users. Reversible without code change via `pakka.compress.outputLevel` in `settings.json`. See `memory/DECISIONS.md` "Default output level: ultra (decided 2026-04-29)".
 - Status line now shows output token savings alongside input. Format: `↓N (X%) / ↑M (Y%) tok saved · K bugs caught`. UTF-8 with ascii fallback.
