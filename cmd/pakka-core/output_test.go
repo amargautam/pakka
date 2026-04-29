@@ -15,20 +15,31 @@ import (
 
 // --- output-rules tests ---
 
+// TestOutputRules covers both the legacy ruleset shape (`level: strict`
+// header) and the Pass-4.4 shape (`level: ultra` header). Pass 4.4 flipped
+// the brand default from strict to ultra; runOutputRules must replace
+// whichever marker is present so older rules/output-compress.md files keep
+// working through a plugin upgrade.
 func TestOutputRules(t *testing.T) {
 	tests := []struct {
 		name        string
 		filePresent bool
-		enabled     bool
-		level       string
-		wantEmpty   bool
-		wantLevel   string
+		// fileBody is the raw ruleset committed to the temp plugin root.
+		// Empty string means "use the legacy `level: strict` body".
+		fileBody  string
+		enabled   bool
+		level     string
+		wantEmpty bool
+		wantLevel string
 	}{
-		{"file present, strict", true, true, "strict", false, "level: strict"},
-		{"file present, ultra", true, true, "ultra", false, "level: ultra"},
-		{"file present, lite", true, true, "lite", false, "level: lite"},
-		{"file missing, fallback", false, true, "strict", false, "level: strict"},
-		{"output disabled", true, false, "strict", true, ""},
+		{"legacy file (level: strict header), select strict", true, "", true, "strict", false, "level: strict"},
+		{"legacy file, select ultra", true, "", true, "ultra", false, "level: ultra"},
+		{"legacy file, select lite", true, "", true, "lite", false, "level: lite"},
+		{"new file (level: ultra header), select strict", true, "PAKKA OUTPUT COMPRESSION ACTIVE — level: ultra\nTest rules.\n", true, "strict", false, "level: strict"},
+		{"new file, select ultra", true, "PAKKA OUTPUT COMPRESSION ACTIVE — level: ultra\nTest rules.\n", true, "ultra", false, "level: ultra"},
+		{"file missing, fallback emits ultra default", false, "", true, "ultra", false, "level: ultra"},
+		{"file missing, fallback honours explicit strict", false, "", true, "strict", false, "level: strict"},
+		{"output disabled", true, "", false, "strict", true, ""},
 	}
 
 	for _, tt := range tests {
@@ -37,8 +48,11 @@ func TestOutputRules(t *testing.T) {
 			if tt.filePresent {
 				rulesDir := filepath.Join(dir, "rules")
 				_ = os.MkdirAll(rulesDir, 0755)
-				content := "PAKKA OUTPUT COMPRESSION ACTIVE — level: strict\nTest rules.\n"
-				_ = os.WriteFile(filepath.Join(rulesDir, "output-compress.md"), []byte(content), 0644)
+				body := tt.fileBody
+				if body == "" {
+					body = "PAKKA OUTPUT COMPRESSION ACTIVE — level: strict\nTest rules.\n"
+				}
+				_ = os.WriteFile(filepath.Join(rulesDir, "output-compress.md"), []byte(body), 0644)
 			}
 
 			result := simulateOutputRules(dir, tt.enabled, tt.level)
@@ -64,6 +78,10 @@ func TestOutputRules(t *testing.T) {
 }
 
 // simulateOutputRules mirrors runOutputRules logic for testing.
+//
+// Replacement logic must match production: the ruleset may carry either the
+// legacy `level: strict` marker or the Pass-4.4 `level: ultra` marker. We
+// substitute the configured level into whichever one is present.
 func simulateOutputRules(pluginDir string, enabled bool, level string) string {
 	if !enabled {
 		return ""
@@ -73,7 +91,13 @@ func simulateOutputRules(pluginDir string, enabled bool, level string) string {
 	if err != nil {
 		content = []byte(outputCompressRulesetFallback)
 	}
-	return strings.Replace(string(content), "level: strict", "level: "+level, 1)
+	out := string(content)
+	if strings.Contains(out, "level: ultra") {
+		out = strings.Replace(out, "level: ultra", "level: "+level, 1)
+	} else {
+		out = strings.Replace(out, "level: strict", "level: "+level, 1)
+	}
+	return out
 }
 
 // --- output-reinforce tests ---

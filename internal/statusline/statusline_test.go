@@ -323,12 +323,21 @@ func TestRunAsciiFallback(t *testing.T) {
 	}
 }
 
-func TestRunDefaultLevel(t *testing.T) {
+// TestRun_DefaultLevelLabel — Pass 4.4 regression guard. Empty outputLevel
+// must render as "[ultra]", reflecting the brand-thesis default (see
+// memory/DECISIONS.md "Default output level: ultra"). A future edit that
+// re-introduces "strict" as the silent fallback fails this test loudly.
+func TestRun_DefaultLevelLabel(t *testing.T) {
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 	out := run(t, &hookevent.Event{SessionID: "test1234", CWD: "/r"}, "")
-	if !strings.Contains(out, "[strict]") {
-		t.Errorf("default level should be [strict]: %q", out)
+	if !strings.Contains(out, "[ultra]") {
+		t.Errorf("default level should be [ultra] (brand thesis), got: %q", out)
+	}
+	// Negative guard: the legacy default "[strict]" must not appear when no
+	// level is supplied. Catches accidental revert to the old default.
+	if strings.Contains(out, "[strict]") {
+		t.Errorf("default must NOT render as [strict] (legacy default), got: %q", out)
 	}
 }
 
@@ -785,16 +794,18 @@ func TestStaleCompressGlyph(t *testing.T) {
 	}
 }
 
-// TestUnknownLevelDefaultsToStrict — invalid levels (e.g. legacy "audit")
-// must render as [strict] and not crash on a missing multiplier key.
-func TestUnknownLevelDefaultsToStrict(t *testing.T) {
+// TestUnknownLevelDefaultsToUltra — invalid levels (e.g. legacy "audit")
+// must render as [ultra] and not crash on a missing multiplier key.
+// Pass 4.4 flipped the fallback from strict to ultra so a stale or corrupt
+// config never silently downgrades compression below the brand baseline.
+func TestUnknownLevelDefaultsToUltra(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 	for _, bad := range []string{"audit", "fast", "garbage", "Strict"} {
 		out := run(t, &hookevent.Event{SessionID: "bad12345", CWD: "/r"}, bad)
-		if !strings.Contains(out, "[strict]") {
-			t.Errorf("level=%q: expected fallback to [strict]: %q", bad, out)
+		if !strings.Contains(out, "[ultra]") {
+			t.Errorf("level=%q: expected fallback to [ultra]: %q", bad, out)
 		}
 	}
 }

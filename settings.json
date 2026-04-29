@@ -41,7 +41,7 @@
   "pakka": {
     "display": { "statusLine": true },
     "compress": {
-      "outputLevel": "strict",
+      "outputLevel": "ultra",
       "semantic": false,
       "semanticTargets": [
         "CLAUDE.md",

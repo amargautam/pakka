@@ -5,6 +5,7 @@ All notable changes to pakka. Format follows [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### Changed
+- **Default output compression level flipped from `strict` to `ultra`** (Pass 4.4). pakka's brand thesis is fewer tokens; the default reflects it. `lite` and `strict` remain available; `super-ultra` for power users. Reversible without code change via `pakka.compress.outputLevel` in `settings.json`. See `memory/DECISIONS.md` "Default output level: ultra (decided 2026-04-29)".
 - Status line now shows output token savings alongside input. Format: `↓N (X%) / ↑M (Y%) tok saved · K bugs caught`. UTF-8 with ascii fallback.
 
 ### Added

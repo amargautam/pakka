@@ -317,15 +317,23 @@ func TestValidator_EmptyOriginal(t *testing.T) {
 	}
 }
 
-// ParseLevel maps known strings, defaults unknown to strict.
+// ParseLevel maps known strings unchanged; defaults unknown to LevelUltra.
+//
+// Pass 4.4 flipped the default from strict to ultra (see DECISIONS.md
+// "Default output level: ultra"). The legal-values rows below confirm that
+// every known level — lite, strict, ultra, super-ultra — round-trips
+// unchanged. Only empty/garbage input picks up the new ultra default.
 func TestParseLevel(t *testing.T) {
 	cases := map[string]Level{
+		// Legal values pass through unchanged. strict is still legal — only
+		// the default changed.
 		"lite":        LevelLite,
 		"strict":      LevelStrict,
 		"ultra":       LevelUltra,
 		"super-ultra": LevelSuperUltra,
-		"":            LevelStrict,
-		"weird":       LevelStrict,
+		// Empty + unknown fall back to the brand default (ultra).
+		"":      LevelUltra,
+		"weird": LevelUltra,
 	}
 	for in, want := range cases {
 		if got := ParseLevel(in); got != want {

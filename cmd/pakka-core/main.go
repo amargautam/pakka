@@ -145,8 +145,9 @@ func runCompress() {
 	}
 
 	// Default level when --semantic is set without --level.
+	// "ultra" is pakka's brand default — fewer tokens by default.
 	if semanticFlag && levelStr == "" {
-		levelStr = "strict"
+		levelStr = "ultra"
 	}
 	if semanticFlag {
 		mode = "semantic"
@@ -1075,17 +1076,37 @@ func loadSettings() settingsJSON {
 }
 
 // loadOutputLevel returns the configured output compression level.
-// Falls back to "strict" if not set or invalid.
+// Falls back to "ultra" if not set or invalid.
+//
+// "ultra" is pakka's brand default — the thesis is fewer tokens, and the
+// default reflects it. `lite` and `strict` remain available for users who
+// want softer compression; `super-ultra` for power users. See
+// memory/DECISIONS.md "Default output level: ultra (decided 2026-04-29)".
 //
 // Purpose: Determine output compression intensity for rules and reinforcement.
-// Errors: Never errors; invalid values map to "strict".
+// Errors: Never errors; invalid values map to "ultra" (intentional default).
 func loadOutputLevel() string {
 	s := loadSettings()
-	switch s.Pakka.Compress.OutputLevel {
+	return resolveOutputLevel(s.Pakka.Compress.OutputLevel)
+}
+
+// resolveOutputLevel applies the defaulting policy for an output-compression
+// level string. Legal values (`lite|strict|ultra|super-ultra`) round-trip
+// unchanged; everything else — empty, garbage, legacy values like "audit" or
+// "fast" — collapses to the brand default `ultra`.
+//
+// Pass 4.4 flipped the default from `strict` to `ultra`. The pure-function
+// shape exists so tests can guard the policy without faking `pluginRoot()`.
+//
+// Purpose: Single source of truth for the "what's the active level" question.
+// Errors: Never errors; invalid values map to "ultra".
+func resolveOutputLevel(raw string) string {
+	switch raw {
 	case "lite", "strict", "ultra", "super-ultra":
-		return s.Pakka.Compress.OutputLevel
+		return raw
 	default:
-		return "strict"
+		// ultra is the intentional default — see DECISIONS.md.
+		return "ultra"
 	}
 }
 
@@ -1103,12 +1124,12 @@ func isOutputEnabled() bool {
 }
 
 // outputCompressRulesetFallback is emitted when rules/output-compress.md is missing.
-const outputCompressRulesetFallback = `PAKKA OUTPUT COMPRESSION ACTIVE — level: strict
+const outputCompressRulesetFallback = `PAKKA OUTPUT COMPRESSION ACTIVE — level: ultra
 
 ## Persistence
 Active every response. No revert after many turns. No filler drift.
 Still active if unsure. Off only: user says "pakka verbose" or "normal mode".
-Default: strict. Switch: /pakka:compress lite|strict|ultra
+Default: ultra. Switch: /pakka:compress lite|strict|ultra|super-ultra
 
 ## Rules
 Drop: articles (a/an/the), filler (just/really/basically/actually/simply),
@@ -1124,8 +1145,8 @@ Yes: "Bug in auth middleware. Token expiry uses < not <=. Fix:"
 | Level | Rules |
 |-------|-------|
 | lite | No filler/hedging. Keep articles + full sentences. Professional tight. |
-| strict | Drop articles, fragments OK, short synonyms. Default. |
-| ultra | Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality (X -> Y), one word when one word enough. |
+| strict | Drop articles, fragments OK, short synonyms. |
+| ultra | Default. Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality (X -> Y), one word when one word enough. |
 
 ## Auto-Clarity
 Drop compression for: security warnings, irreversible action confirmations,
@@ -1161,8 +1182,16 @@ func runOutputRules() {
 		content = []byte(outputCompressRulesetFallback)
 	}
 
-	// Replace the level in the ruleset header
-	out := strings.Replace(string(content), "level: strict", "level: "+level, 1)
+	// Replace the default level marker in the ruleset header with the user's
+	// configured level. The ruleset ships with `level: ultra` as the brand
+	// default; we accept the legacy `level: strict` form too so users with
+	// older rules/output-compress.md files continue to work.
+	out := string(content)
+	if strings.Contains(out, "level: ultra") {
+		out = strings.Replace(out, "level: ultra", "level: "+level, 1)
+	} else {
+		out = strings.Replace(out, "level: strict", "level: "+level, 1)
+	}
 	fmt.Fprint(os.Stdout, out)
 }
 
@@ -1276,7 +1305,7 @@ func runHelp() {
 	fmt.Printf("               guard: %-3s                       · signature: %s\n", onOff(guardOn), onOff(sigOn))
 	fmt.Printf("               coAuthor: %-3s                    · output: %s [%s]\n", onOff(coAuthorOn), onOff(outputOn), outputLevel)
 	fmt.Printf("  commands     /pakka:review    explicit review of staged diff\n")
-	fmt.Printf("               /pakka:compress  switch output level (lite|strict|ultra)\n")
+	fmt.Printf("               /pakka:compress  switch output level (lite|strict|ultra|super-ultra)\n")
 	fmt.Printf("               /pakka:help      this page\n")
 	if auditFile != "" {
 		fmt.Printf("  audit        %s  · %d events\n", auditFile, auditCount)

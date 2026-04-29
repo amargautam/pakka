@@ -160,7 +160,7 @@ Reserved marketplace names to avoid: `claude-code-marketplace`, `anthropic-marke
   },
   "pakka": {
     "display": { "statusLine": true },
-    "compress": { "outputLevel": "strict" },
+    "compress": { "outputLevel": "ultra" },
     "review": { "confidenceThreshold": 80 },
     "audit": { "path": "~/.pakka/audit" },
     "meter":  { "path": "~/.pakka/meter" }
@@ -243,14 +243,14 @@ Red Flags section (rejects anti-patterns at run time):
 ```
 ---
 name: pakka-compress
-description: Control pakka compression. Switch output intensity (lite|strict|ultra), re-compress input files, restore originals.
+description: Control pakka compression. Switch output intensity (lite|strict|ultra|super-ultra), re-compress input files, restore originals.
 allowed-tools: Read, Bash
-argument-hint: "[lite|strict|ultra|restore|status]"
+argument-hint: "[lite|strict|ultra|super-ultra|restore|status]"
 user-invocable: true
 ---
 ```
 Body:
-- `lite|strict|ultra` → update `pakka.compress.outputLevel` in session config + emit confirmation. Takes effect on next UserPromptSubmit reinforcement.
+- `lite|strict|ultra|super-ultra` → update `pakka.compress.outputLevel` in session config + emit confirmation. Takes effect on next UserPromptSubmit reinforcement. Default is `ultra` (see memory/DECISIONS.md).
 - `restore` → restore all `.original.md` backups, removing compressed versions.
 - `status` → show current compression stats: mode, output level, bytes saved (input), estimated output savings.
 - No argument → same as `status`.
@@ -259,9 +259,10 @@ Body:
 - Collapse repeated section headings (keep first, drop rest).
 - Keep all TODO/FIXME/SECURITY markers verbatim.
 - Keep code blocks verbatim unless clearly dead (commented-out).
-- Modes:
-- `strict` (default): structural + linguistic compression, all non-semantic tokens removed.
+- Engine modes (orthogonal to output `outputLevel`):
+- `strict` (default for the deterministic engine): structural + linguistic compression, all non-semantic tokens removed.
 - `audit`: no compression, used when debugging eval discrepancies.
+- Output level (`pakka.compress.outputLevel`): `lite|strict|ultra|super-ultra`. Default `ultra` (Pass 4.4). See §5.16 + memory/DECISIONS.md.
 - Output: compressed text + ratio annotation (`compressed 42.1% · 8.3k → 4.8k`).
 ### 5.7 `skills/pakka-eval/SKILL.md`
 ```
@@ -431,12 +432,12 @@ Thesis: "context waste → token burn + bugs." Compression must target every cha
 - `pakka-core output-reinforce` — emits short 2-sentence reinforcement to stdout via `hookSpecificOutput.additionalContext`. Prevents drift after many turns or context compaction.
 **Ruleset (`rules/output-compress.md`):**
 ```
-PAKKA OUTPUT COMPRESSION ACTIVE — level: strict
+PAKKA OUTPUT COMPRESSION ACTIVE — level: ultra
 
 ## Persistence
 Active every response. No revert after many turns. No filler drift.
 Still active if unsure. Off only: user says "pakka verbose" or "normal mode".
-Default: strict. Switch: /pakka:compress lite|strict|ultra
+Default: ultra. Switch: /pakka:compress lite|strict|ultra|super-ultra
 
 ## Rules
 Drop: articles (a/an/the), filler (just/really/basically/actually/simply),
@@ -452,8 +453,8 @@ Yes: "Bug in auth middleware. Token expiry uses < not <=. Fix:"
 | Level | Rules |
 |-------|-------|
 | lite | No filler/hedging. Keep articles + full sentences. Professional tight. |
-| strict | Drop articles, fragments OK, short synonyms. Default. |
-| ultra | Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality (X → Y), one word when one word enough. |
+| strict | Drop articles, fragments OK, short synonyms. |
+| ultra | Default. Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality (X → Y), one word when one word enough. |
 
 ## Auto-Clarity
 Drop compression for: security warnings, irreversible action confirmations,
@@ -465,7 +466,7 @@ Code/commits/PRs/error messages: write normal. Never compress code output.
 ```
 **Per-turn reinforcement (hardcoded in `output-reinforce`):**
 ```
-PAKKA OUTPUT COMPRESSION ACTIVE (strict). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.
+PAKKA OUTPUT COMPRESSION ACTIVE (ultra). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.
 ```
 **Config:**
 ```
@@ -473,7 +474,7 @@ PAKKA OUTPUT COMPRESSION ACTIVE (strict). Drop articles/filler/pleasantries/hedg
   "compress": {
     "input": true,
     "output": true,
-    "outputLevel": "strict",
+    "outputLevel": "ultra",
     "toolResult": true,
     "subagentReturn": true
   }
@@ -481,7 +482,7 @@ PAKKA OUTPUT COMPRESSION ACTIVE (strict). Drop articles/filler/pleasantries/hedg
 ```
 - `input: false` → skips SessionStart auto-compression of CLAUDE.md/DESIGN.md/BUILD.md.
 - `output: false` → disables output compression entirely (no SessionStart injection, no per-turn reinforcement).
-- `outputLevel` → `lite|strict|ultra`. Overrides level in ruleset.
+- `outputLevel` → `lite|strict|ultra|super-ultra`. Overrides level in ruleset. Default `ultra` (Pass 4.4).
 - `toolResult: false` → disables PostToolUse Read/Grep/Bash output truncation.
 - `subagentReturn: false` → disables SubagentStop return compression.
 
@@ -552,12 +553,12 @@ Net: 35-50% total cost reduction, dominated by output compression (V1).
 ## 6. Status-line format
 Printed to **stderr** by `pakka-core status-line` on `Stop`:
 ```
-UTF-8: pakka [strict] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 2 bugs caught
-ASCII: pakka [strict] | in 12.4K (43%) / out 7.1K (33%) tok saved | 2 bugs caught
+UTF-8: pakka [ultra] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 2 bugs caught
+ASCII: pakka [ultra] | in 12.4K (43%) / out 7.1K (33%) tok saved | 2 bugs caught
 ```
 Both absolute saved-token counts AND percentages are shown. Percent alone hides scale — 50% of 200 reads identical to 50% of 200K. Counts humanize via floor truncation: <1000 raw integer, K/M with one decimal (12450 → "12.4K", 1234567 → "1.2M").
 Parts:
-- `[strict]`: active compression mode (lite/strict/ultra).
+- `[ultra]`: active output compression level (lite/strict/ultra/super-ultra). Default is `ultra` per Pass 4.4 — see memory/DECISIONS.md.
 - `↑<abs> (<pct>%)`: input token savings this session (file compression + tool result truncation + subagent return compression). Sum of `tokens_saved_est` from meter entries; pct = saved / cost-weighted input denominator.
 - `↓<abs> (<pct>%)`: output token savings estimate (session output tokens × reduction factor from calibrated baseline). High-value number — output tokens cost 3-5×.
 - `bugs caught`: count of reviewer/security findings with `severity=error` and confidence ≥ threshold this session.
@@ -809,7 +810,7 @@ Compression pivot. Prior approach (compress CLAUDE.md only) produced near-zero s
 4. `pakka-core compress --phase=tool-result` — reads PostToolUse hook event, checks output size against `toolResultMaxBytes` (default 10KB). If over: emit truncated version (head 80 + tail 20 lines + notice). If error (exit ≠ 0): pass through unchanged. If Edit/Write: pass through unchanged.
 5. `pakka-core compress --phase=subagent-return` — apply structural + linguistic compression to subagent return text. Skip if ≤ 1KB.
 6. Update `hooks/hooks.json`: add UserPromptSubmit hook, add `output-rules` to SessionStart, add `compress --phase=tool-result` to PostToolUse on Read|Grep|Bash.
-7. Update `skills/pakka-compress/SKILL.md` to support `lite|strict|ultra|restore|status` arguments.
+7. Update `skills/pakka-compress/SKILL.md` to support `lite|strict|ultra|super-ultra|restore|status` arguments. Default `outputLevel` is `ultra` (Pass 4.4).
 8. Update `pakka-core status-line` to show `in saved` + `out saved` separately.
 9. Tests: table-driven for each new subcommand. Output-rules: file-present → emits, file-missing → fallback. Output-reinforce: emits valid JSON. Tool-result: under-threshold → passthrough, over-threshold → truncated, error → passthrough. Subagent-return: small → passthrough, large → compressed.
 **Gate:**

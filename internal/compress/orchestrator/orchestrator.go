@@ -63,7 +63,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 	level := o.Level
 	if level == "" {
-		level = "strict"
+		// "ultra" is pakka's brand default — see memory/DECISIONS.md
+		// "Default output level: ultra (decided 2026-04-29)". An Orchestrator
+		// constructed without an explicit Level falls back to ultra so the
+		// auto-orchestrator stays consistent with loadOutputLevel().
+		level = "ultra"
 	}
 	targets := o.Targets
 	if len(targets) == 0 {

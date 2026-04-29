@@ -27,9 +27,12 @@ user-invocable: false
 
 Level effects:
 - `lite`: No filler/hedging. Keep articles + full sentences. Professional tight.
-- `strict`: Drop articles, fragments OK, short synonyms. Default.
-- `ultra`: Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality.
+- `strict`: Drop articles, fragments OK, short synonyms.
+- `ultra`: Default. Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality.
 - `super-ultra`: Maximum density. One token where one suffices, drop non-load-bearing words, symbols (→ for "leads to", = for "is", & for "and"). Pass 4.2 tier.
+
+Default level is `ultra` — pakka's brand thesis is fewer tokens, and the
+default reflects it. See memory/DECISIONS.md "Default output level: ultra".
 
 ### Status (default action)
 

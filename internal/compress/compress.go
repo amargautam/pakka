@@ -111,7 +111,9 @@ func RunSemantic(input string, opts SemanticOptions) (*Result, error) {
 	}
 	level := opts.Level
 	if level == "" {
-		level = semantic.LevelStrict
+		// LevelUltra is the brand default — see memory/DECISIONS.md.
+		// Callers that want a softer tier must pass Level explicitly.
+		level = semantic.LevelUltra
 	}
 	ctx := opts.Context
 	if ctx == nil {

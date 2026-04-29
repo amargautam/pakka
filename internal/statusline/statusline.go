@@ -116,12 +116,17 @@ func resolveRepoKey(cwd string) string {
 }
 
 // compute gathers all status-line metrics from disk.
+//
+// Default level is "ultra" — pakka's brand default. See
+// memory/DECISIONS.md "Default output level: ultra (decided 2026-04-29)".
+// Invalid levels also fall back to "ultra" so a stale config never silently
+// downgrades compression below the brand baseline.
 func compute(event *hookevent.Event, outputLevel string) metrics {
 	if outputLevel == "" {
-		outputLevel = "strict"
+		outputLevel = "ultra"
 	}
 	if _, ok := outputMultiplier[outputLevel]; !ok {
-		outputLevel = "strict"
+		outputLevel = "ultra"
 	}
 
 	cwd := event.CWD
@@ -224,8 +229,11 @@ func humanize(n int64) string {
 // outputMultiplier map is a placeholder until Pass 4.2 ships LLM-rewrite
 // measurement, so any rendered % would be theatre (constant per level).
 //
-// UTF-8: [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
-// ASCII: [strict] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
+// UTF-8: [ultra] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
+// ASCII: [ultra] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
+//
+// Bracket label reflects the active output compression level; "ultra" is
+// the default tier per DECISIONS.md.
 func formatLine(m metrics, inArrow, outArrow, sep string) string {
 	staleSeg := ""
 	if m.staleCompress > 0 {
@@ -251,16 +259,18 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 
 // Run prints the pakka status line to w.
 //
-// Format (UTF-8): pakka [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
+// Format (UTF-8): pakka [ultra] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
 // When orchestrator state has stale entries, a trailing "· ! N stale" segment
 // is appended:
 //
-//	pakka [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught · ! 2 stale
+//	pakka [ultra] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught · ! 2 stale
 //
-// Format (ascii): pakka [strict] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
+// Format (ascii): pakka [ultra] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
 // ASCII stale segment: " | ! 2 stale"
 //
-// Bracket label is the output compression level (lite|strict|ultra).
+// Bracket label is the output compression level (lite|strict|ultra|super-ultra).
+// "ultra" is the default tier — pakka's brand thesis is fewer tokens, and the
+// default reflects it. See memory/DECISIONS.md.
 //
 // Input side carries an absolute (humanized to K/M, floor-truncated) and a
 // percent — meter records real byte savings. Output side carries volume

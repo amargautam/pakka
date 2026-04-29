@@ -120,13 +120,15 @@ var templateMap = map[Level]string{
 //
 // Purpose: Expose template text for unit tests and for callers building
 // alternative prompt wrappers.
-// Errors: Returns the strict template when the Level is unknown — every Level
-// in the type switch is registered, so this branch is defensive.
+// Errors: Returns the ultra template when the Level is unknown — every Level
+// in the type switch is registered, so this branch is defensive. ultra is
+// pakka's brand default (see memory/DECISIONS.md), so an unknown Level
+// degrades to the brand default tier rather than the legacy "strict".
 func levelTemplate(l Level) string {
 	if t, ok := templateMap[l]; ok {
 		return t
 	}
-	return strictTmpl
+	return ultraTmpl
 }
 
 // renderPrompt renders the level's template with the supplied input.
