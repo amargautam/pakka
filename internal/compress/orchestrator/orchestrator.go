@@ -44,6 +44,12 @@ type Orchestrator struct {
 	Now func() time.Time
 	// stateLock guards state writes when multiple goroutines call Run.
 	stateLock sync.Mutex
+	// defaultLog is the cached writer for the production orchestrator log.
+	// Opened lazily on first logf when LogWriter is nil; closed by Run on
+	// completion. Caching avoids the per-call open/leak that bloated FDs in
+	// long-running orchestrator-bg processes.
+	logOnce    sync.Once
+	defaultLog *os.File
 }
 
 // Run walks the allowlist once. Eligible+stale files are recompressed; up-to-date
@@ -73,6 +79,8 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	if len(targets) == 0 {
 		targets = DefaultTargets
 	}
+
+	defer o.closeDefaultLog()
 
 	state, err := LoadState(o.Repo)
 	if err != nil {
@@ -159,8 +167,12 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 	if strings.HasSuffix(abs, ".md") {
 		originalPath = strings.TrimSuffix(abs, ".md") + ".original.md"
 	}
+	var origBytes []byte
 	if _, err := os.Stat(originalPath); errors.Is(err, os.ErrNotExist) {
-		// First run: snapshot the current file as the original.
+		// First run: snapshot the current file as the original. Reuse the
+		// in-memory bytes for downstream processing so a concurrent autosave
+		// between the backup write and a re-read cannot mismatch the SHA we
+		// record against the bytes we compress.
 		live, err := os.ReadFile(abs)
 		if err != nil {
 			o.logf("skip read: %s (%v)", abs, err)
@@ -170,12 +182,13 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 			o.logf("skip backup: %s (%v)", originalPath, err)
 			return
 		}
-	}
-
-	origBytes, err := os.ReadFile(originalPath)
-	if err != nil {
-		o.logf("skip read original: %s (%v)", originalPath, err)
-		return
+		origBytes = live
+	} else {
+		origBytes, err = os.ReadFile(originalPath)
+		if err != nil {
+			o.logf("skip read original: %s (%v)", originalPath, err)
+			return
+		}
 	}
 	sourceSHA := sha256Hex(origBytes)
 
@@ -283,13 +296,39 @@ func isAllowedExt(rel string) bool {
 func (o *Orchestrator) logf(format string, args ...interface{}) {
 	w := o.LogWriter
 	if w == nil {
-		w = defaultLogWriter()
+		w = o.ensureDefaultLog()
 	}
 	if w == nil {
 		return
 	}
 	ts := time.Now().UTC().Format(time.RFC3339)
 	fmt.Fprintf(w, "%s orchestrator: %s\n", ts, fmt.Sprintf(format, args...))
+}
+
+// ensureDefaultLog opens the production orchestrator log on first call and
+// caches the *os.File on the receiver so subsequent logf calls reuse it.
+// Opening once per Orchestrator (rather than once per logf) prevents the FD
+// leak observed in long-running orchestrator-bg processes.
+func (o *Orchestrator) ensureDefaultLog() io.Writer {
+	o.logOnce.Do(func() {
+		f, err := openAppend(filepath.Join(homeDir(), ".pakka", "orchestrator.log"))
+		if err == nil {
+			o.defaultLog = f
+		}
+	})
+	if o.defaultLog == nil {
+		return nil
+	}
+	return o.defaultLog
+}
+
+// closeDefaultLog closes the cached log file if one was opened. Called by Run
+// on completion. Safe to call multiple times.
+func (o *Orchestrator) closeDefaultLog() {
+	if o.defaultLog != nil {
+		_ = o.defaultLog.Close()
+		o.defaultLog = nil
+	}
 }
 
 // logFailure emits a structured line to ~/.pakka/compress-errors.jsonl plus a
@@ -365,10 +404,3 @@ func openAppend(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 }
 
-func defaultLogWriter() io.Writer {
-	f, err := openAppend(filepath.Join(homeDir(), ".pakka", "orchestrator.log"))
-	if err != nil {
-		return nil
-	}
-	return f
-}

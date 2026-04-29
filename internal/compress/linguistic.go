@@ -6,6 +6,7 @@ package compress
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -94,13 +95,19 @@ func applyLinguistic(input string) string {
 
 // linguisticLine compresses a single non-code, non-empty line.
 func linguisticLine(line string) string {
-	// Protect special spans with Unicode PUA placeholders (U+E000+)
+	// Protect special spans with NUL-delimited placeholders: \x00p<idx>\x00.
+	// NUL bytes do not appear in normal markdown text. The "p" prefix keeps
+	// the decimal index away from a word boundary, so subsequent protected
+	// patterns (notably `\b\d[\d.]*\w*\b` and `\b[a-z]+[A-Z]\w*\b`) and the
+	// linguistic drop rules cannot re-match a placeholder. The decimal index
+	// has no upper bound, so this scheme survives lines with thousands of
+	// protected spans (the previous PUA scheme U+E000+ overflowed at 6400).
 	var saved []string
 	for _, re := range protectedPatterns {
 		line = re.ReplaceAllStringFunc(line, func(m string) string {
 			idx := len(saved)
 			saved = append(saved, m)
-			return string(rune(0xE000 + idx))
+			return "\x00p" + strconv.Itoa(idx) + "\x00"
 		})
 	}
 
@@ -111,7 +118,7 @@ func linguisticLine(line string) string {
 
 	// Restore protected spans
 	for i, s := range saved {
-		line = strings.Replace(line, string(rune(0xE000+i)), s, 1)
+		line = strings.Replace(line, "\x00p"+strconv.Itoa(i)+"\x00", s, 1)
 	}
 
 	// Collapse double spaces, trim

@@ -54,7 +54,11 @@ func excerpt(s string) string {
 var (
 	reFencedTriple = regexp.MustCompile("(?s)```[a-zA-Z0-9_+-]*\\n.*?\\n```")
 	reFencedTilde  = regexp.MustCompile("(?s)~~~[a-zA-Z0-9_+-]*\\n.*?\\n~~~")
-	reInlineCode   = regexp.MustCompile("`[^`\n]+`")
+	// reInlineCode requires ≥2 non-backtick, non-newline chars between the
+	// fences. Single-char spans like `a` or `i` are everyday English usage,
+	// not load-bearing identifiers — matching them produces false-positive
+	// violations that exhaust the validator's cherry-pick retry budget.
+	reInlineCode   = regexp.MustCompile("`[^`\n]{2,}`")
 	reURL          = regexp.MustCompile(`(?:https?|ftp|ssh)://[^\s)]+`)
 	// Path heuristics. Tightened to avoid matching ordinary words.
 	rePathAbs    = regexp.MustCompile(`(?:^|[\s(\[])(/[A-Za-z0-9_.][\w./-]*)`)

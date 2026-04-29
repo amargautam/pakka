@@ -103,10 +103,13 @@ func (c *ClaudeCLI) RewriteFix(ctx context.Context, input string, level Level, v
 //   - `-p` / `--print`: documented non-interactive print mode. Required.
 //   - `--output-format text`: emit plain text (default, but stated explicitly
 //     so future Claude Code default changes don't break parse).
-//   - `--permission-mode bypassPermissions`: prompt-only path; we don't want
-//     interactive permission prompts for tools the model could call. The
-//     prompt itself instructs the model to emit text only — but bypass keeps
-//     us safe if a user customized their Claude Code agent config.
+//   - `--permission-mode default` + `--allowedTools ""`: this subprocess only
+//     needs to emit text. A prompt-injection in the compressed file content
+//     could otherwise trick the rewriter into invoking tools — earlier
+//     versions used `bypassPermissions`, which would let any such injection
+//     run unrestricted. `default` keeps tool gating on, and the empty
+//     allowlist denies every tool, so the worst case is a denied request,
+//     not arbitrary execution.
 //
 // We deliberately do NOT pass `--bare`. Per Pass 5b: `--bare` strips OAuth
 // and forces ANTHROPIC_API_KEY, which defeats the whole point of this path.
@@ -126,7 +129,8 @@ func (c *ClaudeCLI) run(parentCtx context.Context, prompt string) (string, error
 	args := []string{
 		"-p",
 		"--output-format", "text",
-		"--permission-mode", "bypassPermissions",
+		"--permission-mode", "default",
+		"--allowedTools", "",
 	}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
