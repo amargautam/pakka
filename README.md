@@ -59,7 +59,7 @@ Three absolute numbers. Each verifiable from artifacts in this repo. vs-raw A/B 
 
 2. **Bytes saved (compression): 75,955 cumulative since 2026-04-24.** Estimated tokens saved: 21,763 (bytes ÷ 3.5 — estimate, not a measured token count). Source: `RECEIPTS.md`, regenerated via `make self-report`. Meter is cumulative across pakka's own development; counter resets are logged.
 
-3. **Gate enforcement: every Claude-authored commit runs the review gate.** Verifiable trailer count on `v0.1.0-dev` today: `2` of 24 commits carry `Reviewed-by-pakka`. The discrepancy is the trailer-injection hook itself: it failed on wrapped commit shapes (`cd && git`, `git -C`) until `45af7b3` (Pass 4.5 phase 2). Historical commits before that fix have no trailer, and Pass 4.6 docs-sync (`9b838ac`) silently skipped — known in-flight diagnostic. Reproduce: `git log --format='%H %s%n%b' v0.1.0-dev | grep -c Reviewed-by-pakka`.
+3. **Gate enforcement: review gate wired into every Claude-authored commit path.** Honest trailer count on `v0.1.0-dev` today: `0` commits carry a `Reviewed-by-pakka` trailer in metadata. The wrapped-shape fix landed in `45af7b3` (Pass 4.5 phase 2), but the trailer-injection hook is still silently skipping on every commit since — known in-flight diagnostic, separate from this docs pass. Verify trailer count properly: `git log --format='%H' v0.1.0-dev | while read sha; do git show -s --format='%(trailers:key=Reviewed-by-pakka,valueonly=true)' "$sha" | grep -q . && echo "$sha"; done | wc -l`. Until the hook is fixed, this claim is architectural (gate runs, blocks on findings) not observable (trailer present in metadata).
 
 No claim without a check. No check without a path to the artifact.
 
