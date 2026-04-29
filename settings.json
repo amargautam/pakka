@@ -40,7 +40,17 @@
   },
   "pakka": {
     "display": { "statusLine": true },
-    "compress": { "outputLevel": "strict", "semantic": false },
+    "compress": {
+      "outputLevel": "strict",
+      "semantic": false,
+      "semanticTargets": [
+        "CLAUDE.md",
+        "DESIGN.md",
+        "BUILD.md",
+        "memory/LOG.md",
+        "memory/DECISIONS.md"
+      ]
+    },
     "review": {
       "confidenceThreshold": 80,
       "autoGate": true,

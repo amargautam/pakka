@@ -743,6 +743,48 @@ func TestSummaryNoANSI(t *testing.T) {
 	}
 }
 
+// TestStaleCompressGlyph — when orchestrator state has failed entries, the
+// status-line MUST append "! N stale". Empty/missing state MUST omit it.
+func TestStaleCompressGlyph(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	useFakeHome(t, t.TempDir())
+	repoDir := t.TempDir()
+	useFakeRepoKey(t, map[string]string{"/work/X": repoDir})
+
+	// Case 1: missing state file → no glyph.
+	out := run(t, &hookevent.Event{SessionID: "stale001", CWD: "/work/X"}, "strict")
+	if strings.Contains(out, "stale") {
+		t.Errorf("missing state must not render stale glyph: %q", out)
+	}
+
+	// Case 2: state file with 2 failures + 1 success → "! 2 stale".
+	stateDir := filepath.Join(repoDir, ".pakka")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "/x/CLAUDE.md": {"sourceSHA":"a","level":"strict","compressedAt":"t","validatorPasses":false},
+  "/x/DESIGN.md": {"sourceSHA":"b","level":"strict","compressedAt":"t","validatorPasses":false},
+  "/x/BUILD.md":  {"sourceSHA":"c","level":"strict","compressedAt":"t","validatorPasses":true}
+}`
+	if err := os.WriteFile(filepath.Join(stateDir, "compress-state.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out2 := run(t, &hookevent.Event{SessionID: "stale002", CWD: "/work/X"}, "strict")
+	if !strings.Contains(out2, "! 2 stale") {
+		t.Errorf("expected '! 2 stale' segment: %q", out2)
+	}
+
+	// Case 3: corrupt state → graceful zero, no glyph.
+	if err := os.WriteFile(filepath.Join(stateDir, "compress-state.json"), []byte("{not-json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out3 := run(t, &hookevent.Event{SessionID: "stale003", CWD: "/work/X"}, "strict")
+	if strings.Contains(out3, "stale") {
+		t.Errorf("corrupt state must not render stale glyph: %q", out3)
+	}
+}
+
 // TestUnknownLevelDefaultsToStrict — invalid levels (e.g. legacy "audit")
 // must render as [strict] and not crash on a missing multiplier key.
 func TestUnknownLevelDefaultsToStrict(t *testing.T) {

@@ -20,7 +20,10 @@ user-invocable: false
 1. Read `${CLAUDE_PLUGIN_ROOT}/settings.json`.
 2. Update `pakka.compress.outputLevel` to the requested level.
 3. Write settings back.
-4. Confirm: "Output compression set to [level]. Takes effect next response."
+4. Run `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=<new-level>`
+   to synchronously re-compress every allowlisted memory file at the new level.
+   Report progress to user (one line per file).
+5. Confirm: "Output compression set to [level]. Takes effect next response."
 
 Level effects:
 - `lite`: No filler/hedging. Keep articles + full sentences. Professional tight.
@@ -59,6 +62,41 @@ If a filepath is given explicitly:
 4. Save the original file as `<stem>.original.md` (backup).
 5. Write the compressed output to the original file path.
 6. Report: filename, original size, compressed size, ratio, tokens saved estimate.
+
+### Auto-orchestration
+
+When `pakka.compress.semantic: true`, SessionStart automatically re-compresses
+allowlisted memory files in the background. The orchestrator forks a detached
+`pakka-core compress --orchestrator-bg` process so the SessionStart hook
+returns under 50ms; the child writes progress to `~/.pakka/orchestrator.log`.
+
+Allowlist (default):
+- `CLAUDE.md`
+- `DESIGN.md`
+- `BUILD.md`
+- `memory/LOG.md`
+- `memory/DECISIONS.md`
+
+Override via `pakka.compress.semanticTargets` in user `settings.json`. Paths
+are relative to the repo root (cwd at hook fire time). Files not present are
+silently skipped. Symlinks, files outside the repo, and non-`.md` files are
+rejected for safety.
+
+State lives at `<repo>/.pakka/compress-state.json`. Each entry records
+`sourceSHA`, `level`, `compressedAt`, and `validatorPasses`. A file is
+re-compressed when (a) it is new to the state file, (b) the level changed,
+(c) the source SHA changed, or (d) the previous validator pass failed.
+
+Status-line surfaces failed entries as `! N stale`. To retry stale entries,
+re-run `/pakka:compress <level>` — that path runs synchronously and re-writes
+state on success. Inspect state directly with:
+
+```
+${CLAUDE_PLUGIN_ROOT}/bin/run orchestrator-status
+```
+
+ANTHROPIC_API_KEY absent → orchestrator silently no-ops (logged but never
+warned during a session).
 
 ### Semantic mode
 

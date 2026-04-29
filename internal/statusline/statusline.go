@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/amargautam/pakka/internal/compress/orchestrator"
 	"github.com/amargautam/pakka/internal/hookevent"
 	"github.com/amargautam/pakka/internal/meter"
 )
@@ -75,6 +76,17 @@ type metrics struct {
 	outTokens     int64 // assistant output tokens summed across repo's transcripts
 	outSavedEst   int64 // computed for completeness; NOT rendered as a percentage
 	bugsCaught    int
+	staleCompress int // orchestrator entries with validatorPasses=false
+}
+
+// countStaleCompress returns the number of orchestrator state entries with
+// validatorPasses=false. Returns 0 on any read/parse failure — status-line
+// must never block on a missing or corrupt state file.
+//
+// Purpose: Drive the `! N stale` glyph segment.
+// Errors: None reported; defensive on every failure mode.
+func countStaleCompress(repoDir string) int {
+	return orchestrator.CountStaleFromDisk(repoDir)
 }
 
 // pctRound returns round(num*100/denom) as int64. Returns 0 when denom <= 0.
@@ -145,6 +157,9 @@ func compute(event *hookevent.Event, outputLevel string) metrics {
 	// All-time bug count across the repo's review findings.
 	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
 
+	// Stale compress count from orchestrator state (0 when no state file).
+	stale := countStaleCompress(repo)
+
 	return metrics{
 		outputLevel:   outputLevel,
 		inSavedTokens: savedTokens,
@@ -153,6 +168,7 @@ func compute(event *hookevent.Event, outputLevel string) metrics {
 		outTokens:     outTokens,
 		outSavedEst:   outSaved,
 		bugsCaught:    bugs,
+		staleCompress: stale,
 	}
 }
 
@@ -211,28 +227,38 @@ func humanize(n int64) string {
 // UTF-8: [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
 // ASCII: [strict] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
 func formatLine(m metrics, inArrow, outArrow, sep string) string {
+	staleSeg := ""
+	if m.staleCompress > 0 {
+		staleSeg = fmt.Sprintf(" %s ! %d stale", sep, m.staleCompress)
+	}
 	if inArrow == "↑" {
-		return fmt.Sprintf("[%s] %s %s%s (%d%%) in saved %s %s%s out tok %s %d bugs caught",
+		return fmt.Sprintf("[%s] %s %s%s (%d%%) in saved %s %s%s out tok %s %d bugs caught%s",
 			m.outputLevel, sep,
 			inArrow, humanize(m.inSavedTokens), m.inPct,
 			sep,
 			outArrow, humanize(m.outTokens),
-			sep, m.bugsCaught)
+			sep, m.bugsCaught, staleSeg)
 	}
 	// ASCII branch: arrows are "in " / "out " — keep the leading word but
 	// drop the second "in"/"out" duplicate.
-	return fmt.Sprintf("[%s] %s %s%s (%d%%) saved %s %s%s tok %s %d bugs caught",
+	return fmt.Sprintf("[%s] %s %s%s (%d%%) saved %s %s%s tok %s %d bugs caught%s",
 		m.outputLevel, sep,
 		inArrow, humanize(m.inSavedTokens), m.inPct,
 		sep,
 		outArrow, humanize(m.outTokens),
-		sep, m.bugsCaught)
+		sep, m.bugsCaught, staleSeg)
 }
 
 // Run prints the pakka status line to w.
 //
 // Format (UTF-8): pakka [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
+// When orchestrator state has stale entries, a trailing "· ! N stale" segment
+// is appended:
+//
+//	pakka [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught · ! 2 stale
+//
 // Format (ascii): pakka [strict] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
+// ASCII stale segment: " | ! 2 stale"
 //
 // Bracket label is the output compression level (lite|strict|ultra).
 //

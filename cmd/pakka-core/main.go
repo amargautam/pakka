@@ -78,6 +78,8 @@ func main() {
 		runOutputRules()
 	case "output-reinforce":
 		runOutputReinforce()
+	case "orchestrator-status":
+		runOrchestratorStatus()
 	default:
 		fmt.Fprintf(os.Stderr, "pakka-core %s — unknown subcommand %q\n", version, os.Args[1])
 		os.Exit(2)
@@ -112,6 +114,9 @@ func runCompress() {
 	phase := ""
 	semanticFlag := false
 	levelStr := ""
+	orchestratorBg := false
+	orchestratorRun := false
+	repoFlag := ""
 	for _, a := range os.Args[2:] {
 		switch {
 		case strings.HasPrefix(a, "--mode="):
@@ -120,9 +125,23 @@ func runCompress() {
 			phase = strings.TrimPrefix(a, "--phase=")
 		case strings.HasPrefix(a, "--level="):
 			levelStr = strings.TrimPrefix(a, "--level=")
+		case strings.HasPrefix(a, "--repo="):
+			repoFlag = strings.TrimPrefix(a, "--repo=")
 		case a == "--semantic":
 			semanticFlag = true
+		case a == "--orchestrator-bg":
+			orchestratorBg = true
+		case a == "--orchestrator-run":
+			orchestratorRun = true
 		}
+	}
+
+	// Orchestrator entry points: --orchestrator-bg is the body of the forked
+	// detached child; --orchestrator-run is the synchronous re-compress walk
+	// driven by /pakka:compress <level>.
+	if orchestratorBg || orchestratorRun {
+		runOrchestrator(repoFlag, levelStr)
+		return
 	}
 
 	// Default level when --semantic is set without --level.
@@ -161,6 +180,14 @@ func runCompress() {
 			// session-start auto-compress always uses deterministic strict —
 			// LLM calls during SessionStart hooks would block the editor.
 			autoCompressContextFiles(cwd, "strict", sessionID)
+			// Pass 4.3: when semantic auto-orchestration is enabled, fork a
+			// detached child to walk the allowlist with the LLM rewriter.
+			// The fork is intentionally fire-and-forget — the SessionStart
+			// hook MUST return in <50ms.
+			if orchestratorEnabled() {
+				repo := meter.RepoKey(cwd)
+				forkOrchestrator(repo, loadOutputLevel(), sessionID)
+			}
 			return
 		}
 	} else {
@@ -788,15 +815,16 @@ type settingsJSON struct {
 			SkipPaths           []string `json:"skipPaths"`
 		} `json:"review"`
 		Compress struct {
-			Input               *bool  `json:"input"`
-			Output              *bool  `json:"output"`
-			OutputLevel         string `json:"outputLevel"`
-			ToolResult          *bool  `json:"toolResult"`
-			ToolResultMaxBytes  *int   `json:"toolResultMaxBytes"`
-			ToolResultHeadLines *int   `json:"toolResultHeadLines"`
-			ToolResultTailLines *int   `json:"toolResultTailLines"`
-			SubagentReturn      *bool  `json:"subagentReturn"`
-			Semantic            *bool  `json:"semantic"`
+			Input               *bool    `json:"input"`
+			Output              *bool    `json:"output"`
+			OutputLevel         string   `json:"outputLevel"`
+			ToolResult          *bool    `json:"toolResult"`
+			ToolResultMaxBytes  *int     `json:"toolResultMaxBytes"`
+			ToolResultHeadLines *int     `json:"toolResultHeadLines"`
+			ToolResultTailLines *int     `json:"toolResultTailLines"`
+			SubagentReturn      *bool    `json:"subagentReturn"`
+			Semantic            *bool    `json:"semantic"`
+			SemanticTargets     []string `json:"semanticTargets"`
 		} `json:"compress"`
 		Display struct {
 			StatusLine *bool `json:"statusLine"`
