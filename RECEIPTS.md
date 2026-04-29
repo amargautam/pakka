@@ -1,39 +1,40 @@
 # RECEIPTS.md — pakka built with pakka
 
 version: v0.1.0-dev
-generated: 2026-04-25T00:14:22Z
+generated: 2026-04-29T23:20:56Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 17 |
+| sessions | 119 |
 | first session | 2026-04-24 |
-| last session | 2026-04-25 |
-| total tokens used | 1,338,064 |
-| bytes saved (compression) | 7,252 |
-| est. tokens saved | 2,073 |
+| last session | 2026-04-29 |
+| total tokens used | 17,464,930 |
+| bytes saved (compression) | 75,955 |
+| est. tokens saved | 21,763 |
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 591 |
-| Read | 329 |
-| Edit | 140 |
-| Write | 87 |
-| Grep | 42 |
-| Agent | 36 |
-| Glob | 31 |
-| WebFetch | 14 |
+| Bash | 3,784 |
+| Read | 2,111 |
+| Edit | 1,350 |
+| Grep | 538 |
+| Write | 302 |
+| Agent | 220 |
+| Glob | 112 |
+| WebFetch | 23 |
+| TodoWrite | 11 |
 
 ## review gate
 
 | metric | value |
 |---|---|
-| verdicts run | 14 |
-| verdicts passed | 8 |
-| pass rate | 57.1% |
+| verdicts run | 9 |
+| verdicts passed | 5 |
+| pass rate | 55.6% |
 
 ---
 

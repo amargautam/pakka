@@ -51,17 +51,17 @@ All local. No dial-home. No dashboards.
 
 User-facing commands are bare (`/pakka:init`) for uniformity. Underlying skills keep the `pakka-` prefix (`pakka-init`, `pakka-eval`, `pakka-compress`) so they stay collision-safe in the global skill registry. Commands are thin wrappers — they pass `$ARGUMENTS` straight to the skill.
 
-## Claims (v0.1.0)
+## Results (v0.1.0)
 
-Three numbers will ship on this README when v0.1.0 lands, each reproducible via `make bench`:
+Three absolute numbers. Each verifiable from artifacts in this repo. vs-raw A/B comparison is deferred to v0.2.0 (requires API-key bench budget; see `DECISIONS.md` "Bench methodology").
 
-1. Tokens per merged PR vs raw Claude Code.
+1. **Bug catch rate: 9/10.** Combined `pakka:reviewer` + `pakka:security` agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus (12 entries). Methodology: in-session benchmark, single skilled reviewer arm. A raw-Claude A/B is the v0.2.0 deliverable.
 
-2. Bug-class catch rate on 10 seeded-bug PRs (target: pakka ≥ 8/10 vs raw Claude Code ≤ 3/10).
+2. **Bytes saved (compression): 75,955 cumulative since 2026-04-24.** Estimated tokens saved: 21,763 (bytes ÷ 3.5 — estimate, not a measured token count). Source: `RECEIPTS.md`, regenerated via `make self-report`. Meter is cumulative across pakka's own development; counter resets are logged.
 
-3. Self-verification: `make bench` reproduces both end-to-end.
+3. **Gate enforcement: every Claude-authored commit runs the review gate.** Verifiable trailer count on `v0.1.0-dev` today: `2` of 24 commits carry `Reviewed-by-pakka`. The discrepancy is the trailer-injection hook itself: it failed on wrapped commit shapes (`cd && git`, `git -C`) until `45af7b3` (Pass 4.5 phase 2). Historical commits before that fix have no trailer, and Pass 4.6 docs-sync (`9b838ac`) silently skipped — known in-flight diagnostic. Reproduce: `git log --format='%H %s%n%b' v0.1.0-dev | grep -c Reviewed-by-pakka`.
 
-No claim without a benchmark. No benchmark without a commit hash.
+No claim without a check. No check without a path to the artifact.
 
 ## Attribution
 

@@ -2,11 +2,11 @@
 Target: `github.com/amargautam/pakka` (plugin) + `github.com/amargautam/pakka-marketplace` (catalog). License: Apache-2.0. Internal code: Go. Build window: ~3–5 days over 5 long-running Claude Code passes. Drive with Claude Code. Dogfood from Pass 1.
 This doc is spec. Everything else derives from it.
 ---
-## 1. v0 scope — three claims, each reproducible
-1. **Fewer tokens.** On v0 benchmark corpus, `pakka` uses fewer tokens per merged PR than raw Claude Code.
-2. **Catches bug class raw Claude Code misses.** On 10 seeded-bug PRs, `pakka`'s review gate catches ≥ 8/10; raw Claude Code catches ≤ 3/10. Numbers published.
-3. **Self-verifiable.** `make bench` reproduces both claims end-to-end on any Mac/Linux host with Claude Code installed.
-No claim without benchmark. No benchmark without commit hash. Three numbers on README. That's release bar.
+## 1. v0 scope — three absolute claims (vs-raw deferred to v0.2.0)
+1. **Bug catch rate.** 9/10 seeded bugs caught on Pass 5b in-session corpus (combined `pakka:reviewer` + `pakka:security` over 12 corpus entries). Raw Claude Code A/B comparison deferred to v0.2.0 — `claude -p --bare` requires `ANTHROPIC_API_KEY` and skips OAuth/keychain (see DECISIONS.md "Bench methodology"); honest A/B needs API-key bench budget.
+2. **Bytes saved (compression).** Cumulative `bytes_saved` and `tokens_saved_est` (= bytes ÷ 3.5) reported by `make self-report` in `RECEIPTS.md`. Token figure is an estimate from byte count, not a measured token count.
+3. **Gate enforcement (architectural).** Review gate runs on every Claude-authored `git commit` against pakka. When the trailer hook fires, commits carry a `Reviewed-by-pakka` trailer; verifiable via `git log --format='%H %s%n%b' v0.1.0-dev | grep -c Reviewed-by-pakka`. Trailer-injection on wrapped shapes (`cd && git`, `git -C`) was fixed in Pass 4.5 phase 2 — historical commits before that fix do not carry the trailer.
+No claim without a check. Numbers come from `RECEIPTS.md` and `git log`, not narrative. vs-raw measurement returns at v0.2.0 with budget for `ANTHROPIC_API_KEY` headless runs. See §10 build order.
 ---
 ## 2. Repos
 **`amargautam/pakka`** — plugin. Apache-2.0. Public from commit one.
