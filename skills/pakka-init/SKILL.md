@@ -3,7 +3,7 @@ name: pakka-init
 description: One-time pakka setup. Detects stack, writes stack overlay, verifies permissions and hooks work.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 argument-hint: "[--force]"
-user-invocable: true
+user-invocable: false
 ---
 
 ## Instructions

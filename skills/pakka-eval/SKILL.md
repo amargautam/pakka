@@ -3,7 +3,7 @@ name: pakka-eval
 description: Run the 3-layer eval gate (static, LLM-judge, Monte Carlo) on skill/agent files. Ensures quality before commit.
 allowed-tools: Read, Bash, Glob, Grep
 argument-hint: "[targets...] [--layer=1|2|3] [--n=10]"
-user-invocable: true
+user-invocable: false
 ---
 
 ## Instructions

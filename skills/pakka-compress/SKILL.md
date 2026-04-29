@@ -3,7 +3,7 @@ name: pakka-compress
 description: Control pakka compression. Switch output intensity (lite|strict|ultra), re-compress input files, restore originals.
 allowed-tools: Read, Bash
 argument-hint: "[lite|strict|ultra|restore|status]"
-user-invocable: true
+user-invocable: false
 ---
 
 ## Instructions
