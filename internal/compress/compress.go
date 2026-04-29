@@ -1,21 +1,30 @@
-// Package compress provides deterministic text compression for Claude Code context.
+// Package compress provides text compression for Claude Code context.
 //
-// Modes: strict (default), audit (passthrough).
-// No LLM calls. All rules are mechanical and reproducible.
+// Modes:
+//   - ModeStrict (default): deterministic structural + linguistic rules.
+//   - ModeAudit: passthrough, no compression.
+//   - ModeSemantic: LLM-rewrite via the semantic subpackage. Default
+//     deterministic mode never calls the LLM. Semantic mode is opt-in per call
+//     and runs a deterministic Validator gate on every rewrite — see
+//     ./semantic for details.
 package compress
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/amargautam/pakka/internal/compress/semantic"
 )
 
 // Mode selects the compression level.
 type Mode string
 
 const (
-	ModeStrict Mode = "strict"
-	ModeAudit  Mode = "audit"
+	ModeStrict   Mode = "strict"
+	ModeAudit    Mode = "audit"
+	ModeSemantic Mode = "semantic"
 )
 
 // Result holds the compression output and metrics.
@@ -34,14 +43,32 @@ func ParseMode(s string) Mode {
 	switch s {
 	case "audit":
 		return ModeAudit
+	case "semantic":
+		return ModeSemantic
 	default:
 		return ModeStrict
 	}
 }
 
-// Run compresses input text deterministically using the given mode.
+// SemanticOptions controls a single semantic rewrite invocation. The fields
+// are wired into the runner in semantic mode; in any other mode they are
+// ignored.
+type SemanticOptions struct {
+	// Rewriter is the underlying LLM client. Required when calling
+	// RunSemantic; production code passes a *semantic.AnthropicClient and
+	// tests pass a stub. A nil Rewriter causes RunSemantic to fall back to
+	// deterministic strict mode (callers should log this transition).
+	Rewriter semantic.Rewriter
+	// Level controls prompt aggressiveness. Defaults to LevelStrict when zero.
+	Level semantic.Level
+	// Context is plumbed through to the rewriter; defaults to context.Background().
+	Context context.Context
+}
+
+// Run compresses input text using the deterministic engine.
 //
-// Purpose: Reduce context size for CLAUDE.md, skill bodies, and subagent returns.
+// Purpose: Reduce context size for CLAUDE.md, skill bodies, and subagent
+// returns. For semantic mode use RunSemantic — Run never calls an LLM.
 // Errors: Never returns an error; always returns a valid Result.
 func Run(input string, mode Mode) *Result {
 	orig := len(input)
@@ -49,8 +76,11 @@ func Run(input string, mode Mode) *Result {
 		return &Result{Output: input, OriginalSize: orig, CompressedSize: orig, Ratio: 0}
 	}
 
+	// ModeSemantic without a Rewriter falls through to strict-deterministic
+	// here so existing callers that have not migrated keep working safely.
+	// Callers that want the semantic rewrite path must use RunSemantic.
 	output := apply(input, mode)
-	if mode == ModeStrict {
+	if mode == ModeStrict || mode == ModeSemantic {
 		output = applyLinguistic(output)
 	}
 	comp := len(output)
@@ -59,6 +89,43 @@ func Run(input string, mode Mode) *Result {
 		ratio = 100.0 * float64(orig-comp) / float64(orig)
 	}
 	return &Result{Output: output, OriginalSize: orig, CompressedSize: comp, Ratio: ratio}
+}
+
+// RunSemantic compresses input via the LLM rewrite path with validator gate
+// and cherry-pick retry. Returns a deterministic strict result when opts is
+// zero or opts.Rewriter is nil — never silently degrades to no-op.
+//
+// Purpose: Single entry point for semantic compression with safety net.
+// Errors: Returns the validator's *semantic.FailedError if retries exhaust;
+// the returned Result.Output carries the ORIGINAL input unchanged in that
+// case so callers can ship it without corruption risk.
+func RunSemantic(input string, opts SemanticOptions) (*Result, error) {
+	orig := len(input)
+	if orig == 0 {
+		return &Result{Output: input, OriginalSize: 0, CompressedSize: 0, Ratio: 0}, nil
+	}
+	// Fallback: no rewriter wired. Use deterministic strict so callers always
+	// get a non-nil Result and a labeled ratio.
+	if opts.Rewriter == nil {
+		return Run(input, ModeStrict), nil
+	}
+	level := opts.Level
+	if level == "" {
+		level = semantic.LevelStrict
+	}
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	out, err := semantic.RunSemantic(ctx, opts.Rewriter, input, level)
+	comp := len(out)
+	var ratio float64
+	if orig > 0 {
+		ratio = 100.0 * float64(orig-comp) / float64(orig)
+	}
+	res := &Result{Output: out, OriginalSize: orig, CompressedSize: comp, Ratio: ratio}
+	return res, err
 }
 
 // FormatRatio returns a human-readable compression summary.

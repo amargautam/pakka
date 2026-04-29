@@ -51,14 +51,19 @@ var OverrideRepoKey func(cwd string) string
 
 // outputMultiplier maps output compression level to an estimated savings ratio.
 //
-// PLACEHOLDER. Real ratios land in Pass 4.2 when semantic-compress measurement
-// exists. Until then, callers must hide derived percentages — only display the
-// absolute output token volume. The map is retained to size the future
-// outSavedEst (computed but not rendered as a percentage).
+// PLACEHOLDER. Real ratios land when semantic-compress measurement is
+// calibrated against benchmarks. Until then, callers must hide derived
+// percentages — only display the absolute output token volume. The map is
+// retained to size the future outSavedEst (computed but not rendered as a
+// percentage).
+//
+// super-ultra is the highest tier added in Pass 4.2. The 0.78 figure is a
+// PLACEHOLDER pending real measurement.
 var outputMultiplier = map[string]float64{
-	"lite":   0.11,
-	"strict": 0.33,
-	"ultra":  0.67,
+	"lite":        0.11,
+	"strict":      0.33,
+	"ultra":       0.67,
+	"super-ultra": 0.78,
 }
 
 // metrics holds computed status-line values.

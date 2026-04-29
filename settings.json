@@ -40,7 +40,7 @@
   },
   "pakka": {
     "display": { "statusLine": true },
-    "compress": { "outputLevel": "strict" },
+    "compress": { "outputLevel": "strict", "semantic": false },
     "review": {
       "confidenceThreshold": 80,
       "autoGate": true,

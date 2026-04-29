@@ -1,9 +1,74 @@
 package compress
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/amargautam/pakka/internal/compress/semantic"
 )
+
+// stubRewriter is a minimal Rewriter for the integration test. It returns a
+// fixed compressed string regardless of input/level; the test asserts that
+// Run* threads through the semantic path and produces a non-zero ratio.
+type stubRewriter struct{ out string }
+
+func (s *stubRewriter) Rewrite(ctx context.Context, input string, level semantic.Level) (string, error) {
+	return s.out, nil
+}
+
+// TestRunSemantic_ModeIntegration confirms ModeSemantic threads through the
+// semantic runner: the result struct has a non-zero Ratio when the
+// rewriter returns a strictly shorter string.
+func TestRunSemantic_ModeIntegration(t *testing.T) {
+	in := "The authentication middleware checks the token on every request, and if the token is expired the middleware returns a 401 to the caller."
+	stub := &stubRewriter{out: "Auth middleware checks token; if expired -> 401."}
+
+	res, err := RunSemantic(in, SemanticOptions{
+		Rewriter: stub,
+		Level:    semantic.LevelStrict,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("nil result")
+	}
+	if res.Ratio <= 0 {
+		t.Errorf("expected positive ratio on prose input, got %f", res.Ratio)
+	}
+	if res.CompressedSize >= res.OriginalSize {
+		t.Errorf("compressed (%d) should be smaller than original (%d)",
+			res.CompressedSize, res.OriginalSize)
+	}
+	if !strings.Contains(res.Output, "Auth") {
+		t.Errorf("output should be the rewriter's, got %q", res.Output)
+	}
+}
+
+// TestRunSemantic_NilRewriterFallsBackToStrict — without a Rewriter, the
+// public API must not crash and must return a deterministic result.
+func TestRunSemantic_NilRewriterFallsBackToStrict(t *testing.T) {
+	in := "The   quick   brown   fox\n\n\n\njumps over the lazy dog.\n"
+	res, err := RunSemantic(in, SemanticOptions{})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("nil result")
+	}
+	// Deterministic strict collapses the whitespace runs.
+	if strings.Contains(res.Output, "    ") {
+		t.Errorf("strict fallback should collapse whitespace, got %q", res.Output)
+	}
+}
+
+// TestParseMode_Semantic — semantic must round-trip through ParseMode.
+func TestParseMode_Semantic(t *testing.T) {
+	if got := ParseMode("semantic"); got != ModeSemantic {
+		t.Errorf("ParseMode(\"semantic\") = %q, want %q", got, ModeSemantic)
+	}
+}
 
 func TestAuditPassthrough(t *testing.T) {
 	input := "hello\n\n\nworld\n"

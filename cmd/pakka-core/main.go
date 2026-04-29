@@ -27,6 +27,7 @@ import (
 	"github.com/amargautam/pakka/internal/bench"
 	"github.com/amargautam/pakka/internal/commitgate"
 	"github.com/amargautam/pakka/internal/compress"
+	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/diffscope"
 	evalPkg "github.com/amargautam/pakka/internal/eval"
 	"github.com/amargautam/pakka/internal/guard"
@@ -109,13 +110,27 @@ func runAudit() {
 func runCompress() {
 	mode := "strict"
 	phase := ""
+	semanticFlag := false
+	levelStr := ""
 	for _, a := range os.Args[2:] {
-		if strings.HasPrefix(a, "--mode=") {
+		switch {
+		case strings.HasPrefix(a, "--mode="):
 			mode = strings.TrimPrefix(a, "--mode=")
-		}
-		if strings.HasPrefix(a, "--phase=") {
+		case strings.HasPrefix(a, "--phase="):
 			phase = strings.TrimPrefix(a, "--phase=")
+		case strings.HasPrefix(a, "--level="):
+			levelStr = strings.TrimPrefix(a, "--level=")
+		case a == "--semantic":
+			semanticFlag = true
 		}
+	}
+
+	// Default level when --semantic is set without --level.
+	if semanticFlag && levelStr == "" {
+		levelStr = "strict"
+	}
+	if semanticFlag {
+		mode = "semantic"
 	}
 
 	var input string
@@ -143,7 +158,9 @@ func runCompress() {
 				cwd, _ = os.Getwd()
 			}
 			debugLogf("compress cwd=%s event.cwd=%s", cwd, event.CWD)
-			autoCompressContextFiles(cwd, mode, sessionID)
+			// session-start auto-compress always uses deterministic strict —
+			// LLM calls during SessionStart hooks would block the editor.
+			autoCompressContextFiles(cwd, "strict", sessionID)
 			return
 		}
 	} else {
@@ -158,8 +175,41 @@ func runCompress() {
 	}
 
 	m := compress.ParseMode(mode)
-	result := compress.Run(input, m)
 
+	// Semantic path: try the LLM rewriter; fall back to deterministic strict
+	// when ANTHROPIC_API_KEY is not set. Never fail the call on missing key.
+	if m == compress.ModeSemantic {
+		level := semantic.ParseLevel(levelStr)
+		client, ok := semantic.NewAnthropicClient()
+		if !ok {
+			debugLogf("compress semantic: ANTHROPIC_API_KEY missing, falling back to deterministic strict (level=%s, bytes=%d)", level, len(input))
+			fallback := compress.Run(input, compress.ModeStrict)
+			emitCompressResult(fallback, sessionID)
+			return
+		}
+		result, err := compress.RunSemantic(input, compress.SemanticOptions{
+			Rewriter: client,
+			Level:    level,
+		})
+		if err != nil {
+			// Validator failed after retries — result.Output is the original
+			// input unchanged (safety contract). Log and emit the original.
+			debugLogf("compress semantic: validator failed level=%s bytes=%d err=%v", level, len(input), err)
+		}
+		emitCompressResult(result, sessionID)
+		return
+	}
+
+	result := compress.Run(input, m)
+	emitCompressResult(result, sessionID)
+}
+
+// emitCompressResult writes the compressed output to stdout, the ratio note
+// to stderr, and meters the savings.
+func emitCompressResult(result *compress.Result, sessionID string) {
+	if result == nil {
+		return
+	}
 	fmt.Fprint(os.Stdout, result.Output)
 	fmt.Fprintf(os.Stderr, "pakka: %s\n", compress.FormatRatio(result))
 
@@ -746,6 +796,7 @@ type settingsJSON struct {
 			ToolResultHeadLines *int   `json:"toolResultHeadLines"`
 			ToolResultTailLines *int   `json:"toolResultTailLines"`
 			SubagentReturn      *bool  `json:"subagentReturn"`
+			Semantic            *bool  `json:"semantic"`
 		} `json:"compress"`
 		Display struct {
 			StatusLine *bool `json:"statusLine"`
@@ -1003,7 +1054,7 @@ func loadSettings() settingsJSON {
 func loadOutputLevel() string {
 	s := loadSettings()
 	switch s.Pakka.Compress.OutputLevel {
-	case "lite", "strict", "ultra":
+	case "lite", "strict", "ultra", "super-ultra":
 		return s.Pakka.Compress.OutputLevel
 	default:
 		return "strict"

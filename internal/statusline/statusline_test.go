@@ -155,7 +155,7 @@ func extractBugs(s string) int {
 
 // stripBracketLabel removes "[<level>]" once from the rendered line so two
 // renders that differ only in their bracket label compare equal.
-var bracketRe = regexp.MustCompile(`\[(lite|strict|ultra)\]`)
+var bracketRe = regexp.MustCompile(`\[(lite|strict|ultra|super-ultra)\]`)
 
 func stripBracketLabel(s string) string {
 	return bracketRe.ReplaceAllString(s, "[LEVEL]")
