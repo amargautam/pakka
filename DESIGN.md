@@ -160,7 +160,7 @@ Reserved marketplace names to avoid: `claude-code-marketplace`, `anthropic-marke
   },
   "pakka": {
     "display": { "statusLine": true },
-    "compress": { "mode": "strict" },
+    "compress": { "outputLevel": "strict" },
     "review": { "confidenceThreshold": 80 },
     "audit": { "path": "~/.pakka/audit" },
     "meter":  { "path": "~/.pakka/meter" }
@@ -471,14 +471,21 @@ PAKKA OUTPUT COMPRESSION ACTIVE (strict). Drop articles/filler/pleasantries/hedg
 ```
 "pakka": {
   "compress": {
-    "mode": "strict",
+    "input": true,
     "output": true,
-    "outputLevel": "strict"
+    "outputLevel": "strict",
+    "toolResult": true,
+    "subagentReturn": true
   }
 }
 ```
+- `input: false` → skips SessionStart auto-compression of CLAUDE.md/DESIGN.md/BUILD.md.
 - `output: false` → disables output compression entirely (no SessionStart injection, no per-turn reinforcement).
 - `outputLevel` → `lite|strict|ultra`. Overrides level in ruleset.
+- `toolResult: false` → disables PostToolUse Read/Grep/Bash output truncation.
+- `subagentReturn: false` → disables SubagentStop return compression.
+
+Note: the engine-mode field (`compress.mode`) was removed in Pass 4.1.1. It conflated the engine on/off signal with `outputLevel` and was redundant with the per-vector booleans.
 **Measurement:** Output token savings are measured by comparing session's output tokens against a baseline estimate. Baseline = median output tokens per tool call from sessions without output compression (captured during benchmarking). Reported in status line and meter.
 #### Vector 2 — Input file compression (existing, improved)
 **Hook:** SessionStart → `pakka-core compress --phase=session-start`.

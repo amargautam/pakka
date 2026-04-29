@@ -6,7 +6,9 @@
 //     session. Cost-weighted: input × 1× + cache_creation × 1.25× +
 //     cache_read × 0.1×, plus tokensSavedEst × 1× as the savings numerator.
 //   - Output tokens are summed across the same transcripts. Output savings
-//     remain the mode coefficient (lite/strict/ultra/audit).
+//     are NOT rendered as a percentage — only the absolute output volume is
+//     displayed. Until Pass 4.2 ships LLM-rewrite measurement, any output %
+//     would be a placeholder identity (mult / (1+mult)) constant per level.
 //   - tokensSavedEst is summed across every meter file with matching repo tag.
 //   - bugsCaught is an all-time count across the repo's review findings.
 //
@@ -47,24 +49,27 @@ var OverrideHome string
 // Used by tests to avoid invoking git on synthetic paths.
 var OverrideRepoKey func(cwd string) string
 
-// Uncalibrated multipliers for v0.1.0. Pass 5 bench replaces these with measured values.
+// outputMultiplier maps output compression level to an estimated savings ratio.
+//
+// PLACEHOLDER. Real ratios land in Pass 4.2 when semantic-compress measurement
+// exists. Until then, callers must hide derived percentages — only display the
+// absolute output token volume. The map is retained to size the future
+// outSavedEst (computed but not rendered as a percentage).
 var outputMultiplier = map[string]float64{
 	"lite":   0.11,
 	"strict": 0.33,
 	"ultra":  0.67,
-	"audit":  0.0,
 }
 
 // metrics holds computed status-line values.
 type metrics struct {
-	compressMode    string
-	inSavedTokens   int64 // tokensSavedEst summed across repo's meter files
-	inCostUnits     int64 // cost-weighted input denominator
-	inPct           int64
-	outTokens       int64 // assistant output tokens summed across repo's transcripts
-	outSavedEst     int64
-	outPct          int64
-	bugsCaught      int
+	outputLevel   string
+	inSavedTokens int64 // tokensSavedEst summed across repo's meter files
+	inCostUnits   int64 // cost-weighted input denominator
+	inPct         int64
+	outTokens     int64 // assistant output tokens summed across repo's transcripts
+	outSavedEst   int64 // computed for completeness; NOT rendered as a percentage
+	bugsCaught    int
 }
 
 // pctRound returns round(num*100/denom) as int64. Returns 0 when denom <= 0.
@@ -94,9 +99,12 @@ func resolveRepoKey(cwd string) string {
 }
 
 // compute gathers all status-line metrics from disk.
-func compute(event *hookevent.Event, compressMode string) metrics {
-	if compressMode == "" {
-		compressMode = "strict"
+func compute(event *hookevent.Event, outputLevel string) metrics {
+	if outputLevel == "" {
+		outputLevel = "strict"
+	}
+	if _, ok := outputMultiplier[outputLevel]; !ok {
+		outputLevel = "strict"
 	}
 
 	cwd := event.CWD
@@ -124,21 +132,21 @@ func compute(event *hookevent.Event, compressMode string) metrics {
 	))
 	inPct := pctRound(savedTokens, costUnits)
 
-	mult := outputMultiplier[compressMode]
+	// outSavedEst is computed but never rendered as a percentage. See package
+	// doc + outputMultiplier comment: real ratio lands in Pass 4.2.
+	mult := outputMultiplier[outputLevel]
 	outSaved := int64(float64(outTokens) * mult)
-	outPct := pctRound(outSaved, outTokens+outSaved)
 
 	// All-time bug count across the repo's review findings.
 	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
 
 	return metrics{
-		compressMode:  compressMode,
+		outputLevel:   outputLevel,
 		inSavedTokens: savedTokens,
 		inCostUnits:   costUnits,
 		inPct:         inPct,
 		outTokens:     outTokens,
 		outSavedEst:   outSaved,
-		outPct:        outPct,
 		bugsCaught:    bugs,
 	}
 }
@@ -188,35 +196,52 @@ func humanize(n int64) string {
 
 // formatLine renders the status-line body using the supplied glyphs.
 //
-// Format: absolute saved tokens (humanized) + percent in parens, both shown.
-// Percent alone is meaningless without scale (50% of 200 vs 50% of 200K), so
-// the body always carries both. Unmeasured values render as "0 (0%)".
+// Input side: absolute saved tokens (humanized) + percent in parens. Percent
+// is meaningful because the meter records real bytes truncated.
 //
-// UTF-8: [strict] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 0 bugs caught
-// ASCII: [strict] | in 12.4K (43%) / out 7.1K (33%) tok saved | 0 bugs caught
+// Output side: absolute output token volume only. NO percent — the
+// outputMultiplier map is a placeholder until Pass 4.2 ships LLM-rewrite
+// measurement, so any rendered % would be theatre (constant per level).
+//
+// UTF-8: [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
+// ASCII: [strict] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
 func formatLine(m metrics, inArrow, outArrow, sep string) string {
-	return fmt.Sprintf("[%s] %s %s%s (%d%%) / %s%s (%d%%) tok saved %s %d bugs caught",
-		m.compressMode, sep,
+	if inArrow == "↑" {
+		return fmt.Sprintf("[%s] %s %s%s (%d%%) in saved %s %s%s out tok %s %d bugs caught",
+			m.outputLevel, sep,
+			inArrow, humanize(m.inSavedTokens), m.inPct,
+			sep,
+			outArrow, humanize(m.outTokens),
+			sep, m.bugsCaught)
+	}
+	// ASCII branch: arrows are "in " / "out " — keep the leading word but
+	// drop the second "in"/"out" duplicate.
+	return fmt.Sprintf("[%s] %s %s%s (%d%%) saved %s %s%s tok %s %d bugs caught",
+		m.outputLevel, sep,
 		inArrow, humanize(m.inSavedTokens), m.inPct,
-		outArrow, humanize(m.outSavedEst), m.outPct,
+		sep,
+		outArrow, humanize(m.outTokens),
 		sep, m.bugsCaught)
 }
 
 // Run prints the pakka status line to w.
 //
-// Format (UTF-8): pakka [strict] · ↑12.4K (43%) / ↓7.1K (33%) tok saved · 0 bugs caught
-// Format (ascii): pakka [strict] | in 12.4K (43%) / out 7.1K (33%) tok saved | 0 bugs caught
+// Format (UTF-8): pakka [strict] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
+// Format (ascii): pakka [strict] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
 //
-// Both absolute saved-token counts (humanized to K/M, floor-truncated) and
-// percentages are shown — percent alone is meaningless without scale.
+// Bracket label is the output compression level (lite|strict|ultra).
 //
-// Arrows follow conventional download/upload semantics: ↑ = input going UP to
+// Input side carries an absolute (humanized to K/M, floor-truncated) and a
+// percent — meter records real byte savings. Output side carries volume
+// only; output % is omitted until Pass 4.2 measurement (see outputMultiplier).
+//
+// Arrows follow conventional upload/download semantics: ↑ = input going UP to
 // the API, ↓ = output coming DOWN.
 //
 // Purpose: Emit compact one-line session summary for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
-func Run(event *hookevent.Event, w io.Writer, compressMode string) error {
-	m := compute(event, compressMode)
+func Run(event *hookevent.Event, w io.Writer, outputLevel string) error {
+	m := compute(event, outputLevel)
 	utf8 := utf8Capable()
 
 	var inArrow, outArrow, sep string
@@ -233,8 +258,8 @@ func Run(event *hookevent.Event, w io.Writer, compressMode string) error {
 
 // Summary returns the plain-text status line (no ANSI escapes).
 // Suitable for embedding in commit trailers.
-func Summary(event *hookevent.Event, compressMode string) string {
-	m := compute(event, compressMode)
+func Summary(event *hookevent.Event, outputLevel string) string {
+	m := compute(event, outputLevel)
 	utf8 := utf8Capable()
 
 	var inArrow, outArrow, sep string

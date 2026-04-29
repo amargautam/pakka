@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -86,35 +85,10 @@ func main() {
 
 func runStatusLine() {
 	event, _ := hookevent.Parse(os.Stdin)
-	mode := loadCompressMode()
-	if err := statusline.Run(event, os.Stdout, mode); err != nil {
+	level := loadOutputLevel()
+	if err := statusline.Run(event, os.Stdout, level); err != nil {
 		fmt.Fprintf(os.Stderr, "pakka: status-line: %v\n", err)
 		os.Exit(1)
-	}
-}
-
-// compressModeRe validates that compress mode contains only lowercase alpha.
-var compressModeRe = regexp.MustCompile(`^[a-z]+$`)
-
-func loadCompressMode() string {
-	root := pluginRoot()
-	data, err := os.ReadFile(filepath.Join(root, "settings.json"))
-	if err != nil {
-		return "strict"
-	}
-	var s settingsJSON
-	if json.Unmarshal(data, &s) != nil {
-		return "strict"
-	}
-	m := s.Pakka.Compress.Mode
-	if !compressModeRe.MatchString(m) {
-		return "strict"
-	}
-	switch m {
-	case "strict", "audit":
-		return m
-	default:
-		return "strict"
 	}
 }
 
@@ -159,18 +133,16 @@ func runCompress() {
 			runCompressSubagentReturn(event)
 			return
 		case "session-start":
+			// Per-vector gate: skip entirely if input compression disabled.
+			if !isInputEnabled() {
+				return
+			}
 			// Auto-compress CLAUDE.md, DESIGN.md, BUILD.md in CWD + one level deep.
 			cwd := event.CWD
 			if cwd == "" {
 				cwd, _ = os.Getwd()
 			}
 			debugLogf("compress cwd=%s event.cwd=%s", cwd, event.CWD)
-			// If --mode not provided, fall back to settings.json
-			if mode == "strict" {
-				if cfgMode := loadCompressMode(); cfgMode != "" {
-					mode = cfgMode
-				}
-			}
 			autoCompressContextFiles(cwd, mode, sessionID)
 			return
 		}
@@ -350,6 +322,19 @@ func isToolResultEnabled() bool {
 	return *s.Pakka.Compress.ToolResult
 }
 
+// isInputEnabled returns whether input-file compression is enabled.
+// Defaults to true if not explicitly set.
+//
+// Purpose: Per-vector gate for SessionStart auto-compression of context files.
+// Errors: Never errors.
+func isInputEnabled() bool {
+	s := loadSettings()
+	if s.Pakka.Compress.Input == nil {
+		return true
+	}
+	return *s.Pakka.Compress.Input
+}
+
 // runCompressToolResult truncates large tool results from PostToolUse events.
 // Edit/Write tools and error exits are passed through unchanged.
 //
@@ -489,8 +474,10 @@ func runCompressSubagentReturn(event *hookevent.Event) {
 		return
 	}
 
-	m := compress.ParseMode(loadCompressMode())
-	result := compress.Run(input, m)
+	// Subagent-return always uses strict structural+linguistic compression.
+	// The audit/strict engine-mode toggle was removed in Pass 4.1.1; the
+	// per-vector boolean (`compress.subagentReturn`) gates the whole call.
+	result := compress.Run(input, compress.ModeStrict)
 
 	// Only emit if compression actually saved something
 	if result.CompressedSize >= result.OriginalSize {
@@ -751,7 +738,7 @@ type settingsJSON struct {
 			SkipPaths           []string `json:"skipPaths"`
 		} `json:"review"`
 		Compress struct {
-			Mode                string `json:"mode"`
+			Input               *bool  `json:"input"`
 			Output              *bool  `json:"output"`
 			OutputLevel         string `json:"outputLevel"`
 			ToolResult          *bool  `json:"toolResult"`
@@ -786,8 +773,8 @@ func runCommitGate() {
 
 	// Inject status trailer on allowed commits.
 	if d.Allow && commitgate.IsGitCommit(input.Command) {
-		mode := loadCompressMode()
-		summary := statusline.Summary(event, mode)
+		level := loadOutputLevel()
+		summary := statusline.Summary(event, level)
 		target := d.Command
 		if target == "" {
 			target = input.Command
@@ -1136,7 +1123,6 @@ func runHelp() {
 	// Resolve config with defaults
 	autoGate := true
 	threshold := 80
-	compressMode := "strict"
 	guardOn := true
 	sigOn := true
 	coAuthorOn := true
@@ -1146,9 +1132,6 @@ func runHelp() {
 	}
 	if s.Pakka.Review.ConfidenceThreshold != nil {
 		threshold = *s.Pakka.Review.ConfidenceThreshold
-	}
-	if s.Pakka.Compress.Mode != "" {
-		compressMode = s.Pakka.Compress.Mode
 	}
 	if s.Pakka.Signature != nil {
 		sigOn = *s.Pakka.Signature
@@ -1207,9 +1190,10 @@ func runHelp() {
 
 	outputLevel := loadOutputLevel()
 	outputOn := isOutputEnabled()
+	inputOn := isInputEnabled()
 
 	fmt.Printf("pakka v%s · session %s\n", version, sessionID)
-	fmt.Printf("  auto         review-gate: %-3s (threshold %d)  · compress: %s\n", onOff(autoGate), threshold, compressMode)
+	fmt.Printf("  auto         review-gate: %-3s (threshold %d)  · input-compress: %s\n", onOff(autoGate), threshold, onOff(inputOn))
 	fmt.Printf("               guard: %-3s                       · signature: %s\n", onOff(guardOn), onOff(sigOn))
 	fmt.Printf("               coAuthor: %-3s                    · output: %s [%s]\n", onOff(coAuthorOn), onOff(outputOn), outputLevel)
 	fmt.Printf("  commands     /pakka:review    explicit review of staged diff\n")

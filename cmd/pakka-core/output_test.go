@@ -3,12 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/amargautam/pakka/internal/compress"
+	"github.com/amargautam/pakka/internal/hookevent"
 )
 
 // --- output-rules tests ---
@@ -311,3 +313,75 @@ func simulateSubagentReturn(input string, enabled bool) string {
 }
 
 // min is provided by Go 1.21+ builtin
+
+// TestToolResultWritesMeterEntry — behavioral guarantee that the truncation
+// path appends a meter entry tagged with the supplied repo and a non-zero
+// tokens_saved_est. Pass 4.1.1 diagnosis: the production meter for the
+// pakka.dev repo carries only 5 tool-result entries with savings — not a
+// missing write path, but the genuine consequence of most tool outputs
+// being smaller than the 10KB threshold. This test guards the write-path
+// itself: when truncation actually fires, savings ARE recorded.
+func TestToolResultWritesMeterEntry(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// Build a tool response large enough to trip the 10KB default threshold.
+	const repo = "/repo/X"
+	var b strings.Builder
+	for i := 0; i < 600; i++ {
+		fmt.Fprintf(&b, "line %d: %s\n", i, strings.Repeat("x", 60))
+	}
+	response := b.String()
+	if len(response) < 10240 {
+		t.Fatalf("test fixture too small: %d", len(response))
+	}
+
+	// Encode response as the JSON string Claude Code would deliver.
+	respJSON, _ := json.Marshal(response)
+
+	event := &hookevent.Event{
+		SessionID:    "metertool",
+		CWD:          repo, // RepoKey on a non-git path falls back to abs(cwd) = repo
+		ToolName:     "Read",
+		ToolResponse: respJSON,
+	}
+
+	// Redirect stdout so the truncated tool-result JSON does not pollute test output.
+	origStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	runCompressToolResult(event)
+	w.Close()
+	os.Stdout = origStdout
+	_, _ = io.Copy(io.Discard, r)
+
+	// Expect a meter file at ~/.pakka/meter/<short-sid>.jsonl
+	path := filepath.Join(tmp, ".pakka", "meter", "metertoo.jsonl") // shortSID truncates to 8
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("meter file not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 meter entry, got %d (%q)", len(lines), data)
+	}
+
+	var entry struct {
+		Repo           string `json:"repo"`
+		BytesSaved     int64  `json:"bytes_saved"`
+		TokensSavedEst int64  `json:"tokens_saved_est"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &entry); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if entry.Repo != repo {
+		t.Errorf("entry.Repo = %q, want %q", entry.Repo, repo)
+	}
+	if entry.TokensSavedEst <= 0 {
+		t.Errorf("tokens_saved_est must be > 0 after truncation, got %d", entry.TokensSavedEst)
+	}
+	if entry.BytesSaved <= 0 {
+		t.Errorf("bytes_saved must be > 0, got %d", entry.BytesSaved)
+	}
+}
+
