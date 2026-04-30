@@ -6,9 +6,14 @@
 //     session. Cost-weighted: input × 1× + cache_creation × 1.25× +
 //     cache_read × 0.1×, plus tokensSavedEst × 1× as the savings numerator.
 //   - Output tokens are summed across the same transcripts. Output savings
-//     are NOT rendered as a percentage — only the absolute output volume is
-//     displayed. Until Pass 4.2 ships LLM-rewrite measurement, any output %
-//     would be a placeholder identity (mult / (1+mult)) constant per level.
+//     ARE rendered as a percentage Y%, derived from the level's
+//     outputMultiplier as round(mult/(1+mult)*100). Y% is therefore a
+//     LEVEL-DERIVED PLACEHOLDER, constant per level (lite=10, strict=25,
+//     ultra=40, super-ultra=44), not a measured per-session value. The
+//     baseline-vs-compressed bench scheduled for v0.2.0 must replace this
+//     constant with a measured ratio — do not silently ship the placeholder
+//     past v0.2.0. Decision: memory/DECISIONS.md "Status-line format
+//     (decided 2026-04-29 by user)".
 //   - tokensSavedEst is summed across every meter file with matching repo tag.
 //   - bugsCaught is an all-time count across the repo's review findings.
 //
@@ -52,14 +57,11 @@ var OverrideRepoKey func(cwd string) string
 
 // outputMultiplier maps output compression level to an estimated savings ratio.
 //
-// PLACEHOLDER. Real ratios land when semantic-compress measurement is
-// calibrated against benchmarks. Until then, callers must hide derived
-// percentages — only display the absolute output token volume. The map is
-// retained to size the future outSavedEst (computed but not rendered as a
-// percentage).
-//
-// super-ultra is the highest tier added in Pass 4.2. The 0.78 figure is a
-// PLACEHOLDER pending real measurement.
+// PLACEHOLDER. Real ratios land when the v0.2.0 baseline-vs-compressed
+// bench is calibrated. Until then the status-line renders Y% derived from
+// this map as round(mult/(1+mult)*100): lite=10, strict=25, ultra=40,
+// super-ultra=44 — constant per level. Replace with a measured ratio when
+// v0.2.0 bench ships; do not silently leave the constant in place.
 var outputMultiplier = map[string]float64{
 	"lite":        0.11,
 	"strict":      0.33,
@@ -74,7 +76,7 @@ type metrics struct {
 	inCostUnits   int64 // cost-weighted input denominator
 	inPct         int64
 	outTokens     int64 // assistant output tokens summed across repo's transcripts
-	outSavedEst   int64 // computed for completeness; NOT rendered as a percentage
+	outPct        int64 // level-derived placeholder: round(mult/(1+mult)*100)
 	bugsCaught    int
 	staleCompress int // orchestrator entries with validatorPasses=false
 }
@@ -155,10 +157,10 @@ func compute(event *hookevent.Event, outputLevel string) metrics {
 	))
 	inPct := pctRound(savedTokens, costUnits)
 
-	// outSavedEst is computed but never rendered as a percentage. See package
-	// doc + outputMultiplier comment: real ratio lands in Pass 4.2.
+	// outPct is a level-derived placeholder until v0.2.0 measurement lands.
+	// See package doc + outputMultiplier comment.
 	mult := outputMultiplier[outputLevel]
-	outSaved := int64(float64(outTokens) * mult)
+	outPct := int64(math.Round(mult / (1 + mult) * 100))
 
 	// All-time bug count across the repo's review findings.
 	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
@@ -172,7 +174,7 @@ func compute(event *hookevent.Event, outputLevel string) metrics {
 		inCostUnits:   costUnits,
 		inPct:         inPct,
 		outTokens:     outTokens,
-		outSavedEst:   outSaved,
+		outPct:        outPct,
 		bugsCaught:    bugs,
 		staleCompress: stale,
 	}
@@ -223,15 +225,15 @@ func humanize(n int64) string {
 
 // formatLine renders the status-line body using the supplied glyphs.
 //
-// Input side: absolute saved tokens (humanized) + percent in parens. Percent
-// is meaningful because the meter records real bytes truncated.
+// Input side: absolute saved tokens (humanized) + percent X% in parens. X%
+// is meaningful — the meter records real bytes truncated.
 //
-// Output side: absolute output token volume only. NO percent — the
-// outputMultiplier map is a placeholder until Pass 4.2 ships LLM-rewrite
-// measurement, so any rendered % would be theatre (constant per level).
+// Output side: absolute output volume + percent Y% in parens. Y% is
+// LEVEL-DERIVED placeholder (round(mult/(1+mult)*100)) until v0.2.0
+// baseline-vs-compressed bench lands. See outputMultiplier doc.
 //
-// UTF-8: [ultra] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
-// ASCII: [ultra] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
+// UTF-8: [ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 0 bugs caught
+// ASCII: [ultra] | in 12.4K (43%) / out 7.0K (40%) tokens saved | 0 bugs caught
 //
 // Bracket label reflects the active output compression level; "ultra" is
 // the default tier per DECISIONS.md.
@@ -240,42 +242,32 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 	if m.staleCompress > 0 {
 		staleSeg = fmt.Sprintf(" %s ! %d stale", sep, m.staleCompress)
 	}
-	if inArrow == "↑" {
-		return fmt.Sprintf("[%s] %s %s%s (%d%%) in saved %s %s%s out tok %s %d bugs caught%s",
-			m.outputLevel, sep,
-			inArrow, humanize(m.inSavedTokens), m.inPct,
-			sep,
-			outArrow, humanize(m.outTokens),
-			sep, m.bugsCaught, staleSeg)
-	}
-	// ASCII branch: arrows are "in " / "out " — keep the leading word but
-	// drop the second "in"/"out" duplicate.
-	return fmt.Sprintf("[%s] %s %s%s (%d%%) saved %s %s%s tok %s %d bugs caught%s",
+	return fmt.Sprintf("[%s] %s %s%s (%d%%) / %s%s (%d%%) tokens saved %s %d bugs caught%s",
 		m.outputLevel, sep,
 		inArrow, humanize(m.inSavedTokens), m.inPct,
-		sep,
-		outArrow, humanize(m.outTokens),
+		outArrow, humanize(m.outTokens), m.outPct,
 		sep, m.bugsCaught, staleSeg)
 }
 
 // Run prints the pakka status line to w.
 //
-// Format (UTF-8): pakka [ultra] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught
+// Format (UTF-8): pakka [ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 0 bugs caught
 // When orchestrator state has stale entries, a trailing "· ! N stale" segment
 // is appended:
 //
-//	pakka [ultra] · ↑12.4K (43%) in saved · ↓7.0K out tok · 0 bugs caught · ! 2 stale
+//	pakka [ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 0 bugs caught · ! 2 stale
 //
-// Format (ascii): pakka [ultra] | in 12.4K (43%) saved | out 7.0K tok | 0 bugs caught
+// Format (ascii): pakka [ultra] | in 12.4K (43%) / out 7.0K (40%) tokens saved | 0 bugs caught
 // ASCII stale segment: " | ! 2 stale"
 //
 // Bracket label is the output compression level (lite|strict|ultra|super-ultra).
 // "ultra" is the default tier — pakka's brand thesis is fewer tokens, and the
 // default reflects it. See memory/DECISIONS.md.
 //
-// Input side carries an absolute (humanized to K/M, floor-truncated) and a
-// percent — meter records real byte savings. Output side carries volume
-// only; output % is omitted until Pass 4.2 measurement (see outputMultiplier).
+// Input side carries absolute saved tokens + measured X% (meter-derived).
+// Output side carries absolute output volume + level-derived placeholder Y%
+// (round(mult/(1+mult)*100)) — constant per level until v0.2.0
+// baseline-vs-compressed bench replaces it with a measured ratio.
 //
 // Arrows follow conventional upload/download semantics: ↑ = input going UP to
 // the API, ↓ = output coming DOWN.

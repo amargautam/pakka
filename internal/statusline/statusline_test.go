@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -153,14 +152,6 @@ func extractBugs(s string) int {
 	return n
 }
 
-// stripBracketLabel removes "[<level>]" once from the rendered line so two
-// renders that differ only in their bracket label compare equal.
-var bracketRe = regexp.MustCompile(`\[(lite|strict|ultra|super-ultra)\]`)
-
-func stripBracketLabel(s string) string {
-	return bracketRe.ReplaceAllString(s, "[LEVEL]")
-}
-
 // --- core format / arrows / fallback ---
 
 func TestRunOutputBaseFormat(t *testing.T) {
@@ -172,17 +163,23 @@ func TestRunOutputBaseFormat(t *testing.T) {
 	if len(out) >= 200 {
 		t.Errorf("output too long (%d): %q", len(out), out)
 	}
-	for _, want := range []string{"pakka", "in saved", "out tok", "bugs caught", "[strict]", "↑", "↓"} {
+	for _, want := range []string{"pakka", "tokens saved", "bugs caught", "[strict]", "↑", "↓"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}
 	}
-	// Empty-fixture run: input shows zero+0%, output shows zero volume.
+	// Legacy strings must not regress.
+	for _, gone := range []string{"in saved", "out tok"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("legacy substring %q must not appear in %q", gone, out)
+		}
+	}
+	// Empty-fixture run: input shows zero+0%, output shows zero+strict-level pct (25%).
 	if !strings.Contains(out, "↑0 (0%)") {
 		t.Errorf("missing input zero+pct in %q", out)
 	}
-	if !strings.Contains(out, "↓0 ") {
-		t.Errorf("missing output zero in %q", out)
+	if !strings.Contains(out, "↓0 (25%)") {
+		t.Errorf("missing output zero+pct in %q", out)
 	}
 	// "--" placeholder must never appear.
 	for _, bad := range []string{"(--)", "--"} {
@@ -192,50 +189,76 @@ func TestRunOutputBaseFormat(t *testing.T) {
 	}
 }
 
-// TestNoOutputPercent — regression guard. The output side must not render a
-// `%` after the down-arrow segment. Captures the Pass 4.1 disease where a
-// placeholder multiplier was displayed as if measured.
-func TestNoOutputPercent(t *testing.T) {
+// TestOutputPercentRendered — output side renders Y% derived from the
+// level's outputMultiplier (round(mult/(1+mult)*100)). Y% is a placeholder
+// constant per level until v0.2.0 baseline-vs-compressed bench measures
+// the real ratio (see outputMultiplier doc).
+func TestOutputPercentRendered(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
-	useFakeHome(t, t.TempDir())
-	useFakeRepoKey(t, map[string]string{"/repo/A": "/repo/A"})
-	// Force non-zero output volume so any latent % code path would trigger.
-	writeTranscriptDir(t, t.TempDir(), "-repo-A", "t.jsonl", nil) // safe noop in fresh tempdir
 	home := t.TempDir()
 	useFakeHome(t, home)
+	useFakeRepoKey(t, map[string]string{"/repo/A": "/repo/A"})
+	// Force non-zero output volume so the rendered tail is realistic.
 	writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
 		{"input_tokens": 0, "output_tokens": 5000},
 	})
-	for _, level := range []string{"lite", "strict", "ultra"} {
-		out := run(t, &hookevent.Event{SessionID: "noPctTst", CWD: "/repo/A"}, level)
-		// After "↓<abs>" there must be NO "(...)%" — only " out tok".
+	expected := map[string]int{
+		"lite":        10,
+		"strict":      25,
+		"ultra":       40,
+		"super-ultra": 44,
+	}
+	for level, want := range expected {
+		out := run(t, &hookevent.Event{SessionID: "outPctTst", CWD: "/repo/A"}, level)
 		downIdx := strings.Index(out, "↓")
 		if downIdx < 0 {
 			t.Fatalf("missing down-arrow at level=%s: %q", level, out)
 		}
-		tail := out[downIdx:]
-		// First space-token after "↓<abs>" must be "out", not "(...)".
-		fields := strings.Fields(tail)
-		if len(fields) < 2 {
-			t.Fatalf("unexpected tail at level=%s: %q", level, tail)
-		}
-		// fields[0] is "↓<abs>", fields[1] should be "out".
-		if fields[1] != "out" {
-			t.Errorf("level=%s: expected next token after ↓abs to be 'out', got %q (line=%q)",
-				level, fields[1], out)
-		}
-		// Hard guard: the substring "%) " or " %)" must not appear after the down-arrow.
-		if strings.Contains(tail, "%") {
-			t.Errorf("level=%s: output side contains a %% (theatre regression): %q", level, out)
+		got := extractPctAfter(out, "↓")
+		if got != want {
+			t.Errorf("level=%s: outPct want %d, got %d (line=%q)", level, want, got, out)
 		}
 	}
 }
 
-// TestOutputLevelLabelVaries — table-driven across {lite, strict, ultra}.
-// Same fixture; only the bracket label changes. Once labels are stripped, the
-// rendered string is byte-identical across levels — proves outputLevel does
-// not silently drive any displayed metric.
-func TestOutputLevelLabelVaries(t *testing.T) {
+// TestOutputPercentVariesByLevel — behavioral guard per memory feedback
+// "tests must verify metrics VARY with input". Same input/output token
+// volume across all four levels must yield four DIFFERENT Y% values. If a
+// future regression collapses Y% to a constant across levels, this test
+// fails loudly.
+func TestOutputPercentVariesByLevel(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	home := t.TempDir()
+	useFakeHome(t, home)
+	useFakeRepoKey(t, map[string]string{"/repo/A": "/repo/A"})
+	writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
+		{"input_tokens": 1000, "output_tokens": 5000},
+	})
+
+	seen := map[int]string{}
+	for _, level := range []string{"lite", "strict", "ultra", "super-ultra"} {
+		out := run(t, &hookevent.Event{SessionID: "varyTst1", CWD: "/repo/A"}, level)
+		pct := extractPctAfter(out, "↓")
+		if pct < 0 {
+			t.Fatalf("level=%s: failed to extract outPct from %q", level, out)
+		}
+		if prior, ok := seen[pct]; ok {
+			t.Errorf("outPct collapsed across levels: %s and %s both rendered %d%%",
+				prior, level, pct)
+		}
+		seen[pct] = level
+	}
+	if len(seen) != 4 {
+		t.Errorf("expected 4 distinct outPct values across levels, got %d: %v",
+			len(seen), seen)
+	}
+}
+
+// TestOutputAbsInvariantAcrossLevels — input savings absolute and output
+// volume absolute must NOT vary with level (they are measured/observed,
+// not level-derived). Only Y% on the output side varies with level — that
+// behavior is covered separately in TestOutputPercentVariesByLevel.
+func TestOutputAbsInvariantAcrossLevels(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
 	useFakeHome(t, home)
@@ -249,39 +272,18 @@ func TestOutputLevelLabelVaries(t *testing.T) {
 		{"input_tokens": 1800, "output_tokens": 4000},
 	})
 
-	rendered := map[string]string{}
-	for _, level := range []string{"lite", "strict", "ultra"} {
+	for _, level := range []string{"lite", "strict", "ultra", "super-ultra"} {
 		out := run(t, &hookevent.Event{SessionID: "lvltest1", CWD: "/repo/A"}, level)
-		rendered[level] = out
 
-		// Bracket carries the level.
 		if !strings.Contains(out, "["+level+"]") {
 			t.Errorf("level=%s: bracket label missing in %q", level, out)
 		}
-		// Same input absolute across all levels (sanity).
 		if g := extractInAbs(out); g != "200" {
 			t.Errorf("level=%s: inAbs want 200, got %q", level, g)
 		}
-		// Output absolute must be identical too (we no longer multiply for display).
 		if g := extractOutAbs(out); g != "4.0K" {
 			t.Errorf("level=%s: outAbs want 4.0K, got %q", level, g)
 		}
-	}
-
-	// Behavior that varies: only the bracket label.
-	liteStripped := stripBracketLabel(rendered["lite"])
-	strictStripped := stripBracketLabel(rendered["strict"])
-	ultraStripped := stripBracketLabel(rendered["ultra"])
-	if liteStripped != strictStripped {
-		t.Errorf("lite vs strict differ beyond bracket:\n lite=%q\n strict=%q", liteStripped, strictStripped)
-	}
-	if strictStripped != ultraStripped {
-		t.Errorf("strict vs ultra differ beyond bracket:\n strict=%q\n ultra=%q", strictStripped, ultraStripped)
-	}
-	// And the unstripped forms differ from each other (the bracket itself).
-	if rendered["lite"] == rendered["strict"] || rendered["strict"] == rendered["ultra"] {
-		t.Errorf("levels render identically: %q / %q / %q",
-			rendered["lite"], rendered["strict"], rendered["ultra"])
 	}
 }
 
@@ -309,16 +311,15 @@ func TestRunAsciiFallback(t *testing.T) {
 	if strings.Contains(out, "↓") || strings.Contains(out, "↑") {
 		t.Errorf("expected ascii: %q", out)
 	}
-	for _, want := range []string{"in 0 (0%)", "out 0 ", "saved", "tok"} {
+	for _, want := range []string{"in 0 (0%)", "out 0 (25%)", "tokens saved"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ascii missing %q in %q", want, out)
 		}
 	}
-	// No '%' after the "out " token.
-	if outIdx := strings.Index(out, "out "); outIdx > 0 {
-		tail := out[outIdx:]
-		if strings.Contains(tail, "%") {
-			t.Errorf("ascii output side must not contain %%: %q", out)
+	// Legacy substrings must not regress.
+	for _, gone := range []string{"in saved", "out tok"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("ascii: legacy substring %q must not appear: %q", gone, out)
 		}
 	}
 }
@@ -640,10 +641,10 @@ func TestExtractPctFormat(t *testing.T) {
 		inAbsW  string
 		outAbsW string
 	}{
-		{"x ↑0 (0%) in saved · ↓0 out tok y", 0, "0", "0"},
-		{"x ↑5K (5%) in saved · ↓1K out tok y", 5, "5K", "1K"},
-		{"x ↑12.4K (43%) in saved · ↓7.0K out tok y", 43, "12.4K", "7.0K"},
-		{"x ↑847 (88%) in saved · ↓100 out tok y", 88, "847", "100"},
+		{"x ↑0 (0%) / ↓0 (25%) tokens saved y", 0, "0", "0"},
+		{"x ↑5K (5%) / ↓1K (40%) tokens saved y", 5, "5K", "1K"},
+		{"x ↑12.4K (43%) / ↓7.0K (40%) tokens saved y", 43, "12.4K", "7.0K"},
+		{"x ↑847 (88%) / ↓100 (10%) tokens saved y", 88, "847", "100"},
 	}
 	for _, c := range cases {
 		if g := extractInPct(c.s); g != c.inWant {
@@ -754,7 +755,7 @@ func TestSummaryNoANSI(t *testing.T) {
 	if strings.Contains(got, "\033[") {
 		t.Errorf("Summary should not contain ANSI escapes: %q", got)
 	}
-	for _, want := range []string{"in saved", "out tok", "↑0 (0%)", "↓0 "} {
+	for _, want := range []string{"tokens saved", "↑0 (0%)", "↓0 (25%)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Summary missing %q: %q", want, got)
 		}
