@@ -2,6 +2,12 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.1.3] — 2026-05-02
+
+### Fixed
+
+- `/pakka:compress <level>` fix applied to correct file (`commands/compress.md`) — v0.1.2 patched `skills/pakka-compress/SKILL.md` but Claude Code loads `commands/compress.md` for command invocations
+
 ## [v0.1.2] — 2026-05-02
 
 ### Fixed
