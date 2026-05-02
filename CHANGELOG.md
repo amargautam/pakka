@@ -2,6 +2,23 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.4] — 2026-05-02
+
+### Added
+
+- `agents/architect.md` — third parallel review agent; catches coupling, shallow abstractions, and module bloat on every commit diff
+- `rules/skill-check.md` — hard imperative routing rules injected at session start; `/pakka:plan`, `/pakka:build`, `/pakka:review` now auto-trigger on matching signals
+
+### Fixed
+
+- Skill-check was soft language ("if yes, invoke") — now `EXTREMELY_IMPORTANT` block with explicit trigger keywords and per-turn reinforcement; no more rationalization skips
+- Status line blank for users — `/pakka:setup` init flow now writes `~/.pakka/bin/status-line` wrapper and `statusLine` block to `~/.claude/settings.json` automatically
+- Status line wrapper used `pakka-pre` glob — corrected to `pakka`
+
+### Changed
+
+- `/pakka:review` runs three agents in parallel (reviewer + security + architect) — was two
+
 ## [v0.2.3] — 2026-05-02
 
 ### Fixed
