@@ -2,6 +2,13 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.5] — 2026-05-02
+
+### Fixed
+
+- Status line now shows full format: `pakka [level] · ↑Nk (X%) / ↓Nk (Y%) tokens saved · N bugs caught` — `Run()` was calling `formatLine()` but tests asserted the trimmed behavior, locking in the bug; both fixed
+- Skill-check auto-trigger: injected as a dedicated isolated `SessionStart` hook (`hooks/skill-check-start.js`) instead of appended to compression output — model no longer rationalizes past it under task pressure
+
 ## [v0.2.4] — 2026-05-02
 
 ### Added
