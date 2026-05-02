@@ -2,6 +2,20 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.6] — 2026-05-02
+
+### Added
+
+- `internal/pricing` — verified pricing table for 7 models (Opus 4.7/4.6/4.5, Sonnet 4.6/4.5, Haiku 4.5/3.5) sourced from Anthropic docs
+- Status line now shows `~$X.XX saved` instead of token counts and fake percentages
+
+### Changed
+
+- `outputMultiplier` calibrated from real bench (Sonnet 4.6 + Opus 4.5, 2026-05-02): super-ultra 66% (was 44%), ultra 55% (was 40%), strict 33% (was 25%), lite 27% (was 10%)
+- RECEIPTS.md: real $ estimate (~$6.12 total savings across 193 build sessions), removed all deferred/placeholder language
+- DESIGN.md: compression budget updated with calibrated reduction table
+- Website: $9.90/MTok output savings claim added to compress page and homepage
+
 ## [v0.2.5] — 2026-05-02
 
 ### Fixed
