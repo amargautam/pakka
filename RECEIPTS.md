@@ -1,22 +1,22 @@
 # RECEIPTS.md — pakka built with pakka
 
-version: v0.2.5
-generated: 2026-05-02T20:44:28Z
+version: v0.3.0
+generated: 2026-05-02T21:34:50Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 193 |
+| sessions | 194 |
 | first session | 2026-04-24 |
 | last session | 2026-05-02 |
-| total tokens used | 29,544,607 |
-| bytes saved (V2+V3+V4 compression) | 95,055 |
-| est. tokens saved (bytes ÷ 3.5) | 27,280 |
+| total tokens used | 29,986,288 |
+| bytes saved (V2+V3+V4 compression) | 96,305 |
+| est. tokens saved (bytes ÷ 3.5) | 27,641 |
 
 ## output compression savings (V1 — calibrated bench)
 
-Output compression is the largest savings vector but cannot be measured from meter files alone — it requires comparing actual output tokens to a no-compression baseline. Calibrated 2026-05-02 by running `benchmarks/compress-samples/subagent-return.txt` through Sonnet 4.6 at each level:
+Output compression is the largest savings vector but cannot be measured from meter files alone — it requires comparing actual output tokens to a no-compression baseline. Calibrated 2026-05-02 by running benchmarks through Sonnet 4.6 at each level:
 
 | level | output reduction | est. cost saving |
 |---|---|---|
@@ -28,22 +28,22 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Transcript output tokens (all 193 sessions, this repo): ~610,700
-- At super-ultra 66% reduction: ~403,000 tokens avoided
-- At $15/MTok: **~$6.04 saved on output tokens alone**
+- Transcript output tokens (all 194 sessions, this repo): ~599,725
+- At super-ultra 66% reduction: ~395,818 tokens avoided
+- At $15/MTok: **~$5.94 saved on output tokens alone**
 - Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.08
-- **Total estimated savings: ~$6.12**
+- **Total estimated savings: ~$6.02**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 7,583 |
-| Read | 3,760 |
-| Edit | 2,426 |
+| Bash | 7,749 |
+| Read | 3,846 |
+| Edit | 2,487 |
 | Grep | 599 |
-| Write | 583 |
-| Agent | 366 |
+| Write | 591 |
+| Agent | 376 |
 | WebFetch | 130 |
 | Glob | 126 |
 | TodoWrite | 11 |

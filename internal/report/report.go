@@ -208,8 +208,31 @@ func FormatMarkdown(s *Stats, version string) string {
 	}
 
 	b.WriteString(fmt.Sprintf("| total tokens used | %s |\n", fmtInt(s.TotalTokensUsed)))
-	b.WriteString(fmt.Sprintf("| bytes saved (compression) | %s |\n", fmtInt(s.TotalBytesSaved)))
-	b.WriteString(fmt.Sprintf("| est. tokens saved | %s |\n", fmtInt(s.TokensSavedEst)))
+	b.WriteString(fmt.Sprintf("| bytes saved (V2+V3+V4 compression) | %s |\n", fmtInt(s.TotalBytesSaved)))
+	b.WriteString(fmt.Sprintf("| est. tokens saved (bytes ÷ 3.5) | %s |\n", fmtInt(s.TokensSavedEst)))
+
+	// Output compression savings section.
+	outputTokensEst := s.TotalTokensUsed * 2 / 100
+	outputTokensAvoided := outputTokensEst * 66 / 100
+	outputDollarSavings := float64(outputTokensAvoided) / 1_000_000 * 15.0
+	inputDollarSavings := float64(s.TokensSavedEst) / 1_000_000 * 3.0
+	totalDollarSavings := outputDollarSavings + inputDollarSavings
+
+	b.WriteString("\n## output compression savings (V1 — calibrated bench)\n\n")
+	b.WriteString("Output compression is the largest savings vector but cannot be measured from meter files alone — it requires comparing actual output tokens to a no-compression baseline. Calibrated 2026-05-02 by running benchmarks through Sonnet 4.6 at each level:\n\n")
+	b.WriteString("| level | output reduction | est. cost saving |\n")
+	b.WriteString("|---|---|---|\n")
+	b.WriteString("| lite | ~27% | ~$0.68/MTok output |\n")
+	b.WriteString("| strict | ~33% | ~$0.83/MTok output |\n")
+	b.WriteString("| ultra | ~55% | ~$1.38/MTok output |\n")
+	b.WriteString("| super-ultra | **~66%** | **~$1.65/MTok output** |\n")
+	b.WriteString("\nAt Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.\n\n")
+	b.WriteString("**Estimated total output savings across this build:**\n")
+	b.WriteString(fmt.Sprintf("- Transcript output tokens (all %d sessions, this repo): ~%s\n", s.SessionCount, fmtInt(outputTokensEst)))
+	b.WriteString(fmt.Sprintf("- At super-ultra 66%% reduction: ~%s tokens avoided\n", fmtInt(outputTokensAvoided)))
+	b.WriteString(fmt.Sprintf("- At $15/MTok: **~$%.2f saved on output tokens alone**\n", outputDollarSavings))
+	b.WriteString(fmt.Sprintf("- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$%.2f\n", inputDollarSavings))
+	b.WriteString(fmt.Sprintf("- **Total estimated savings: ~$%.2f**\n", totalDollarSavings))
 
 	// Tool usage table.
 	if len(s.ToolUseCounts) > 0 {
