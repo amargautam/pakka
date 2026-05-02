@@ -24,7 +24,7 @@ Skills encode best practices. Pakka injects them into the session — Claude inv
 | `/pakka:spec` | "build X", "implement X", "add feature" | Spec before code. Synthesizes PRD from conversation, publishes to issue tracker. Hard rule: runs before any implementation. |
 | `/pakka:debug` | "debug", "fix this bug", "broken", "failing" | Builds a deterministic fail/pass feedback loop first. Reproduce → hypothesize → instrument → fix → regression test. |
 | `/pakka:tdd` | "write tests", "TDD", "test first" | One failing test → minimal code → repeat. Vertical slices only. Tests verify behavior through public interfaces. |
-| `/pakka:review-architecture` | "architecture", "coupling", "hard to test", "refactor" | Finds modules where the interface costs as much to learn as the implementation. Proposes targeted refactors. |
+| `/pakka:audit-code-arch` | "architecture", "coupling", "hard to test", "refactor" | Finds modules where the interface costs as much to learn as the implementation. Proposes targeted refactors. |
 | `/pakka:challenge` | "challenge this", "stress test my plan", "poke holes" | Cross-examines a plan against project docs and domain vocabulary. Updates CONTEXT.md inline as decisions harden. |
 | `/pakka:probe` | "probe me", "question my design", "what am I missing" | One question at a time — each with a recommended answer — until every design branch is resolved. |
 | `/pakka:map` | "how does X work", "explain this module", "I don't know this code" | Maps all relevant modules and callers before navigating. Context cost: one view, not ten files. |

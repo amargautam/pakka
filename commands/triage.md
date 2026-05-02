@@ -1,14 +1,14 @@
 ---
 description: Move issues through the triage state machine — classify, reproduce bugs, write agent briefs, manage issue workflow.
-allowed-tools: Skill
+allowed-tools: Read, Write, Bash, Agent
 argument-hint: "[issue number, or blank to show queue]"
 ---
 
 ## Instructions
 
-Invoke the Skill tool with `skill: "pakka:triage"`. Pass any user arguments through verbatim via the `args` parameter.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-triage/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
 
 ## Red Flags
 
-- Parsing or rewriting args at this layer → wrong. Pass verbatim; the skill owns all logic.
-- Running triage logic here instead of delegating → wrong. This is a thin wrapper only.
+- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
+- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.

@@ -79,11 +79,16 @@ func writeTranscriptDir(t *testing.T, home, encodedName, transcriptName string, 
 	}
 }
 
-// run invokes Run and returns rendered string.
-func run(t *testing.T, event *hookevent.Event, level string) string {
+// run invokes Run and returns rendered string. stale is the pre-computed
+// orchestrator stale count (0 in most tests).
+func run(t *testing.T, event *hookevent.Event, level string, stale ...int) string {
 	t.Helper()
+	s := 0
+	if len(stale) > 0 {
+		s = stale[0]
+	}
 	var buf bytes.Buffer
-	if err := Run(event, &buf, level); err != nil {
+	if err := Run(event, &buf, level, s); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()
@@ -91,9 +96,14 @@ func run(t *testing.T, event *hookevent.Event, level string) string {
 
 // summary invokes Summary and returns the plain-text full-format string.
 // Behavioral/math tests use this so metric assertions survive the Run() trim.
-func summary(t *testing.T, event *hookevent.Event, level string) string {
+// stale is the pre-computed orchestrator stale count (0 in most tests).
+func summary(t *testing.T, event *hookevent.Event, level string, stale ...int) string {
 	t.Helper()
-	return Summary(event, level)
+	s := 0
+	if len(stale) > 0 {
+		s = stale[0]
+	}
+	return Summary(event, level, s)
 }
 
 // extractInPct parses the percent from the input ("↑<abs> (<pct>%)") segment.
@@ -755,7 +765,7 @@ func TestSummaryNoANSI(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
-	got := Summary(&hookevent.Event{SessionID: "sum12345", CWD: "/r"}, "strict")
+	got := Summary(&hookevent.Event{SessionID: "sum12345", CWD: "/r"}, "strict", 0)
 	if strings.Contains(got, "\033[") {
 		t.Errorf("Summary should not contain ANSI escapes: %q", got)
 	}
@@ -766,45 +776,33 @@ func TestSummaryNoANSI(t *testing.T) {
 	}
 }
 
-// TestStaleCompressGlyph — when orchestrator state has failed entries, the
-// status-line MUST append "! N stale". Empty/missing state MUST omit it.
+// TestStaleCompressGlyph — when stale > 0, the status-line MUST append
+// "! N stale". Zero stale MUST omit the glyph. The stale count is now a
+// caller-supplied int; parsing/disk-reading lives in orchestrator.CountStaleFromDisk.
 func TestStaleCompressGlyph(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	useFakeHome(t, t.TempDir())
-	repoDir := t.TempDir()
-	useFakeRepoKey(t, map[string]string{"/work/X": repoDir})
+	useFakeRepoKey(t, nil)
 
-	// Case 1: missing state file → no glyph.
-	out := summary(t, &hookevent.Event{SessionID: "stale001", CWD: "/work/X"}, "strict")
+	// Case 1: stale=0 → no glyph.
+	out := summary(t, &hookevent.Event{SessionID: "stale001", CWD: "/work/X"}, "strict", 0)
 	if strings.Contains(out, "stale") {
-		t.Errorf("missing state must not render stale glyph: %q", out)
+		t.Errorf("stale=0 must not render stale glyph: %q", out)
 	}
 
-	// Case 2: state file with 2 failures + 1 success → "! 2 stale".
-	stateDir := filepath.Join(repoDir, ".pakka")
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := `{
-  "/x/CLAUDE.md": {"sourceSHA":"a","level":"strict","compressedAt":"t","validatorPasses":false},
-  "/x/DESIGN.md": {"sourceSHA":"b","level":"strict","compressedAt":"t","validatorPasses":false},
-  "/x/BUILD.md":  {"sourceSHA":"c","level":"strict","compressedAt":"t","validatorPasses":true}
-}`
-	if err := os.WriteFile(filepath.Join(stateDir, "compress-state.json"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out2 := summary(t, &hookevent.Event{SessionID: "stale002", CWD: "/work/X"}, "strict")
+	// Case 2: stale=2 → "! 2 stale".
+	out2 := summary(t, &hookevent.Event{SessionID: "stale002", CWD: "/work/X"}, "strict", 2)
 	if !strings.Contains(out2, "! 2 stale") {
 		t.Errorf("expected '! 2 stale' segment: %q", out2)
 	}
 
-	// Case 3: corrupt state → graceful zero, no glyph.
-	if err := os.WriteFile(filepath.Join(stateDir, "compress-state.json"), []byte("{not-json"), 0o644); err != nil {
-		t.Fatal(err)
+	// Behavioral: stale count must vary in the rendered output.
+	out3 := summary(t, &hookevent.Event{SessionID: "stale003", CWD: "/work/X"}, "strict", 5)
+	if !strings.Contains(out3, "! 5 stale") {
+		t.Errorf("expected '! 5 stale' segment: %q", out3)
 	}
-	out3 := summary(t, &hookevent.Event{SessionID: "stale003", CWD: "/work/X"}, "strict")
-	if strings.Contains(out3, "stale") {
-		t.Errorf("corrupt state must not render stale glyph: %q", out3)
+	if strings.Contains(out3, "! 2 stale") {
+		t.Errorf("stale=5 must not render stale=2: %q", out3)
 	}
 }
 

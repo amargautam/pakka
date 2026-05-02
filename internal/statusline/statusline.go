@@ -33,7 +33,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/amargautam/pakka/internal/compress/orchestrator"
 	"github.com/amargautam/pakka/internal/hookevent"
 	"github.com/amargautam/pakka/internal/meter"
 )
@@ -81,16 +80,6 @@ type metrics struct {
 	staleCompress int // orchestrator entries with validatorPasses=false
 }
 
-// countStaleCompress returns the number of orchestrator state entries with
-// validatorPasses=false. Returns 0 on any read/parse failure — status-line
-// must never block on a missing or corrupt state file.
-//
-// Purpose: Drive the `! N stale` glyph segment.
-// Errors: None reported; defensive on every failure mode.
-func countStaleCompress(repoDir string) int {
-	return orchestrator.CountStaleFromDisk(repoDir)
-}
-
 // pctRound returns round(num*100/denom) as int64. Returns 0 when denom <= 0.
 // Uses math.Round so 0.4→0, 0.5→1, 24.6→25.
 func pctRound(num, denom int64) int64 {
@@ -123,7 +112,10 @@ func resolveRepoKey(cwd string) string {
 // memory/DECISIONS.md "Default output level: ultra (decided 2026-04-29)".
 // Invalid levels also fall back to "ultra" so a stale config never silently
 // downgrades compression below the brand baseline.
-func compute(event *hookevent.Event, outputLevel string) metrics {
+//
+// stale is the pre-computed orchestrator stale count, supplied by the caller
+// (main.go) to keep statusline free of compress/orchestrator coupling.
+func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
 	if outputLevel == "" {
 		outputLevel = "ultra"
 	}
@@ -164,9 +156,6 @@ func compute(event *hookevent.Event, outputLevel string) metrics {
 
 	// All-time bug count across the repo's review findings.
 	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
-
-	// Stale compress count from orchestrator state (0 when no state file).
-	stale := countStaleCompress(repo)
 
 	return metrics{
 		outputLevel:   outputLevel,
@@ -272,18 +261,24 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 // Arrows follow conventional upload/download semantics: ↑ = input going UP to
 // the API, ↓ = output coming DOWN.
 //
+// stale is the pre-computed orchestrator stale count. Callers obtain it via
+// orchestrator.CountStaleFromDisk so statusline stays free of compress coupling.
+//
 // Purpose: Emit compact one-line session summary for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
-func Run(event *hookevent.Event, w io.Writer, outputLevel string) error {
-	m := compute(event, outputLevel)
+func Run(event *hookevent.Event, w io.Writer, outputLevel string, stale int) error {
+	m := compute(event, outputLevel, stale)
 	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m [%s]", m.outputLevel)
 	return err
 }
 
 // Summary returns the plain-text status line (no ANSI escapes).
 // Suitable for embedding in commit trailers.
-func Summary(event *hookevent.Event, outputLevel string) string {
-	m := compute(event, outputLevel)
+//
+// stale is the pre-computed orchestrator stale count. Callers obtain it via
+// orchestrator.CountStaleFromDisk so statusline stays free of compress coupling.
+func Summary(event *hookevent.Event, outputLevel string, stale int) string {
+	m := compute(event, outputLevel, stale)
 	utf8 := utf8Capable()
 
 	var inArrow, outArrow, sep string

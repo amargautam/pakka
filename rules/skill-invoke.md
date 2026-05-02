@@ -7,7 +7,7 @@ When the available skills list is non-empty, invoke the matching skill automatic
 | "build X", "implement X", "add feature X", "ship X", "I want X" | `/pakka:spec` first — spec before code |
 | "debug", "fix this bug", "broken", "failing", "throwing", "not working", "performance regression" | `/pakka:debug` — build feedback loop before touching code |
 | "write tests", "TDD", "test first", "red-green-refactor", "test-driven" | `/pakka:tdd` |
-| "review architecture", "too much coupling", "hard to test", "messy", "untestable", "refactor this" | `/pakka:review-architecture` |
+| "review architecture", "too much coupling", "hard to test", "messy", "untestable", "refactor this" | `/pakka:audit-code-arch` |
 | "stress test my plan", "challenge this", "poke holes in this", "what am I missing" | `/pakka:challenge` |
 | "probe me", "question my design", "grill me", "what did I miss" | `/pakka:probe` |
 | "how does X work", "explain this module", "I don't know this code", "map this" | `/pakka:map` first — map before navigate |

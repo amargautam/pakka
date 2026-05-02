@@ -1,14 +1,14 @@
 ---
 description: Self-grilling session — interview the user relentlessly about their own plan until every branch of the design tree is resolved.
-allowed-tools: Skill
+allowed-tools: Read, Write, Bash, Agent
 argument-hint: "[plan or design to probe]"
 ---
 
 ## Instructions
 
-Invoke the Skill tool with `skill: "pakka:probe"`. Pass any user arguments through verbatim via the `args` parameter.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-probe/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
 
 ## Red Flags
 
-- Parsing or rewriting args at this layer → wrong. Pass verbatim; the skill owns all logic.
-- Running probe logic here instead of delegating → wrong. This is a thin wrapper only.
+- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
+- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.

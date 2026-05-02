@@ -2,6 +2,20 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.1.1] — 2026-05-02
+
+### Fixed
+
+- Infinite loop in 11 commands caused by `allowed-tools: Skill` delegation — commands now read SKILL.md directly
+- `compress` command: validate level arg before Bash invocation, remove shell injection vector, safe restore (no auto-delete of backups)
+- Restore operation now requires explicit user confirmation before overwriting files
+
+### Changed
+
+- Renamed `/pakka:review-architecture` → `/pakka:audit-code-arch`
+- `reviewer` and `security` agents upgraded to `opus`
+- `statusline` decoupled from `orchestrator` — stale count passed by caller (main.go)
+
 ## [v0.1.0] — 2026-05-02
 
 ### Added
@@ -13,7 +27,7 @@ All notable changes to pakka. Format follows [Keep a Changelog](https://keepacha
 | `/pakka:spec` | "build X", "implement X", "add feature" |
 | `/pakka:debug` | "debug", "fix this bug", "broken", "failing" |
 | `/pakka:tdd` | "write tests", "TDD", "test first" |
-| `/pakka:review-architecture` | "architecture", "coupling", "hard to test" |
+| `/pakka:audit-code-arch` | "architecture", "coupling", "hard to test" |
 | `/pakka:challenge` | "challenge this", "stress test my plan" |
 | `/pakka:probe` | "probe me", "question my design" |
 | `/pakka:map` | "how does X work", "explain this module" |

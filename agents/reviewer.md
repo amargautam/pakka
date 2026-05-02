@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Parallel reviewer for correctness, perf, maintainability. Returns findings with confidence 0-100.
-model: sonnet
+model: opus
 tools: Read, Bash
 ---
 

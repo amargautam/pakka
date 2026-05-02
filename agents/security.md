@@ -1,7 +1,7 @@
 ---
 name: security
 description: Security reviewer. Finds injection, auth bypass, secret leaks, crypto misuse. Returns findings with confidence 0-100.
-model: sonnet
+model: opus
 tools: Read, Bash
 ---
 
