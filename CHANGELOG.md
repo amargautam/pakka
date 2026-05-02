@@ -2,6 +2,13 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.1] — 2026-05-02
+
+### Fixed
+
+- Removed `skills/` directory — eliminated 14 `pakka:pakka-*` entries from skill list (dead weight since v0.2.0; hub commands have inline instructions)
+- Inlined `skills/pakka-triage/SKILL.md` + `BRIEF-FORMAT.md` into `commands/triage.md`
+
 ## [v0.2.0] — 2026-05-02
 
 ### Added
