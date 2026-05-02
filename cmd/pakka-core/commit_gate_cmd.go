@@ -55,6 +55,9 @@ type settingsJSON struct {
 		Display struct {
 			StatusLine *bool `json:"statusLine"`
 		} `json:"display"`
+		Recall struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"recall"`
 	} `json:"pakka"`
 }
 

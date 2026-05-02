@@ -53,6 +53,10 @@ func main() {
 		_ = (&ReportCmd{}).Run(os.Args[2:])
 	case "bench":
 		_ = (&BenchCmd{}).Run(os.Args[2:])
+	case "index":
+		_ = (&IndexCmd{}).Run(os.Args[2:])
+	case "query":
+		_ = (&QueryCmd{}).Run(os.Args[2:])
 	case "output-rules":
 		_ = (&OutputRulesCmd{}).Run(os.Args[2:])
 	case "output-reinforce":
