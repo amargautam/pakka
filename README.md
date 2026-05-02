@@ -33,7 +33,7 @@ Pakka injects discipline into every session. Commands infer what you need from c
 |---|---|---|
 | `/pakka:plan` | "build X", "design", "challenge this", "probe me", "break into tickets" | Design hub. Writes spec to `docs/specs/`. Routes to spec · challenge · probe · slice based on context. Never auto-chains to build. |
 | `/pakka:build` | "implement", "write tests", "broken", "how does X work", "hard to test" | Implementation hub. Checks for spec approval first. Routes to TDD · debug · map · audit based on context. Blocks completion claims without exit-code evidence. |
-| `/pakka:review` | "done?", "ship?", "they said...", "merge?" | Quality hub. Verifies first (exit codes), then runs reviewer + security agents. Handles incoming feedback and branch landing. |
+| `/pakka:review` | "done?", "ship?", "they said...", "merge?" | Quality hub. Verifies first (exit codes), then runs reviewer + security + architect agents in parallel. Handles incoming feedback and branch landing. |
 | `/pakka:triage` | "triage", "look at issue #N", "what needs attention" | Issue queue. Routes bugs and features through classification state machine. Produces agent-ready briefs. |
 | `/pakka:setup` | one-time setup | Detects stack, writes permissions overlay. `setup guard` installs git guard hook. |
 | `/pakka:compress` | — | Compression control. `[lite\|strict\|ultra\|super-ultra\|status]`. Default: `super-ultra`. Hook-handled — instant, no LLM round-trip. |
@@ -47,7 +47,7 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **4-vector compression:** output tokens · input context · tool results · subagent returns — all compressed independently.
 
-**Review gate:** reviewer + security subagents run in parallel on every Claude-authored commit. Confidence threshold ≥ 80. Blocks on `severity=error` findings.
+**Review gate:** reviewer + security + architect subagents run in parallel on every Claude-authored commit. Confidence threshold ≥ 80. Blocks on `severity=error` findings.
 
 **Deny-by-default permissions:** secrets, destructive git, shell-fetched-then-executed commands blocked at the permission layer.
 
@@ -59,7 +59,7 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 Three absolute numbers, each verifiable from artifacts in this repo.
 
-1. **Bug catch rate: 9/10.** Combined reviewer + security agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus. vs-raw A/B deferred to v0.2.0.
+1. **Bug catch rate: 9/10.** Combined reviewer + security + architect agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus. vs-raw A/B deferred to v0.2.0.
 
 2. **Bytes saved: 75,955 cumulative** since 2026-04-24. Estimated tokens: 21,763 (bytes ÷ 3.5). Source: `RECEIPTS.md`, regenerated via `make self-report`.
 

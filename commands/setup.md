@@ -20,7 +20,29 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 2. Show detected stack and proposed permissions overlay
 3. Ask for confirmation before writing any config
 4. On confirmation: write stack config + permissions overlay per detected stack
-5. Confirm: "pakka initialised for <stack>."
+5. Write the status line wrapper:
+   ```bash
+   mkdir -p ~/.pakka/bin
+   cat > ~/.pakka/bin/status-line << 'EOF'
+   #!/bin/sh
+   # pakka status-line wrapper — auto-discovers latest installed plugin binary.
+   latest=$(ls -dt "$HOME/.claude/plugins/cache/pakka-marketplace/pakka"/*/bin/run 2>/dev/null | head -1)
+   if [ -n "$latest" ]; then
+     exec "$latest" status-line "$@"
+   fi
+   exit 0
+   EOF
+   chmod +x ~/.pakka/bin/status-line
+   ```
+6. Add `statusLine` to `~/.claude/settings.json` (read existing JSON, merge key, write back — never overwrite the whole file):
+   ```json
+   "statusLine": {
+     "type": "command",
+     "command": "/Users/<home>/.pakka/bin/status-line"
+   }
+   ```
+   Resolve actual home path from `$HOME`. If `statusLine` key already present with correct value, skip.
+7. Confirm: "pakka initialised for <stack>. Status line active."
 
 **`guard` → install git guard hook**
 

@@ -182,7 +182,7 @@ try {
         additionalContext:
           'PAKKA COMPRESSION ACTIVE (' +
           activeLevel +
-          '). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.',
+          '). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.\n\nSKILL-CHECK: design/spec/plan/approach → YOU MUST invoke /pakka:plan FIRST. implement/fix/debug/add → YOU MUST invoke /pakka:build FIRST. verify/review/done → YOU MUST invoke /pakka:review FIRST. No exceptions.',
       },
     };
     process.stdout.write(JSON.stringify(out));
