@@ -17,13 +17,16 @@ user-invocable: false
 
 ### Switch output level (`lite|strict|ultra|super-ultra`)
 
-1. Read `${CLAUDE_PLUGIN_ROOT}/settings.json`.
-2. Update `pakka.compress.outputLevel` to the requested level.
-3. Write settings back.
-4. Run `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=<new-level>`
-   to synchronously re-compress every allowlisted memory file at the new level.
-   Report progress to user (one line per file).
-5. Confirm: "Output compression set to [level]. Takes effect next response."
+1. Read `~/.config/pakka/config.json` (treat as `{}` if missing or malformed).
+2. Set `defaultLevel` to the requested level.
+3. Write the updated JSON back to `~/.config/pakka/config.json` (create parent dirs if needed).
+4. Write the requested level string to the flag file so per-turn reinforcement updates immediately:
+   - Path: `${CLAUDE_CONFIG_DIR}/.pakka-level` if `$CLAUDE_CONFIG_DIR` is set, else `~/.claude/.pakka-level`.
+   - Overwrite atomically (write to `.pakka-level.tmp`, rename). Mode 0600.
+5. Only if `pakka.compress.semantic` is `true` in `${CLAUDE_PLUGIN_ROOT}/settings.json`:
+   run `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=<new-level>`
+   and report progress (one line per file).
+6. Confirm: "Output compression set to [level]. Active now."
 
 Level effects:
 - `lite`: No filler/hedging. Keep articles + full sentences. Professional tight.
@@ -139,4 +142,4 @@ unless the orchestrator settings pin one.
 - Compressing a file that has no .original.md backup and is already very short (<500 bytes) — skip, not worth it.
 - Losing TODO/FIXME/SECURITY markers after compression — bug, report immediately.
 - Deterministic mode never calls LLM. Semantic mode calls LLM and MUST run the validator gate. A semantic compress that bypasses the validator is a bug, not a feature.
-- Setting output level without confirming the change took effect — verify by checking settings.json after write.
+- Setting output level without confirming the change took effect — verify by reading `~/.config/pakka/config.json` and `~/.claude/.pakka-level` after write.
