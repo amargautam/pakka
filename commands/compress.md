@@ -16,11 +16,16 @@ argument-hint: "[lite|strict|ultra|super-ultra|restore|status]"
 ### Switch output level (`lite|strict|ultra|super-ultra`)
 
 1. Validate the argument is exactly one of: `lite`, `strict`, `ultra`, `super-ultra`. If not, report invalid level and stop.
-2. Read `${CLAUDE_PLUGIN_ROOT}/settings.json`.
-3. Update `pakka.compress.outputLevel` to the validated level string.
-4. Write settings back. Read it again to confirm the value was written correctly.
-5. Run the orchestrator with the validated level. Use the validated literal string from step 1 as the `--level` flag value — e.g. if the validated level is `ultra`, run: `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=ultra`. Never pass the raw user argument without prior allowlist validation.
-6. Confirm: "Output compression set to [level]. Takes effect next response."
+2. Read `~/.config/pakka/config.json` (treat as `{}` if missing or malformed).
+3. Set `defaultLevel` to the validated level string.
+4. Write the updated JSON back to `~/.config/pakka/config.json` (create parent dirs if needed).
+5. Write the validated level string to the flag file for immediate per-turn effect:
+   - Path: `${CLAUDE_CONFIG_DIR}/.pakka-level` if `$CLAUDE_CONFIG_DIR` is set, else `~/.claude/.pakka-level`.
+   - Overwrite atomically (write to `.pakka-level.tmp`, rename). Mode 0600.
+6. Only if `pakka.compress.semantic` is `true` in `${CLAUDE_PLUGIN_ROOT}/settings.json`:
+   run `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=<validated-level>`.
+   Never pass the raw user argument without prior allowlist validation.
+7. Confirm: "Output compression set to [level]. Active now."
 
 Level effects:
 - `lite`: No filler/hedging. Keep articles + full sentences. Professional tight.
@@ -30,7 +35,7 @@ Level effects:
 
 ### Status (default action)
 
-1. Read `${CLAUDE_PLUGIN_ROOT}/settings.json` for current output level and semantic mode.
+1. Read `~/.config/pakka/config.json` for current `defaultLevel`. Fall back to `${CLAUDE_PLUGIN_ROOT}/settings.json` `pakka.compress.outputLevel` if config.json is absent. Read `${CLAUDE_PLUGIN_ROOT}/settings.json` for semantic mode.
 2. Find the most recent meter file: `ls -t ~/.pakka/meter/*.jsonl 2>/dev/null | head -1` and read it for bytes saved.
 3. Report:
    - Output level: `lite` | `strict` | `ultra` | `super-ultra`
