@@ -1,0 +1,235 @@
+package report
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestGatherMeter(t *testing.T) {
+	tmp := t.TempDir()
+	meterDir := filepath.Join(tmp, "meter")
+	auditDir := filepath.Join(tmp, "audit")
+	if err := os.MkdirAll(meterDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(auditDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two session files.
+	sess1 := `{"ts":"2026-04-20T10:00:00Z","session_id":"sess-aaa","tokens_used":100,"bytes_saved":0,"tokens_saved_est":0}
+{"ts":"2026-04-20T10:05:00Z","session_id":"sess-aaa","tokens_used":200,"bytes_saved":500,"tokens_saved_est":142}
+`
+	sess2 := `{"ts":"2026-04-22T14:00:00Z","session_id":"sess-bbb","tokens_used":50,"bytes_saved":100,"tokens_saved_est":28}
+`
+	if err := os.WriteFile(filepath.Join(meterDir, "sess-aaa.jsonl"), []byte(sess1), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meterDir, "sess-bbb.jsonl"), []byte(sess2), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Gather(meterDir, auditDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stats.SessionCount != 2 {
+		t.Errorf("SessionCount = %d, want 2", stats.SessionCount)
+	}
+	if stats.TotalTokensUsed != 350 {
+		t.Errorf("TotalTokensUsed = %d, want 350", stats.TotalTokensUsed)
+	}
+	if stats.TotalBytesSaved != 600 {
+		t.Errorf("TotalBytesSaved = %d, want 600", stats.TotalBytesSaved)
+	}
+	if stats.TokensSavedEst != 170 {
+		t.Errorf("TokensSavedEst = %d, want 170", stats.TokensSavedEst)
+	}
+	if stats.FirstSession.Format("2006-01-02") != "2026-04-20" {
+		t.Errorf("FirstSession = %v, want 2026-04-20", stats.FirstSession)
+	}
+	if stats.LastSession.Format("2006-01-02") != "2026-04-22" {
+		t.Errorf("LastSession = %v, want 2026-04-22", stats.LastSession)
+	}
+}
+
+func TestGatherAudit(t *testing.T) {
+	tmp := t.TempDir()
+	meterDir := filepath.Join(tmp, "meter")
+	auditDir := filepath.Join(tmp, "audit")
+	if err := os.MkdirAll(meterDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(auditDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	auditData := `{"schema":"pakka.audit.v1"}
+{"ts":"2026-04-20T10:00:00Z","session_id":"sess-aaa","kind":"tool_use","tool":"Read","result":"ok"}
+{"ts":"2026-04-20T10:01:00Z","session_id":"sess-aaa","kind":"tool_use","tool":"Read","result":"ok"}
+{"ts":"2026-04-20T10:02:00Z","session_id":"sess-aaa","kind":"tool_use","tool":"Bash","result":"ok"}
+{"ts":"2026-04-20T10:03:00Z","session_id":"sess-aaa","kind":"tool_use","tool":"Edit","result":"ok"}
+`
+	if err := os.WriteFile(filepath.Join(auditDir, "sess-aaa.jsonl"), []byte(auditData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Gather(meterDir, auditDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stats.AuditEventCount != 4 {
+		t.Errorf("AuditEventCount = %d, want 4", stats.AuditEventCount)
+	}
+	if stats.ToolUseCounts["Read"] != 2 {
+		t.Errorf("ToolUseCounts[Read] = %d, want 2", stats.ToolUseCounts["Read"])
+	}
+	if stats.ToolUseCounts["Bash"] != 1 {
+		t.Errorf("ToolUseCounts[Bash] = %d, want 1", stats.ToolUseCounts["Bash"])
+	}
+	if stats.ToolUseCounts["Edit"] != 1 {
+		t.Errorf("ToolUseCounts[Edit] = %d, want 1", stats.ToolUseCounts["Edit"])
+	}
+}
+
+func TestGatherBothEmpty(t *testing.T) {
+	_, err := Gather("/nonexistent/meter", "/nonexistent/audit")
+	if err == nil {
+		t.Error("expected error when both dirs are unreadable, got nil")
+	}
+}
+
+func TestGatherOneDirMissing(t *testing.T) {
+	tmp := t.TempDir()
+	meterDir := filepath.Join(tmp, "meter")
+	if err := os.MkdirAll(meterDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := `{"ts":"2026-04-20T10:00:00Z","session_id":"sess-aaa","tokens_used":100,"bytes_saved":0,"tokens_saved_est":0}
+`
+	if err := os.WriteFile(filepath.Join(meterDir, "sess-aaa.jsonl"), []byte(sess), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Gather(meterDir, "/nonexistent/audit")
+	if err != nil {
+		t.Fatalf("expected nil error when one dir exists, got: %v", err)
+	}
+	if stats.SessionCount != 1 {
+		t.Errorf("SessionCount = %d, want 1", stats.SessionCount)
+	}
+}
+
+func TestFormatMarkdown(t *testing.T) {
+	stats := &Stats{
+		SessionCount:    12,
+		TotalTokensUsed: 45200,
+		TotalBytesSaved: 3400,
+		TokensSavedEst:  971,
+		AuditEventCount: 468,
+		ToolUseCounts: map[string]int{
+			"Bash": 234,
+			"Read": 189,
+			"Edit": 45,
+		},
+		GateVerdicts:  8,
+		GatePassCount: 7,
+	}
+
+	// Set times via parsing.
+	stats.FirstSession, _ = parseTime("2026-04-20T10:00:00Z")
+	stats.LastSession, _ = parseTime("2026-04-24T18:00:00Z")
+
+	output := FormatMarkdown(stats, "0.1.0-dev")
+
+	// Check required sections.
+	checks := []string{
+		"# RECEIPTS.md",
+		"version: v0.1.0-dev",
+		"## build stats",
+		"| sessions | 12 |",
+		"| first session | 2026-04-20 |",
+		"| last session | 2026-04-24 |",
+		"| total tokens used | 45,200 |",
+		"| bytes saved (compression) | 3,400 |",
+		"| est. tokens saved | 971 |",
+		"## tool usage",
+		"| Bash | 234 |",
+		"| Read | 189 |",
+		"| Edit | 45 |",
+		"## review gate",
+		"| verdicts run | 8 |",
+		"| verdicts passed | 7 |",
+		"| pass rate | 87.5% |",
+		"Generated by `pakka-core report`. Apache-2.0.",
+	}
+
+	for _, want := range checks {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q", want)
+		}
+	}
+}
+
+func TestFormatMarkdownNoVerdicts(t *testing.T) {
+	stats := &Stats{
+		ToolUseCounts: make(map[string]int),
+	}
+
+	output := FormatMarkdown(stats, "0.1.0-dev")
+
+	if !strings.Contains(output, "| pass rate | — |") {
+		t.Error("expected dash for pass rate when no verdicts")
+	}
+}
+
+func TestFormatMarkdownToolsSortedByCount(t *testing.T) {
+	stats := &Stats{
+		ToolUseCounts: map[string]int{
+			"Edit": 10,
+			"Read": 50,
+			"Bash": 30,
+		},
+	}
+
+	output := FormatMarkdown(stats, "0.1.0-dev")
+
+	readIdx := strings.Index(output, "| Read |")
+	bashIdx := strings.Index(output, "| Bash |")
+	editIdx := strings.Index(output, "| Edit |")
+
+	if readIdx > bashIdx || bashIdx > editIdx {
+		t.Errorf("tools not sorted by count descending: Read@%d, Bash@%d, Edit@%d", readIdx, bashIdx, editIdx)
+	}
+}
+
+func TestFmtInt(t *testing.T) {
+	tests := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{42, "42"},
+		{999, "999"},
+		{1000, "1,000"},
+		{45200, "45,200"},
+		{1234567, "1,234,567"},
+		{-500, "-500"},
+	}
+	for _, tt := range tests {
+		got := fmtInt(tt.in)
+		if got != tt.want {
+			t.Errorf("fmtInt(%d) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func parseTime(s string) (time.Time, error) {
+	return time.Parse(time.RFC3339, s)
+}

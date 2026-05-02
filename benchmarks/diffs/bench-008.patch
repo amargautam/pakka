@@ -1,0 +1,153 @@
+diff --git a/echo.go b/echo.go
+index eb02be5b8..5e706f8bd 100644
+--- a/echo.go
++++ b/echo.go
+@@ -69,8 +69,15 @@ type Echo struct {
+ 	serveHTTPFunc func(http.ResponseWriter, *http.Request)
+ 
+ 	Binder Binder
+-	// Filesystem is the file system used for serving static files. Defaults to the current working directory.
+-	Filesystem       fs.FS
++
++	// Filesystem is the file system used for serving static files. Defaults to the current working directory (os.Getwd()).
++	//
++	// Note: fs.FS.Open() already assumes that file names are relative to FS root path and considers name with prefix `/` as invalid
++	// so if you have `fs := os.DirFS("/tmp")` and you try to `fs.Open("/tmp/file.txt")` it will fail, but "file.txt"
++	// would succeed. `echo.NewDefaultFS("/tmp")` overwrites this behavior and allows you to use Open with a matching
++	// absolute path prefix.
++	Filesystem fs.FS
++
+ 	Renderer         Renderer
+ 	Validator        Validator
+ 	JSONSerializer   JSONSerializer
+@@ -324,10 +331,11 @@ func NewWithConfig(config Config) *Echo {
+ 
+ // New creates an instance of Echo.
+ func New() *Echo {
++	dir, _ := os.Getwd()
+ 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+ 	e := &Echo{
+ 		Logger:             logger,
+-		Filesystem:         newDefaultFS(),
++		Filesystem:         NewDefaultFS(dir),
+ 		Binder:             &DefaultBinder{},
+ 		JSONSerializer:     &DefaultJSONSerializer{},
+ 		formParseMaxMemory: defaultMemory,
+@@ -781,7 +789,7 @@ func applyMiddleware(h HandlerFunc, middleware ...MiddlewareFunc) HandlerFunc {
+ 	return h
+ }
+ 
+-// defaultFS emulates os.Open behaviour with filesystem opened by `os.DirFs`. Difference between `os.Open` and `fs.Open`
++// defaultFS emulates os.Open behavior with filesystem opened by `os.DirFs`. Difference between `os.Open` and `fs.Open`
+ // is that FS does not allow to open path that start with `..` or `/` etc. For example previously you could have `../images`
+ // in your application but `fs := os.DirFS("./")` would not allow you to use `fs.Open("../images")` and this would break
+ // all old applications that rely on being able to traverse up from current executable run path.
+@@ -791,8 +799,9 @@ type defaultFS struct {
+ 	prefix string
+ }
+ 
+-func newDefaultFS() *defaultFS {
+-	dir, _ := os.Getwd()
++// NewDefaultFS returns a new defaultFS instance which allows `fs.FS.Open` to have absolute paths as input if it matches
++// then given dir as prefix.
++func NewDefaultFS(dir string) fs.FS {
+ 	return &defaultFS{
+ 		prefix: dir,
+ 		fs:     os.DirFS(dir),
+@@ -800,6 +809,18 @@ func newDefaultFS() *defaultFS {
+ }
+ 
+ func (fs defaultFS) Open(name string) (fs.File, error) {
++	// fs.FS.Open() already assumes that file names are relative to FS root path and considers name with prefix `/` as invalid
++	// For example `f.Name()` returns file names as absolute paths (e.g. `/tmp/data.csv`) so in case user wants to open
++	// a file with an absolute path we need to remove prefix and then call fs.FS.Open().
++	// not to force users to cut prefix from file name we do it here.
++	if filepath.IsAbs(name) {
++		if strings.HasPrefix(name, fs.prefix) {
++			name = name[len(fs.prefix):]
++			if len(name) > 1 && os.IsPathSeparator(name[0]) {
++				name = name[1:]
++			}
++		}
++	}
+ 	return fs.fs.Open(name)
+ }
+ 
+diff --git a/echo_test.go b/echo_test.go
+index f26eed8e2..b5045e111 100644
+--- a/echo_test.go
++++ b/echo_test.go
+@@ -8,6 +8,7 @@ import (
+ 	stdContext "context"
+ 	"errors"
+ 	"fmt"
++	"io"
+ 	"io/fs"
+ 	"log/slog"
+ 	"net"
+@@ -15,6 +16,7 @@ import (
+ 	"net/http/httptest"
+ 	"net/url"
+ 	"os"
++	"path/filepath"
+ 	"runtime"
+ 	"strings"
+ 	"testing"
+@@ -79,6 +81,57 @@ func TestNewWithConfig(t *testing.T) {
+ 	assert.Equal(t, `Hello, World!`, rec.Body.String())
+ }
+ 
++func TestNewDefaultFS(t *testing.T) {
++	tempDir := t.TempDir()
++	filename := filepath.Join(tempDir, "file.txt")
++	if err := os.WriteFile(filename, []byte("hello"), 0644); err != nil {
++		t.Fatalf("failed to write file: %v", err)
++	}
++
++	var testCases = []struct {
++		name          string
++		givenDir      string
++		whenName      string
++		expectedError string
++	}{
++		{
++			name:     "ok, can open absolute path",
++			givenDir: tempDir,
++			whenName: filename,
++		},
++		{
++			name:     "ok, can open path to fs",
++			givenDir: tempDir,
++			whenName: "file.txt",
++		},
++		{
++			name:          "nok, can not use ./ in path",
++			givenDir:      tempDir,
++			whenName:      "./file.txt",
++			expectedError: `open ./file.txt: invalid argument`,
++		},
++	}
++	for _, tc := range testCases {
++		t.Run(tc.name, func(t *testing.T) {
++			myFs := NewDefaultFS(tc.givenDir)
++
++			f, err := myFs.Open(tc.whenName)
++			if tc.expectedError != "" {
++				assert.EqualError(t, err, tc.expectedError)
++				return
++			}
++			if err != nil {
++				t.Fatalf("failed to read file: %v", err)
++			}
++			defer f.Close()
++
++			contents, err := io.ReadAll(f)
++			assert.NoError(t, err)
++			assert.Equal(t, []byte("hello"), contents)
++		})
++	}
++}
++
+ func TestEcho_StaticFS(t *testing.T) {
+ 	var testCases = []struct {
+ 		givenFs              fs.FS

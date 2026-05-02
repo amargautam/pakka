@@ -1,0 +1,1 @@
+{"kind":"security","severity":"error","file":"auth/login.py","line_approx":3,"bug_class":"sql-injection","description":"SQL injection via f-string interpolation of user input"}

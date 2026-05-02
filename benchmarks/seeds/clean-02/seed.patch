@@ -1,0 +1,34 @@
+--- /dev/null
++++ b/format/sanitize.ts
+@@ -0,0 +1,32 @@
++const ALLOWED_CHARS = /^[a-zA-Z0-9\s.,!?@#\-_]+$/;
++
++interface SanitizeResult {
++  original: string;
++  cleaned: string;
++  wasModified: boolean;
++}
++
++/**
++ * Sanitize user input for safe display.
++ * Strips HTML tags and validates against an allow-list of characters.
++ */
++export function sanitizeInput(raw: string): SanitizeResult {
++  // Strip HTML tags
++  const noHtml = raw.replace(/<[^>]*>/g, "");
++
++  // Remove characters not in allow-list
++  const cleaned = noHtml
++    .split("")
++    .filter((ch) => ALLOWED_CHARS.test(ch))
++    .join("");
++
++  // Trim and collapse whitespace
++  const normalized = cleaned.replace(/\s+/g, " ").trim();
++
++  return {
++    original: raw,
++    cleaned: normalized,
++    wasModified: raw !== normalized,
++  };
++}
