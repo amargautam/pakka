@@ -2,7 +2,7 @@
 
 ## Reporting
 
-Email **amar@gautamfamily.com**. Do not open public issues for vulnerabilities.
+Email **hello@amargautam.com**. Do not open public issues for vulnerabilities.
 
 Include: pakka version (`pakka --version`), Claude Code version, OS, reproducer, expected vs observed behavior. Acknowledgement within 7 days.
 

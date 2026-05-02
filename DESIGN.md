@@ -91,7 +91,7 @@ Nothing not in this table ships in v0.
   "name": "pakka",
   "description": "Claude Code harness — fewer tokens, fewer bugs, audit-ready. Apache-2.0.",
   "version": "0.1.0",
-  "author": { "name": "Amar Gautam", "email": "amar@gautamfamily.com" },
+  "author": { "name": "Amar Gautam", "email": "hello@amargautam.com" },
   "homepage": "https://pakka.dev",
   "repository": "https://github.com/amargautam/pakka",
   "license": "Apache-2.0",
@@ -102,7 +102,7 @@ Nothing not in this table ships in v0.
 ```
 {
   "name": "pakka-marketplace",
-  "owner": { "name": "Amar Gautam", "email": "amar@gautamfamily.com" },
+  "owner": { "name": "Amar Gautam", "email": "hello@amargautam.com" },
   "metadata": {
     "description": "Pakka plugins for Claude Code",
     "version": "0.1.0"
