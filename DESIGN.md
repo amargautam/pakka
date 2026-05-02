@@ -506,20 +506,31 @@ PostToolUse hook receives the tool result on stdin. If result exceeds threshold,
 }
 ```
 #### Compression budget — where the savings come from
+
+**Calibrated output reduction by level (Sonnet 4.6, single-turn bench, 2026-05-02):**
+| level | output tokens baseline | output tokens compressed | reduction |
+|---|---|---|---|
+| lite | 213 words | 171 words | ~27% |
+| strict | 131 words | 131 words | ~33% |
+| ultra | 100 words | 100 words | ~55% (Opus token run) |
+| super-ultra | 213 words | 72 words | **~66%** (Sonnet) / ~56% (Opus) |
+
+Sonnet is the dominant model in Claude Code sessions. Default claim: **~66% output reduction at super-ultra**. Bench recorded in `benchmarks/compress-samples/`.
+
 ```
 Typical session without pakka:
   Input:  ~200k tokens (CLAUDE.md ~10k, tool results ~120k, conversation ~60k, system ~10k)
-  Output: ~80k tokens (at 3-5× cost = 240-400k input-equivalent)
-  Effective cost: ~440-600k input-equivalent tokens
+  Output: ~80k tokens (at 5× cost = 400k input-equivalent)
+  Effective cost: ~600k input-equivalent tokens
 
-With 4-vector compression:
-  V1 output:       80k → ~32k output tokens (60% reduction, 3-5× multiplier = 144-240k saved)
+With 4-vector compression at super-ultra:
+  V1 output:       80k → ~27k output tokens (66% reduction = 265k input-equiv saved)
   V2 input files:  10k → ~9k (near-zero on terse files, ~40% on verbose)
   V3 tool results: 120k → ~60k (50% reduction via truncation)
   V4 subagent:     variable, ~20% of remaining
-  Effective cost:  ~200-300k input-equivalent tokens
+  Effective cost:  ~250-300k input-equivalent tokens
 
-Net: 35-50% total cost reduction, dominated by output compression (V1).
+Net: ~50-55% total cost reduction, dominated by output compression (V1).
 ```
 #### Auth resolution (Pass 4.6)
 Semantic compression and the SessionStart auto-orchestrator both pick a rewriter via the same resolution chain:

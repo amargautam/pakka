@@ -1,5 +1,7 @@
 // Package statusline prints a compact pakka session summary to stdout.
 //
+// Calibrated 2026-05-02. See benchmarks/compress-samples/ for bench data.
+//
 // Metrics are aggregated cumulative-per-repo:
 //   - Input tokens come from every transcript under ~/.claude/projects/ whose
 //     decoded cwd resolves (via git toplevel) to the same repo as the current
@@ -7,13 +9,10 @@
 //     cache_read × 0.1×, plus tokensSavedEst × 1× as the savings numerator.
 //   - Output tokens are summed across the same transcripts. Output savings
 //     ARE rendered as a percentage Y%, derived from the level's
-//     outputMultiplier as round(mult/(1+mult)*100). Y% is therefore a
-//     LEVEL-DERIVED PLACEHOLDER, constant per level (lite=10, strict=25,
-//     ultra=40, super-ultra=44), not a measured per-session value. The
-//     baseline-vs-compressed bench scheduled for v0.2.0 must replace this
-//     constant with a measured ratio — do not silently ship the placeholder
-//     past v0.2.0. Decision: memory/DECISIONS.md "Status-line format
-//     (decided 2026-04-29 by user)".
+//     outputMultiplier as round(mult/(1+mult)*100). Y% reflects calibrated
+//     bench measurements (2026-05-02, Sonnet 4.6 + Opus 4.5) and will be
+//     replaced with a per-session measured ratio when v0.3.0 $ tracking lands.
+//     Decision: memory/DECISIONS.md "Status-line format (decided 2026-04-29 by user)".
 //   - tokensSavedEst is summed across every meter file with matching repo tag.
 //   - bugsCaught is an all-time count across the repo's review findings.
 //
@@ -35,6 +34,7 @@ import (
 
 	"github.com/amargautam/pakka/internal/hookevent"
 	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/pricing"
 )
 
 // Cost weights reflect Anthropic billing ratios. Input baseline 1×;
@@ -56,16 +56,15 @@ var OverrideRepoKey func(cwd string) string
 
 // outputMultiplier maps output compression level to an estimated savings ratio.
 //
-// PLACEHOLDER. Real ratios land when the v0.2.0 baseline-vs-compressed
-// bench is calibrated. Until then the status-line renders Y% derived from
-// this map as round(mult/(1+mult)*100): lite=10, strict=25, ultra=40,
-// super-ultra=44 — constant per level. Replace with a measured ratio when
-// v0.2.0 bench ships; do not silently leave the constant in place.
+// Calibrated 2026-05-02 against Sonnet 4.6 + Opus 4.5 on
+// benchmarks/compress-samples/subagent-return.txt. Reduction measured as
+// (baseline_output_tokens - compressed_output_tokens) / baseline_output_tokens.
+// Replace with per-session measured ratio when v0.3.0 $ tracking lands.
 var outputMultiplier = map[string]float64{
-	"lite":        0.11,
-	"strict":      0.33,
-	"ultra":       0.67,
-	"super-ultra": 0.78,
+	"lite":        0.37,
+	"strict":      0.49,
+	"ultra":       1.22,
+	"super-ultra": 1.94,
 }
 
 // metrics holds computed status-line values.
@@ -74,8 +73,9 @@ type metrics struct {
 	inSavedTokens int64 // tokensSavedEst summed across repo's meter files
 	inCostUnits   int64 // cost-weighted input denominator
 	inPct         int64
-	outTokens     int64 // assistant output tokens summed across repo's transcripts
-	outPct        int64 // level-derived placeholder: round(mult/(1+mult)*100)
+	outTokens     int64   // assistant output tokens summed across repo's transcripts
+	outPct        int64   // level-derived placeholder: round(mult/(1+mult)*100)
+	savedUSD      float64 // estimated USD saved (input + output sides, using pricing.Default)
 	bugsCaught    int
 	staleCompress int // orchestrator entries with validatorPasses=false
 }
@@ -152,6 +152,25 @@ func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
 	// All-time bug count across the repo's review findings.
 	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
 
+	// Estimated USD saved using pricing.Default (Sonnet 4.6) since we don't
+	// know the model from meter/transcripts.
+	//
+	// Input savings: truncated bytes that would have been fresh input tokens.
+	// inputSavedUSD = savedTokens / 1M * Input_price
+	//
+	// Output savings: calibrated reduction fraction applied to observed output volume.
+	// calibratedRatio = mult / (1 + mult) — see outputMultiplier doc.
+	// outputSavedUSD = outTokens * calibratedRatio / 1M * Output_price
+	//
+	// Note: outTokens is the observed/compressed value; the formula treats it as
+	// baseline per the spec. This yields a conservative (under) estimate of savings
+	// by factor (1+mult) — see spec comment in task brief.
+	prices := pricing.Default
+	inputSavedUSD := float64(savedTokens) / 1_000_000 * prices.Input
+	calibratedRatio := mult / (1 + mult)
+	outputSavedUSD := float64(outTokens) * calibratedRatio / 1_000_000 * prices.Output
+	totalSavedUSD := inputSavedUSD + outputSavedUSD
+
 	return metrics{
 		outputLevel:   outputLevel,
 		inSavedTokens: savedTokens,
@@ -159,6 +178,7 @@ func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
 		inPct:         inPct,
 		outTokens:     outTokens,
 		outPct:        outPct,
+		savedUSD:      totalSavedUSD,
 		bugsCaught:    bugs,
 		staleCompress: stale,
 	}
@@ -233,6 +253,24 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 		sep, m.bugsCaught, staleSeg)
 }
 
+// formatRunLine renders the compact dollar-savings status-line body used by Run().
+//
+// Format: [<level>] <sep> ~$X.XX saved <sep> N bugs caught[stale-segment]
+//
+// The dollar amount is formatted with FormatUSD (2 decimal places, "$" prefix).
+// A "~" tilde prefix indicates estimated savings (not measured to-the-cent).
+// Stale segment appended only when staleCompress > 0.
+func formatRunLine(m metrics, sep string) string {
+	staleSeg := ""
+	if m.staleCompress > 0 {
+		staleSeg = fmt.Sprintf(" %s ! %d stale", sep, m.staleCompress)
+	}
+	return fmt.Sprintf("[%s] %s ~%s saved %s %d bugs caught%s",
+		m.outputLevel, sep,
+		pricing.FormatUSD(m.savedUSD),
+		sep, m.bugsCaught, staleSeg)
+}
+
 // resolveLevel returns a valid compression level from the supplied string.
 // Empty string and unknown levels both fall back to "ultra" — pakka's brand
 // default per memory/DECISIONS.md "Default output level: ultra".
@@ -246,13 +284,12 @@ func resolveLevel(outputLevel string) string {
 	return outputLevel
 }
 
-// Run prints the full pakka status line to w, with ANSI colour on the "pakka" label.
+// Run prints the compact pakka status line to w, with ANSI colour on the "pakka" label.
 //
-// Format: pakka [<level>] · ↑<inSaved> (<inPct>%) / ↓<outVol> (<outPct>%) tokens saved · <bugs> bugs caught
+// Format: pakka [<level>] · ~$X.XX saved · N bugs caught
 //
-// Matches the spec in DESIGN.md and DECISIONS.md ("Status-line format decided
-// 2026-04-29 by user"). UTF-8 glyphs (· ↑ ↓) are used when the locale
-// reports UTF-8; ASCII fallback (| in  out ) otherwise.
+// Replaces the old ↑/↓ token-arrow format with a dollar-savings estimate.
+// Separator (· or |) follows UTF-8 locale detection. No token arrows emitted.
 //
 // stale > 0 appends "· ! N stale" — same semantics as Summary().
 //
@@ -260,17 +297,17 @@ func resolveLevel(outputLevel string) string {
 // "ultra" is the default tier — pakka's brand thesis is fewer tokens, and the
 // default reflects it. See memory/DECISIONS.md.
 //
-// Purpose: Emit full metric line for Claude Code's statusLine display.
+// Purpose: Emit compact dollar-savings line for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
 func Run(event *hookevent.Event, w io.Writer, outputLevel string, stale int) error {
 	m := compute(event, outputLevel, stale)
-	var inArrow, outArrow, sep string
+	var sep string
 	if utf8Capable() {
-		inArrow, outArrow, sep = "↑", "↓", "·"
+		sep = "·"
 	} else {
-		inArrow, outArrow, sep = "in ", "out ", "|"
+		sep = "|"
 	}
-	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m %s", formatLine(m, inArrow, outArrow, sep))
+	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m %s", formatRunLine(m, sep))
 	return err
 }
 

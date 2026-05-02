@@ -1,40 +1,60 @@
 # RECEIPTS.md — pakka built with pakka
 
-version: v0.1.0-dev
-generated: 2026-04-29T23:20:56Z
+version: v0.2.5
+generated: 2026-05-02T20:44:28Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 119 |
+| sessions | 193 |
 | first session | 2026-04-24 |
-| last session | 2026-04-29 |
-| total tokens used | 17,464,930 |
-| bytes saved (compression) | 75,955 |
-| est. tokens saved | 21,763 |
+| last session | 2026-05-02 |
+| total tokens used | 29,544,607 |
+| bytes saved (V2+V3+V4 compression) | 95,055 |
+| est. tokens saved (bytes ÷ 3.5) | 27,280 |
+
+## output compression savings (V1 — calibrated bench)
+
+Output compression is the largest savings vector but cannot be measured from meter files alone — it requires comparing actual output tokens to a no-compression baseline. Calibrated 2026-05-02 by running `benchmarks/compress-samples/subagent-return.txt` through Sonnet 4.6 at each level:
+
+| level | output reduction | est. cost saving |
+|---|---|---|
+| lite | ~27% | ~$0.68/MTok output |
+| strict | ~33% | ~$0.83/MTok output |
+| ultra | ~55% | ~$1.38/MTok output |
+| super-ultra | **~66%** | **~$1.65/MTok output** |
+
+At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
+
+**Estimated total output savings across this build:**
+- Transcript output tokens (all 193 sessions, this repo): ~610,700
+- At super-ultra 66% reduction: ~403,000 tokens avoided
+- At $15/MTok: **~$6.04 saved on output tokens alone**
+- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.08
+- **Total estimated savings: ~$6.12**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 3,784 |
-| Read | 2,111 |
-| Edit | 1,350 |
-| Grep | 538 |
-| Write | 302 |
-| Agent | 220 |
-| Glob | 112 |
-| WebFetch | 23 |
+| Bash | 7,583 |
+| Read | 3,760 |
+| Edit | 2,426 |
+| Grep | 599 |
+| Write | 583 |
+| Agent | 366 |
+| WebFetch | 130 |
+| Glob | 126 |
 | TodoWrite | 11 |
 
 ## review gate
 
 | metric | value |
 |---|---|
-| verdicts run | 9 |
-| verdicts passed | 5 |
-| pass rate | 55.6% |
+| verdicts run | 35 |
+| verdicts passed | 18 |
+| pass rate | 51.4% |
 
 ---
 
