@@ -89,6 +89,13 @@ func run(t *testing.T, event *hookevent.Event, level string) string {
 	return buf.String()
 }
 
+// summary invokes Summary and returns the plain-text full-format string.
+// Behavioral/math tests use this so metric assertions survive the Run() trim.
+func summary(t *testing.T, event *hookevent.Event, level string) string {
+	t.Helper()
+	return Summary(event, level)
+}
+
 // extractInPct parses the percent from the input ("↑<abs> (<pct>%)") segment.
 func extractInPct(s string) int { return extractPctAfter(s, "↑") }
 
@@ -160,31 +167,19 @@ func TestRunOutputBaseFormat(t *testing.T) {
 	useFakeRepoKey(t, nil)
 	out := run(t, &hookevent.Event{SessionID: "abc12345xyz", CWD: "/work/x"}, "strict")
 
+	// Run() now emits only "pakka [<level>]" — verify shape.
 	if len(out) >= 200 {
 		t.Errorf("output too long (%d): %q", len(out), out)
 	}
-	for _, want := range []string{"pakka", "tokens saved", "bugs caught", "[strict]", "↑", "↓"} {
+	for _, want := range []string{"pakka", "[strict]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}
 	}
-	// Legacy strings must not regress.
-	for _, gone := range []string{"in saved", "out tok"} {
+	// Trimmed: token/bug segments must not appear in Run() output.
+	for _, gone := range []string{"tokens saved", "bugs caught", "↑", "↓", "in saved", "out tok"} {
 		if strings.Contains(out, gone) {
-			t.Errorf("legacy substring %q must not appear in %q", gone, out)
-		}
-	}
-	// Empty-fixture run: input shows zero+0%, output shows zero+strict-level pct (25%).
-	if !strings.Contains(out, "↑0 (0%)") {
-		t.Errorf("missing input zero+pct in %q", out)
-	}
-	if !strings.Contains(out, "↓0 (25%)") {
-		t.Errorf("missing output zero+pct in %q", out)
-	}
-	// "--" placeholder must never appear.
-	for _, bad := range []string{"(--)", "--"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("banned %q in %q", bad, out)
+			t.Errorf("removed segment %q must not appear in Run() output: %q", gone, out)
 		}
 	}
 }
@@ -209,7 +204,7 @@ func TestOutputPercentRendered(t *testing.T) {
 		"super-ultra": 44,
 	}
 	for level, want := range expected {
-		out := run(t, &hookevent.Event{SessionID: "outPctTst", CWD: "/repo/A"}, level)
+		out := summary(t, &hookevent.Event{SessionID: "outPctTst", CWD: "/repo/A"}, level)
 		downIdx := strings.Index(out, "↓")
 		if downIdx < 0 {
 			t.Fatalf("missing down-arrow at level=%s: %q", level, out)
@@ -237,7 +232,7 @@ func TestOutputPercentVariesByLevel(t *testing.T) {
 
 	seen := map[int]string{}
 	for _, level := range []string{"lite", "strict", "ultra", "super-ultra"} {
-		out := run(t, &hookevent.Event{SessionID: "varyTst1", CWD: "/repo/A"}, level)
+		out := summary(t, &hookevent.Event{SessionID: "varyTst1", CWD: "/repo/A"}, level)
 		pct := extractPctAfter(out, "↓")
 		if pct < 0 {
 			t.Fatalf("level=%s: failed to extract outPct from %q", level, out)
@@ -273,7 +268,7 @@ func TestOutputAbsInvariantAcrossLevels(t *testing.T) {
 	})
 
 	for _, level := range []string{"lite", "strict", "ultra", "super-ultra"} {
-		out := run(t, &hookevent.Event{SessionID: "lvltest1", CWD: "/repo/A"}, level)
+		out := summary(t, &hookevent.Event{SessionID: "lvltest1", CWD: "/repo/A"}, level)
 
 		if !strings.Contains(out, "["+level+"]") {
 			t.Errorf("level=%s: bracket label missing in %q", level, out)
@@ -291,12 +286,13 @@ func TestArrowDirectionConventional(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
-	out := run(t, &hookevent.Event{SessionID: "arrow001", CWD: "/r"}, "strict")
 
-	upIdx := strings.Index(out, "↑")
-	downIdx := strings.Index(out, "↓")
+	// Run() no longer emits arrows — verify arrow order via Summary().
+	got := summary(t, &hookevent.Event{SessionID: "arrow001", CWD: "/r"}, "strict")
+	upIdx := strings.Index(got, "↑")
+	downIdx := strings.Index(got, "↓")
 	if !(upIdx > 0 && upIdx < downIdx) {
-		t.Errorf("expected ↑ before ↓: %q (idx %d/%d)", out, upIdx, downIdx)
+		t.Errorf("expected ↑ before ↓ in Summary: %q (idx %d/%d)", got, upIdx, downIdx)
 	}
 }
 
@@ -307,19 +303,27 @@ func TestRunAsciiFallback(t *testing.T) {
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 
+	// Run() now emits only "pakka [<level>]" — locale no longer affects Run() output.
 	out := run(t, &hookevent.Event{SessionID: "ascii123", CWD: "/r"}, "strict")
-	if strings.Contains(out, "↓") || strings.Contains(out, "↑") {
-		t.Errorf("expected ascii: %q", out)
-	}
-	for _, want := range []string{"in 0 (0%)", "out 0 (25%)", "tokens saved"} {
+	for _, want := range []string{"pakka", "[strict]"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("ascii missing %q in %q", want, out)
+			t.Errorf("ascii: missing %q in %q", want, out)
 		}
 	}
-	// Legacy substrings must not regress.
-	for _, gone := range []string{"in saved", "out tok"} {
+	// No token/bug segments in trimmed Run() output.
+	for _, gone := range []string{"tokens saved", "bugs caught", "in saved", "out tok"} {
 		if strings.Contains(out, gone) {
-			t.Errorf("ascii: legacy substring %q must not appear: %q", gone, out)
+			t.Errorf("ascii: removed segment %q must not appear: %q", gone, out)
+		}
+	}
+	// ASCII locale verification lives in Summary — confirm Summary still uses ascii glyphs.
+	got := summary(t, &hookevent.Event{SessionID: "ascii123", CWD: "/r"}, "strict")
+	if strings.Contains(got, "↓") || strings.Contains(got, "↑") {
+		t.Errorf("Summary in ascii locale should not emit UTF-8 arrows: %q", got)
+	}
+	for _, want := range []string{"in 0 (0%)", "out 0 (25%)", "tokens saved"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Summary ascii missing %q in %q", want, got)
 		}
 	}
 }
@@ -363,7 +367,7 @@ func TestCrossSessionAggregation(t *testing.T) {
 		})
 	}
 
-	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	if !strings.Contains(out, "↑600") {
 		t.Errorf("aggregation broken; expected ↑600 in %q", out)
 	}
@@ -376,7 +380,7 @@ func TestCrossSessionAggregation(t *testing.T) {
 	writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
 		{"input_tokens": 900, "output_tokens": 0},
 	})
-	out2 := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
+	out2 := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	pct2 := extractInPct(out2)
 	if pct2 != 67 {
 		t.Errorf("after adding transcript inputs, want 67 got %d (out=%q)", pct2, out2)
@@ -403,7 +407,7 @@ func TestRepoIsolation(t *testing.T) {
 		"tokens_saved_est": 9999,
 	})
 
-	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	// Only own session counted: rendered savings should be exactly 500
 	// (foreign + legacy entries excluded). pct rounds to 0 because there
 	// is no spend in the denominator — that is correct, not isolation
@@ -432,7 +436,7 @@ func TestCostWeightsApplied(t *testing.T) {
 		{"input_tokens": 200, "cache_creation_input_tokens": 400, "cache_read_input_tokens": 1000, "output_tokens": 0},
 	})
 
-	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	if pct := extractInPct(out); pct != 6 {
 		t.Errorf("cost-weighted pct want 6, got %d (out=%q)", pct, out)
 	}
@@ -455,7 +459,7 @@ func TestCacheReadDoesNotCollapseRatio(t *testing.T) {
 		{"input_tokens": 200, "cache_creation_input_tokens": 400, "cache_read_input_tokens": 10000, "output_tokens": 0},
 	})
 
-	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	pct := extractInPct(out)
 	if pct != 3 {
 		t.Errorf("cache-read-heavy pct want 3, got %d (out=%q)", pct, out)
@@ -484,14 +488,14 @@ func TestOutputCumulative(t *testing.T) {
 		{"input_tokens": 0, "output_tokens": 2000},
 	})
 
-	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "strict")
 	if g := extractOutAbs(out); g != "3.0K" {
 		t.Errorf("cumulative outAbs want 3.0K, got %q", g)
 	}
 
 	// Output absolute must NOT change with level (the post-display multiplier
 	// is gone).
-	outU := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "ultra")
+	outU := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/repo/A"}, "ultra")
 	if extractOutAbs(outU) != extractOutAbs(out) {
 		t.Errorf("outAbs must be invariant across levels: strict=%q ultra=%q",
 			extractOutAbs(out), extractOutAbs(outU))
@@ -535,7 +539,7 @@ func TestBugsAllTimeNoTimeFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/work/A"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/work/A"}, "strict")
 	bugs := extractBugs(out)
 	if bugs != 4 {
 		t.Errorf("bugs all-time want 4 (1+1+2), got %d (out=%q)", bugs, out)
@@ -543,7 +547,7 @@ func TestBugsAllTimeNoTimeFilter(t *testing.T) {
 
 	// Behavioral: adding more findings must increase the count.
 	mk("d.jsonl", []string{hi, hi, hi})
-	out2 := run(t, &hookevent.Event{SessionID: "currentX", CWD: "/work/A"}, "strict")
+	out2 := summary(t, &hookevent.Event{SessionID: "currentX", CWD: "/work/A"}, "strict")
 	bugs2 := extractBugs(out2)
 	if !(bugs2 > bugs) {
 		t.Errorf("bugs should grow when more findings added: %d → %d", bugs, bugs2)
@@ -601,7 +605,7 @@ func TestStatusLineShowsBothAbsoluteAndPercent(t *testing.T) {
 		writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
 			{"input_tokens": saved * 9, "output_tokens": 0}, // pct ≈ 10
 		})
-		return run(t, &hookevent.Event{SessionID: "varies01", CWD: "/repo/A"}, "strict")
+		return summary(t, &hookevent.Event{SessionID: "varies01", CWD: "/repo/A"}, "strict")
 	}
 
 	// Two distinct inputs → two distinct humanized values.
@@ -771,7 +775,7 @@ func TestStaleCompressGlyph(t *testing.T) {
 	useFakeRepoKey(t, map[string]string{"/work/X": repoDir})
 
 	// Case 1: missing state file → no glyph.
-	out := run(t, &hookevent.Event{SessionID: "stale001", CWD: "/work/X"}, "strict")
+	out := summary(t, &hookevent.Event{SessionID: "stale001", CWD: "/work/X"}, "strict")
 	if strings.Contains(out, "stale") {
 		t.Errorf("missing state must not render stale glyph: %q", out)
 	}
@@ -789,7 +793,7 @@ func TestStaleCompressGlyph(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, "compress-state.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out2 := run(t, &hookevent.Event{SessionID: "stale002", CWD: "/work/X"}, "strict")
+	out2 := summary(t, &hookevent.Event{SessionID: "stale002", CWD: "/work/X"}, "strict")
 	if !strings.Contains(out2, "! 2 stale") {
 		t.Errorf("expected '! 2 stale' segment: %q", out2)
 	}
@@ -798,7 +802,7 @@ func TestStaleCompressGlyph(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, "compress-state.json"), []byte("{not-json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out3 := run(t, &hookevent.Event{SessionID: "stale003", CWD: "/work/X"}, "strict")
+	out3 := summary(t, &hookevent.Event{SessionID: "stale003", CWD: "/work/X"}, "strict")
 	if strings.Contains(out3, "stale") {
 		t.Errorf("corrupt state must not render stale glyph: %q", out3)
 	}

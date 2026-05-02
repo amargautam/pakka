@@ -276,17 +276,7 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 // Errors: Returns error only on write failure to w.
 func Run(event *hookevent.Event, w io.Writer, outputLevel string) error {
 	m := compute(event, outputLevel)
-	utf8 := utf8Capable()
-
-	var inArrow, outArrow, sep string
-	if utf8 {
-		inArrow, outArrow, sep = "↑", "↓", "·"
-	} else {
-		inArrow, outArrow, sep = "in ", "out ", "|"
-	}
-
-	body := formatLine(m, inArrow, outArrow, sep)
-	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m %s", body)
+	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m [%s]", m.outputLevel)
 	return err
 }
 
