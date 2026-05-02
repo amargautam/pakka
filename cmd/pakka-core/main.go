@@ -1291,6 +1291,17 @@ func runOutputRules() {
 		out = strings.Replace(out, "level: strict", "level: "+level, 1)
 	}
 	fmt.Fprint(os.Stdout, out)
+
+	// Pass 4.2: append skill auto-invocation mandates.
+	// skill-invoke.md is emitted as additional SessionStart context so Claude
+	// knows which skills to invoke automatically without being explicitly asked.
+	// Silently skip if the file is missing — no fallback needed; skills still
+	// appear in <available-skills> and their description triggers still work.
+	skillPath := filepath.Join(root, "rules", "skill-invoke.md")
+	if skillContent, err := os.ReadFile(skillPath); err == nil {
+		fmt.Fprint(os.Stdout, "\n")
+		fmt.Fprint(os.Stdout, string(skillContent))
+	}
 }
 
 // --- output-reinforce (Pass 4.1) ---
