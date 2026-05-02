@@ -11,6 +11,16 @@ Claude Code harness — fewer tokens, fewer bugs, audit-ready. Apache-2.0.
 
 Zero-config. Uses your existing Claude Code auth. No API key required.
 
+## Upgrade
+
+```
+/plugin marketplace update
+/plugin install pakka@pakka-marketplace
+/reload-plugins
+```
+
+`/plugin marketplace update` must run first — it pulls the latest catalog ref. Without it, install resolves to a stale cached version.
+
 ## What it does
 
 <a id="skills"></a>
