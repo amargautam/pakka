@@ -53,7 +53,7 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **Audit trail:** every tool call appended to `~/.pakka/audit/<session>.jsonl`. No dial-home.
 
-**Status line:** `pakka [super-ultra]` — active compression level, always visible.
+**Status line:** `pakka [super-ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 2 bugs caught` — compression level, token savings, and bugs caught, always visible.
 
 ## Results (v0.1.0)
 

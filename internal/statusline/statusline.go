@@ -116,12 +116,7 @@ func resolveRepoKey(cwd string) string {
 // stale is the pre-computed orchestrator stale count, supplied by the caller
 // (main.go) to keep statusline free of compress/orchestrator coupling.
 func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
-	if outputLevel == "" {
-		outputLevel = "ultra"
-	}
-	if _, ok := outputMultiplier[outputLevel]; !ok {
-		outputLevel = "ultra"
-	}
+	outputLevel = resolveLevel(outputLevel)
 
 	cwd := event.CWD
 	if cwd == "" {
@@ -238,37 +233,44 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 		sep, m.bugsCaught, staleSeg)
 }
 
-// Run prints the pakka status line to w.
+// resolveLevel returns a valid compression level from the supplied string.
+// Empty string and unknown levels both fall back to "ultra" — pakka's brand
+// default per memory/DECISIONS.md "Default output level: ultra".
+func resolveLevel(outputLevel string) string {
+	if outputLevel == "" {
+		return "ultra"
+	}
+	if _, ok := outputMultiplier[outputLevel]; !ok {
+		return "ultra"
+	}
+	return outputLevel
+}
+
+// Run prints the full pakka status line to w, with ANSI colour on the "pakka" label.
 //
-// Format (UTF-8): pakka [ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 0 bugs caught
-// When orchestrator state has stale entries, a trailing "· ! N stale" segment
-// is appended:
+// Format: pakka [<level>] · ↑<inSaved> (<inPct>%) / ↓<outVol> (<outPct>%) tokens saved · <bugs> bugs caught
 //
-//	pakka [ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 0 bugs caught · ! 2 stale
+// Matches the spec in DESIGN.md and DECISIONS.md ("Status-line format decided
+// 2026-04-29 by user"). UTF-8 glyphs (· ↑ ↓) are used when the locale
+// reports UTF-8; ASCII fallback (| in  out ) otherwise.
 //
-// Format (ascii): pakka [ultra] | in 12.4K (43%) / out 7.0K (40%) tokens saved | 0 bugs caught
-// ASCII stale segment: " | ! 2 stale"
+// stale > 0 appends "· ! N stale" — same semantics as Summary().
 //
 // Bracket label is the output compression level (lite|strict|ultra|super-ultra).
 // "ultra" is the default tier — pakka's brand thesis is fewer tokens, and the
 // default reflects it. See memory/DECISIONS.md.
 //
-// Input side carries absolute saved tokens + measured X% (meter-derived).
-// Output side carries absolute output volume + level-derived placeholder Y%
-// (round(mult/(1+mult)*100)) — constant per level until v0.2.0
-// baseline-vs-compressed bench replaces it with a measured ratio.
-//
-// Arrows follow conventional upload/download semantics: ↑ = input going UP to
-// the API, ↓ = output coming DOWN.
-//
-// stale is the pre-computed orchestrator stale count. Callers obtain it via
-// orchestrator.CountStaleFromDisk so statusline stays free of compress coupling.
-//
-// Purpose: Emit compact one-line session summary for Claude Code's statusLine display.
+// Purpose: Emit full metric line for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
 func Run(event *hookevent.Event, w io.Writer, outputLevel string, stale int) error {
 	m := compute(event, outputLevel, stale)
-	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m [%s]", m.outputLevel)
+	var inArrow, outArrow, sep string
+	if utf8Capable() {
+		inArrow, outArrow, sep = "↑", "↓", "·"
+	} else {
+		inArrow, outArrow, sep = "in ", "out ", "|"
+	}
+	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m %s", formatLine(m, inArrow, outArrow, sep))
 	return err
 }
 

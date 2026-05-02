@@ -177,19 +177,10 @@ func TestRunOutputBaseFormat(t *testing.T) {
 	useFakeRepoKey(t, nil)
 	out := run(t, &hookevent.Event{SessionID: "abc12345xyz", CWD: "/work/x"}, "strict")
 
-	// Run() now emits only "pakka [<level>]" — verify shape.
-	if len(out) >= 200 {
-		t.Errorf("output too long (%d): %q", len(out), out)
-	}
-	for _, want := range []string{"pakka", "[strict]"} {
+	// Run() emits full format: pakka [level] · ↑N (X%) / ↓N (Y%) tokens saved · N bugs caught
+	for _, want := range []string{"pakka", "[strict]", "tokens saved", "bugs caught"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
-		}
-	}
-	// Trimmed: token/bug segments must not appear in Run() output.
-	for _, gone := range []string{"tokens saved", "bugs caught", "↑", "↓", "in saved", "out tok"} {
-		if strings.Contains(out, gone) {
-			t.Errorf("removed segment %q must not appear in Run() output: %q", gone, out)
 		}
 	}
 }
@@ -297,12 +288,20 @@ func TestArrowDirectionConventional(t *testing.T) {
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 
-	// Run() no longer emits arrows — verify arrow order via Summary().
+	// Verify ↑ (input saved) appears before ↓ (output volume) in both Run() and Summary().
 	got := summary(t, &hookevent.Event{SessionID: "arrow001", CWD: "/r"}, "strict")
 	upIdx := strings.Index(got, "↑")
 	downIdx := strings.Index(got, "↓")
 	if !(upIdx > 0 && upIdx < downIdx) {
 		t.Errorf("expected ↑ before ↓ in Summary: %q (idx %d/%d)", got, upIdx, downIdx)
+	}
+
+	// Run() now also emits full format — verify same arrow ordering.
+	runOut := run(t, &hookevent.Event{SessionID: "arrow001", CWD: "/r"}, "strict")
+	upRun := strings.Index(runOut, "↑")
+	downRun := strings.Index(runOut, "↓")
+	if !(upRun > 0 && upRun < downRun) {
+		t.Errorf("expected ↑ before ↓ in Run(): %q (idx %d/%d)", runOut, upRun, downRun)
 	}
 }
 
@@ -313,20 +312,24 @@ func TestRunAsciiFallback(t *testing.T) {
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 
-	// Run() now emits only "pakka [<level>]" — locale no longer affects Run() output.
+	// Run() emits full format. In ASCII locale it must use ASCII glyphs (in /out /|)
+	// and still contain core labels.
 	out := run(t, &hookevent.Event{SessionID: "ascii123", CWD: "/r"}, "strict")
-	for _, want := range []string{"pakka", "[strict]"} {
+	for _, want := range []string{"pakka", "[strict]", "tokens saved", "bugs caught"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("ascii: missing %q in %q", want, out)
+			t.Errorf("ascii Run: missing %q in %q", want, out)
 		}
 	}
-	// No token/bug segments in trimmed Run() output.
-	for _, gone := range []string{"tokens saved", "bugs caught", "in saved", "out tok"} {
-		if strings.Contains(out, gone) {
-			t.Errorf("ascii: removed segment %q must not appear: %q", gone, out)
-		}
+	// ASCII locale: UTF-8 arrows must NOT appear in Run() output.
+	if strings.Contains(out, "↑") || strings.Contains(out, "↓") {
+		t.Errorf("ascii Run: UTF-8 arrows must not appear in non-UTF-8 locale: %q", out)
 	}
-	// ASCII locale verification lives in Summary — confirm Summary still uses ascii glyphs.
+	// ASCII glyphs should appear instead.
+	if !strings.Contains(out, "in ") || !strings.Contains(out, "out ") {
+		t.Errorf("ascii Run: expected ASCII 'in '/'out ' glyphs: %q", out)
+	}
+
+	// Summary also uses ASCII glyphs in this locale.
 	got := summary(t, &hookevent.Event{SessionID: "ascii123", CWD: "/r"}, "strict")
 	if strings.Contains(got, "↓") || strings.Contains(got, "↑") {
 		t.Errorf("Summary in ascii locale should not emit UTF-8 arrows: %q", got)

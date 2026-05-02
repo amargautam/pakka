@@ -35,25 +35,12 @@ try {
   content = null;
 }
 
-// Ambient behaviors appended to every non-off ruleset output
-const skillCheckFallback =
-  '\n## Skill-check discipline\n' +
-  'Before responding to each message: does it call for /pakka:plan (design/spec/probe/challenge/slice), ' +
-  '/pakka:build (TDD/debug/map/audit), or /pakka:review (verify/receive/finish)? ' +
-  'If yes, invoke the command before anything else.\n';
-
-let skillCheckContent;
-try {
-  skillCheckContent = '\n' + fs.readFileSync(path.join(__dirname, '..', 'rules', 'skill-check.md'), 'utf8');
-} catch (_) {
-  skillCheckContent = skillCheckFallback;
-}
-
+// Ambient behaviors appended to every non-off ruleset output.
+// Skill-check discipline is injected separately via skill-check-start.js.
 const ambientBehaviors =
   '\n## Verification discipline\n' +
   'Before outputting "done", "working", "fixed", "passing", or any completion claim:\n' +
-  'run the relevant command and show the actual exit code. Exit 0 = evidence. "Should work" is not evidence.\n' +
-  skillCheckContent;
+  'run the relevant command and show the actual exit code. Exit 0 = evidence. "Should work" is not evidence.\n';
 
 if (content !== null) {
   // filterRuleset: replaces header level marker and strips other-level rows/examples.
