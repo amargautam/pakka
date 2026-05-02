@@ -173,16 +173,70 @@ try {
     // Fall through to read the flag (which is now gone, so no reinforcement)
   }
 
+  // --- Keyword-based skill-check detection ---
+  // Skip scan for /pakka: commands (already handled or self-referential)
+  const isSlashPakka = /^\/pakka:/i.test(prompt);
+
+  // Skill groups in priority order: BUILD > PLAN > REVIEW
+  const SKILL_KEYWORDS = [
+    {
+      skill: '/pakka:build',
+      words: ['fix', 'debug', 'implement', 'add', 'refactor', 'tdd', 'test', 'broken', 'error', 'coupling'],
+      phrases: ['not working', 'build this', 'write the code', 'make it work', 'how does', 'walk me through', 'explain this', 'hard to test'],
+    },
+    {
+      skill: '/pakka:plan',
+      words: ['design', 'spec', 'plan', 'approach', 'architecture', 'structure', 'proposal', 'challenge', 'probe', 'decompose', 'slice', 'tickets'],
+      phrases: ['how should we', 'what should we', 'should we', "let's build", 'we need to', 'thinking about', 'considering', 'what about', 'how about'],
+    },
+    {
+      skill: '/pakka:review',
+      words: ['verify', 'review', 'done', 'ship', 'approve', 'receive', 'feedback', 'finalize'],
+      phrases: ['is this right', 'looks good', 'ready to', 'sign off'],
+    },
+  ];
+
+  let skillMatch = null;
+  if (!isSlashPakka) {
+    outer: for (const group of SKILL_KEYWORDS) {
+      for (const w of group.words) {
+        if (new RegExp('\\b' + w + '\\b').test(promptLower)) {
+          skillMatch = { skill: group.skill, keyword: w };
+          break outer;
+        }
+      }
+      for (const p of group.phrases) {
+        if (promptLower.includes(p)) {
+          skillMatch = { skill: group.skill, keyword: p };
+          break outer;
+        }
+      }
+    }
+  }
+
   // --- Reinforcement ---
   const activeLevel = readFlag(flagPath);
   if (activeLevel !== null && activeLevel !== 'off') {
+    const compressionLine =
+      'PAKKA COMPRESSION ACTIVE (' +
+      activeLevel +
+      '). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.';
+    const genericSkillCheck =
+      'SKILL-CHECK: design/spec/plan/approach → YOU MUST invoke /pakka:plan FIRST. implement/fix/debug/add → YOU MUST invoke /pakka:build FIRST. verify/review/done → YOU MUST invoke /pakka:review FIRST. No exceptions.';
+
+    let additionalContext;
+    if (skillMatch) {
+      additionalContext =
+        "SKILL-CHECK: Your message contains '" + skillMatch.keyword + "' → " + skillMatch.skill + ' MUST be invoked BEFORE your response. No exceptions.\n\n' +
+        compressionLine;
+    } else {
+      additionalContext = compressionLine + '\n\n' + genericSkillCheck;
+    }
+
     const out = {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext:
-          'PAKKA COMPRESSION ACTIVE (' +
-          activeLevel +
-          '). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.\n\nSKILL-CHECK: design/spec/plan/approach → YOU MUST invoke /pakka:plan FIRST. implement/fix/debug/add → YOU MUST invoke /pakka:build FIRST. verify/review/done → YOU MUST invoke /pakka:review FIRST. No exceptions.',
+        additionalContext: additionalContext,
       },
     };
     process.stdout.write(JSON.stringify(out));
