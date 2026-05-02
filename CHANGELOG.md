@@ -2,6 +2,12 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.3] — 2026-05-02
+
+### Fixed
+
+- Deleted 10 alias command files (spec, tdd, debug, challenge, probe, map, slice, audit-code-arch, init, guard) — slash picker now shows exactly 7 hub commands, no stale aliases cluttering the list
+
 ## [v0.2.2] — 2026-05-02
 
 ### Fixed
