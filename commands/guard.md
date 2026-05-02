@@ -1,14 +1,14 @@
 ---
 description: Install a PreToolUse hook that blocks dangerous git commands before Claude executes them.
-allowed-tools: Skill
+allowed-tools: Read, Write, Bash, Agent
 argument-hint: "[--project | --global]"
 ---
 
 ## Instructions
 
-Invoke the Skill tool with `skill: "pakka:guard"`. Pass any user arguments through verbatim via the `args` parameter.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-guard/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
 
 ## Red Flags
 
-- Parsing or rewriting args at this layer → wrong. Pass verbatim; the skill owns all logic.
-- Running hook installation here instead of delegating → wrong. This is a thin wrapper only.
+- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
+- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.

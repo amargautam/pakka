@@ -63,7 +63,7 @@ Write regression test **before** the fix — but only if there is a correct seam
 
 Correct seam: test exercises the real bug pattern at its actual call site. Wrong seam = false confidence.
 
-If no correct seam exists: document that. The architecture is preventing lockdown. Flag for `/pakka:review-architecture`.
+If no correct seam exists: document that. The architecture is preventing lockdown. Flag for `/pakka:audit-code-arch`.
 
 1. Write failing test at correct seam
 2. Watch it fail
@@ -79,7 +79,7 @@ If no correct seam exists: document that. The architecture is preventing lockdow
 - [ ] Throwaway harnesses deleted
 - [ ] Root cause stated in commit message — next debugger learns
 
-Then ask: what would have prevented this? If architectural → hand off to `/pakka:review-architecture`.
+Then ask: what would have prevented this? If architectural → hand off to `/pakka:audit-code-arch`.
 
 ## Red Flags
 

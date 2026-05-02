@@ -28,6 +28,7 @@ import (
 	"github.com/amargautam/pakka/internal/bench"
 	"github.com/amargautam/pakka/internal/commitgate"
 	"github.com/amargautam/pakka/internal/compress"
+	"github.com/amargautam/pakka/internal/compress/orchestrator"
 	"github.com/amargautam/pakka/internal/compress/semantic"
 	evalPkg "github.com/amargautam/pakka/internal/eval"
 	"github.com/amargautam/pakka/internal/guard"
@@ -89,7 +90,13 @@ func main() {
 func runStatusLine() {
 	event, _ := hookevent.Parse(os.Stdin)
 	level := loadOutputLevel()
-	if err := statusline.Run(event, os.Stdout, level); err != nil {
+	cwd := event.CWD
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	repoKey := meter.RepoKey(cwd)
+	stale := orchestrator.CountStaleFromDisk(repoKey)
+	if err := statusline.Run(event, os.Stdout, level, stale); err != nil {
 		fmt.Fprintf(os.Stderr, "pakka: status-line: %v\n", err)
 		os.Exit(1)
 	}
@@ -904,7 +911,12 @@ func runCommitGate() {
 	// Inject status trailer on allowed commits.
 	if d.Allow && commitgate.IsGitCommit(input.Command) {
 		level := loadOutputLevel()
-		summary := statusline.Summary(event, level)
+		cgCWD := event.CWD
+		if cgCWD == "" {
+			cgCWD, _ = os.Getwd()
+		}
+		cgStale := orchestrator.CountStaleFromDisk(meter.RepoKey(cgCWD))
+		summary := statusline.Summary(event, level, cgStale)
 		target := d.Command
 		if target == "" {
 			target = input.Command

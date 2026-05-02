@@ -1,6 +1,6 @@
 ---
-name: review-architecture
-description: Walk the codebase and find modules where the interface costs as much to learn as the implementation behind it. Propose targeted refactors to concentrate behavior and reduce bug surface. Use when understanding one concept requires reading ten files, testability is low, or coupling is making changes expensive.
+name: audit-code-arch
+description: Audit code architecture — find shallow modules, propose refactors to improve testability and reduce bug surface. Use when understanding one concept requires reading ten files, testability is low, or coupling is making changes expensive.
 allowed-tools: Read, Glob, Grep, Agent
 argument-hint: "[area to explore, or blank for full scan]"
 user-invocable: false

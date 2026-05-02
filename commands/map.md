@@ -1,14 +1,14 @@
 ---
 description: Map relevant modules and callers before navigating unfamiliar code — go up a layer of abstraction first.
-allowed-tools: Skill
+allowed-tools: Read, Write, Bash, Agent
 argument-hint: "[area or module to map]"
 ---
 
 ## Instructions
 
-Invoke the Skill tool with `skill: "pakka:map"`. Pass any user arguments through verbatim via the `args` parameter.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-map/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
 
 ## Red Flags
 
-- Parsing or rewriting args at this layer → wrong. Pass verbatim; the skill owns all logic.
-- Running mapping logic here instead of delegating → wrong. This is a thin wrapper only.
+- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
+- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.
