@@ -38,11 +38,12 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
 2. **Compute changed-line set.** Run `git diff --cached --unified=0` (or with base ref), parse hunk headers to build `(file, line)` pairs added or modified. This is the review scope. Findings outside scope are dropped.
 
-3. **Launch both agents in parallel:**
+3. **Launch all three agents in parallel:**
    - Agent `reviewer` — diff only as context. No whole-file reads.
    - Agent `security` — same diff, same constraint.
+   - Agent `architect` — same diff. May Read files the diff touches to resolve coupling context only.
 
-4. **Collect findings.** Parse JSON lines from both agents into one list.
+4. **Collect findings.** Parse JSON lines from all three agents into one list.
 
 5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed.
 
