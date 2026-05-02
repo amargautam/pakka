@@ -177,11 +177,18 @@ func TestRunOutputBaseFormat(t *testing.T) {
 	useFakeRepoKey(t, nil)
 	out := run(t, &hookevent.Event{SessionID: "abc12345xyz", CWD: "/work/x"}, "strict")
 
-	// Run() emits full format: pakka [level] · ↑N (X%) / ↓N (Y%) tokens saved · N bugs caught
-	for _, want := range []string{"pakka", "[strict]", "tokens saved", "bugs caught"} {
+	// Run() emits dollar-savings format: pakka [level] · ~$X.XX saved · N bugs caught
+	for _, want := range []string{"pakka", "[strict]", "~$", "saved", "bugs caught"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}
+	}
+	// Run() must NOT emit token arrows — those belong to Summary() only.
+	if strings.Contains(out, "tokens saved") {
+		t.Errorf("Run() must not emit 'tokens saved' (old format): %q", out)
+	}
+	if strings.Contains(out, "↑") || strings.Contains(out, "↓") {
+		t.Errorf("Run() must not emit token arrows ↑/↓: %q", out)
 	}
 }
 
@@ -199,10 +206,10 @@ func TestOutputPercentRendered(t *testing.T) {
 		{"input_tokens": 0, "output_tokens": 5000},
 	})
 	expected := map[string]int{
-		"lite":        10,
-		"strict":      25,
-		"ultra":       40,
-		"super-ultra": 44,
+		"lite":        27,
+		"strict":      33,
+		"ultra":       55,
+		"super-ultra": 66,
 	}
 	for level, want := range expected {
 		out := summary(t, &hookevent.Event{SessionID: "outPctTst", CWD: "/repo/A"}, level)
@@ -288,7 +295,7 @@ func TestArrowDirectionConventional(t *testing.T) {
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 
-	// Verify ↑ (input saved) appears before ↓ (output volume) in both Run() and Summary().
+	// Summary() uses token-arrow format: verify ↑ (input saved) appears before ↓ (output volume).
 	got := summary(t, &hookevent.Event{SessionID: "arrow001", CWD: "/r"}, "strict")
 	upIdx := strings.Index(got, "↑")
 	downIdx := strings.Index(got, "↓")
@@ -296,12 +303,13 @@ func TestArrowDirectionConventional(t *testing.T) {
 		t.Errorf("expected ↑ before ↓ in Summary: %q (idx %d/%d)", got, upIdx, downIdx)
 	}
 
-	// Run() now also emits full format — verify same arrow ordering.
+	// Run() uses dollar-savings format — token arrows are absent by design.
 	runOut := run(t, &hookevent.Event{SessionID: "arrow001", CWD: "/r"}, "strict")
-	upRun := strings.Index(runOut, "↑")
-	downRun := strings.Index(runOut, "↓")
-	if !(upRun > 0 && upRun < downRun) {
-		t.Errorf("expected ↑ before ↓ in Run(): %q (idx %d/%d)", runOut, upRun, downRun)
+	if strings.Contains(runOut, "↑") || strings.Contains(runOut, "↓") {
+		t.Errorf("Run() must not emit token arrows (dollar format only): %q", runOut)
+	}
+	if !strings.Contains(runOut, "~$") {
+		t.Errorf("Run() must emit dollar-savings '~$' marker: %q", runOut)
 	}
 }
 
@@ -312,21 +320,21 @@ func TestRunAsciiFallback(t *testing.T) {
 	useFakeHome(t, t.TempDir())
 	useFakeRepoKey(t, nil)
 
-	// Run() emits full format. In ASCII locale it must use ASCII glyphs (in /out /|)
-	// and still contain core labels.
+	// Run() emits dollar-savings format. In ASCII locale it uses "|" separator
+	// and still contains core labels.
 	out := run(t, &hookevent.Event{SessionID: "ascii123", CWD: "/r"}, "strict")
-	for _, want := range []string{"pakka", "[strict]", "tokens saved", "bugs caught"} {
+	for _, want := range []string{"pakka", "[strict]", "~$", "saved", "bugs caught"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ascii Run: missing %q in %q", want, out)
 		}
 	}
-	// ASCII locale: UTF-8 arrows must NOT appear in Run() output.
+	// Run() must never emit token arrows regardless of locale.
 	if strings.Contains(out, "↑") || strings.Contains(out, "↓") {
-		t.Errorf("ascii Run: UTF-8 arrows must not appear in non-UTF-8 locale: %q", out)
+		t.Errorf("ascii Run: token arrows must not appear in Run() output: %q", out)
 	}
-	// ASCII glyphs should appear instead.
-	if !strings.Contains(out, "in ") || !strings.Contains(out, "out ") {
-		t.Errorf("ascii Run: expected ASCII 'in '/'out ' glyphs: %q", out)
+	// ASCII locale: Run() uses "|" separator instead of "·".
+	if !strings.Contains(out, "|") {
+		t.Errorf("ascii Run: expected '|' ASCII separator: %q", out)
 	}
 
 	// Summary also uses ASCII glyphs in this locale.
@@ -334,7 +342,7 @@ func TestRunAsciiFallback(t *testing.T) {
 	if strings.Contains(got, "↓") || strings.Contains(got, "↑") {
 		t.Errorf("Summary in ascii locale should not emit UTF-8 arrows: %q", got)
 	}
-	for _, want := range []string{"in 0 (0%)", "out 0 (25%)", "tokens saved"} {
+	for _, want := range []string{"in 0 (0%)", "out 0 (33%)", "tokens saved"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Summary ascii missing %q in %q", want, got)
 		}
@@ -772,7 +780,7 @@ func TestSummaryNoANSI(t *testing.T) {
 	if strings.Contains(got, "\033[") {
 		t.Errorf("Summary should not contain ANSI escapes: %q", got)
 	}
-	for _, want := range []string{"tokens saved", "↑0 (0%)", "↓0 (25%)"} {
+	for _, want := range []string{"tokens saved", "↑0 (0%)", "↓0 (33%)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Summary missing %q: %q", want, got)
 		}
