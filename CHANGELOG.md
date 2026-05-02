@@ -2,6 +2,12 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.2] — 2026-05-02
+
+### Fixed
+
+- `rules/skill-invoke.md` updated to reference new hub commands — was pointing to old individual commands (`/pakka:spec`, `/pakka:tdd`, `/pakka:debug`, etc.); now routes to `/pakka:plan`, `/pakka:build`, `/pakka:review`
+
 ## [v0.2.1] — 2026-05-02
 
 ### Fixed
