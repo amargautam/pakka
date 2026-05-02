@@ -2,6 +2,21 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.1.4] — 2026-05-02
+
+### Fixed
+
+- Added `"version"` field to `plugin.json` — without it, all versions (v0.1.0–v0.1.3) resolved to the same plugin cache directory and updates never applied for existing users
+- `/pakka:compress <level>` fix now actually active — `commands/compress.md` was correctly patched in v0.1.3 but never loaded due to cache invalidation bug above
+
+### Upgrade
+
+Existing users must reinstall manually to pick up this fix:
+```
+/plugin install pakka@pakka-marketplace
+/reload-plugins
+```
+
 ## [v0.1.3] — 2026-05-02
 
 ### Fixed
