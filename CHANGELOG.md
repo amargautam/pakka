@@ -2,6 +2,29 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.2.0] — 2026-05-02
+
+### Added
+
+- `/pakka:plan` — design hub: routes spec / challenge / probe / slice from context, writes to `docs/specs/`, never auto-chains to build
+- `/pakka:build` — implementation hub: routes tdd / debug / map / audit from context, spec approval gate required, verification gate (exit codes) before done
+- `/pakka:setup` — one-time init + guard hook; no arg → init, `guard` → guard hook
+- Hook pre-handling: `/pakka:compress <level>` and `/pakka:help` handled by UserPromptSubmit hook — ~70% latency reduction, no LLM round-trip for config writes
+- Ambient disciplines injected at session start: verification (exit code required before any "done" claim) + skill-check (route to plan/build/review when signal detected)
+- Semantic compression auto-enable by level: `ultra` = on by default (user can opt out), `super-ultra` = enforced
+- Mid-session level switch: full filtered ruleset emitted in `additionalContext` — takes effect immediately without session restart
+
+### Changed
+
+- Default compression level: `super-ultra` (was `ultra`)
+- Command count: 14 → 7 — old commands (spec, challenge, probe, slice, tdd, debug, map, init, guard) redirect to new hubs via alias
+- `main.go` 1625 → 67 lines: extracted into 16 `*_cmd.go` files + `helpers.go` + `command.go` interface
+- `hookevent.go`: `Parse()` removed — callers use `parseStrict` / `parseLenient` in helpers.go
+
+### Fixed
+
+- `resolveOutputLevel` fallback: `'ultra'` → `'super-ultra'` to match new default
+
 ## [v0.1.4] — 2026-05-02
 
 ### Fixed
