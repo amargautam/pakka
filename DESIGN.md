@@ -429,7 +429,7 @@ Thesis: "context waste → token burn + bugs." Compression must target every cha
 **Mechanism:** Pure prompt injection. No LLM calls, no post-processing. Model is instructed to emit fewer tokens per response while preserving all technical substance.
 **Hooks (JS — `hooks/` directory):**
 - `hooks/compress-start.js` (SessionStart) — reads active level from `hooks/compress-config.js`, writes `.pakka-level` flag to `$CLAUDE_CONFIG_DIR`, reads `rules/output-compress.md`, filters to active level (strips other levels' table rows + example lines), emits filtered ruleset as stdout context. Hardcoded fallback if file missing.
-- `hooks/compress-track.js` (UserPromptSubmit) — reads stdin JSON, handles `/pakka:compress <level>` (writes flag) and deactivation phrases (`"pakka verbose"`, `"normal mode"`, deletes flag), then reads flag and emits `hookSpecificOutput.additionalContext` reinforcement every turn. Prevents drift after many turns or context compaction.
+- `hooks/compress-track.js` (UserPromptSubmit) — reads stdin JSON, handles `/pakka:compress <level>` (writes flag) and deactivation phrases (`"pakka verbose"`, `"normal mode"`, deletes flag), then reads flag and emits `hookSpecificOutput.additionalContext` reinforcement every turn. Prevents drift after many turns or context compaction. Also performs **deterministic skill-check**: keyword-scans the user's prompt and, if a signal matches, prepends a targeted alert ("Your message contains 'fix' → /pakka:build MUST fire FIRST") before the compression reinforcement. Generic fallback still fires when no keyword matches.
 - `hooks/compress-config.js` — shared module: `VALID_LEVELS`, `getDefaultLevel` (env `PAKKA_DEFAULT_LEVEL` → `~/.config/pakka/config.json` → `settings.json outputLevel` → `'super-ultra'`), `getSemanticEnabled` (level-based semantic auto-enable), `safeWriteFlag`, `readFlag`, `filterRuleset`.
 
 **Flag file:** `$CLAUDE_CONFIG_DIR/.pakka-level` — written at SessionStart, updated on `/pakka:compress <level>`, deleted on deactivation. Per-turn reinforcement reads this to reflect level switches immediately within a session.
@@ -440,6 +440,16 @@ Thesis: "context waste → token burn + bugs." Compression must target every cha
 ```
 PAKKA COMPRESSION ACTIVE (<level>). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.
 ```
+**Per-turn skill-check (from `compress-track.js`, v0.3.0+):**
+When a keyword in the user's prompt matches a skill signal, prepend a targeted alert to the reinforcement:
+```
+SKILL-CHECK: Your message contains '<keyword>' — /pakka:build MUST be invoked BEFORE your response. No exceptions.
+```
+Keyword → skill mapping:
+- `fix|debug|implement|add|refactor|tdd|test|broken|error|build this|write the code|make it work` → `/pakka:build`
+- `design|spec|plan|approach|architecture|how should we|let's build|we need to|proposal|decompose|slice` → `/pakka:plan`
+- `verify|check|review|done|looks good|ship|finalize|approve|sign off` → `/pakka:review`
+Over-invoking is better than skipping (Rule 2 in skill-check.md). If no keyword matches, generic three-hub reminder remains in reinforcement text.
 **Config:**
 ```
 "pakka": {

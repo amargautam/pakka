@@ -2,6 +2,18 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.3.0] — 2026-05-02
+
+### Added
+- `pakka-core recall`: FTS5 full-text index over audit trail (`~/.pakka/audit/*.jsonl`). `index` subcommand is idempotent; `query <text>` returns top-20 JSON-line results.
+- `/pakka:recall [query]` command: no args shows last 10 entries; with query searches full audit history.
+- `SessionEnd` hook: fires `pakka-core index` — current session entries queryable before next session starts.
+- DB path: `$CLAUDE_PLUGIN_DATA/recall.db` (survives plugin updates), fallback `~/.pakka/recall.db`.
+- Deterministic skill-check in `compress-track.js`: UserPromptSubmit hook keyword-scans every message; if build/plan/review signal detected, fires targeted alert before model responds — no model memory required.
+
+### Changed
+- `hooks/hooks.json`: added `SessionEnd` hook for recall indexing.
+
 ## [v0.2.6] — 2026-05-02
 
 ### Added

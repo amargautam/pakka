@@ -25,7 +25,7 @@ Zero-config. Uses your existing Claude Code auth. No API key required.
 
 <a id="skills"></a>
 
-### 7 commands — context-inferred, discipline-driven
+### 8 commands — context-inferred, discipline-driven
 
 Pakka injects discipline into every session. Commands infer what you need from context — no mode flags, no guessing.
 
@@ -37,6 +37,7 @@ Pakka injects discipline into every session. Commands infer what you need from c
 | `/pakka:triage` | "triage", "look at issue #N", "what needs attention" | Issue queue. Routes bugs and features through classification state machine. Produces agent-ready briefs. |
 | `/pakka:setup` | one-time setup | Detects stack, writes permissions overlay. `setup guard` installs git guard hook. |
 | `/pakka:compress` | — | Compression control. `[lite\|strict\|ultra\|super-ultra\|status]`. Default: `super-ultra`. Hook-handled — instant, no LLM round-trip. |
+| `/pakka:recall [query]` | — | search audit trail across sessions via FTS5 index |
 | `/pakka:help` | — | Show pakka status — active level, gate config, hooks. |
 
 ### Ambient disciplines (always active, no invocation needed)
@@ -52,6 +53,10 @@ Pakka injects discipline into every session. Commands infer what you need from c
 **Deny-by-default permissions:** secrets, destructive git, shell-fetched-then-executed commands blocked at the permission layer.
 
 **Audit trail:** every tool call appended to `~/.pakka/audit/<session>.jsonl`. No dial-home.
+
+**recall:** `/pakka:recall` searches your audit trail. cross-session memory backed by local FTS5 index (SQLite). no remote storage.
+
+**skill-check:** `UserPromptSubmit` hook keyword-scans every message. if a build/plan/review signal matches, targeted alert fires before the model responds. no more relying on model memory.
 
 **Status line:** `pakka [super-ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 2 bugs caught` — compression level, token savings, and bugs caught, always visible.
 
