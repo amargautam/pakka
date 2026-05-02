@@ -250,7 +250,7 @@ user-invocable: true
 ---
 ```
 Body:
-- `lite|strict|ultra|super-ultra` → update `pakka.compress.outputLevel` in session config + emit confirmation. Takes effect on next UserPromptSubmit reinforcement. Default is `ultra` (see memory/DECISIONS.md).
+- `lite|strict|ultra|super-ultra` → update `pakka.compress.outputLevel` in session config + emit confirmation. Takes effect on next UserPromptSubmit reinforcement. Default is `super-ultra` (v0.2.0+, see memory/DECISIONS.md).
 - `restore` → restore all `.original.md` backups, removing compressed versions.
 - `status` → show current compression stats: mode, output level, bytes saved (input), estimated output savings.
 - No argument → same as `status`.
@@ -430,7 +430,7 @@ Thesis: "context waste → token burn + bugs." Compression must target every cha
 **Hooks (JS — `hooks/` directory):**
 - `hooks/compress-start.js` (SessionStart) — reads active level from `hooks/compress-config.js`, writes `.pakka-level` flag to `$CLAUDE_CONFIG_DIR`, reads `rules/output-compress.md`, filters to active level (strips other levels' table rows + example lines), emits filtered ruleset as stdout context. Hardcoded fallback if file missing.
 - `hooks/compress-track.js` (UserPromptSubmit) — reads stdin JSON, handles `/pakka:compress <level>` (writes flag) and deactivation phrases (`"pakka verbose"`, `"normal mode"`, deletes flag), then reads flag and emits `hookSpecificOutput.additionalContext` reinforcement every turn. Prevents drift after many turns or context compaction.
-- `hooks/compress-config.js` — shared module: `VALID_LEVELS`, `getDefaultLevel` (env `PAKKA_DEFAULT_LEVEL` → `~/.config/pakka/config.json` → `settings.json outputLevel` → `'ultra'`), `safeWriteFlag`, `readFlag`, `filterRuleset`.
+- `hooks/compress-config.js` — shared module: `VALID_LEVELS`, `getDefaultLevel` (env `PAKKA_DEFAULT_LEVEL` → `~/.config/pakka/config.json` → `settings.json outputLevel` → `'super-ultra'`), `getSemanticEnabled` (level-based semantic auto-enable), `safeWriteFlag`, `readFlag`, `filterRuleset`.
 
 **Flag file:** `$CLAUDE_CONFIG_DIR/.pakka-level` — written at SessionStart, updated on `/pakka:compress <level>`, deleted on deactivation. Per-turn reinforcement reads this to reflect level switches immediately within a session.
 
@@ -536,7 +536,7 @@ ASCII: pakka [ultra] | in 12.4K (43%) / out 7.1K (33%) tok saved | 2 bugs caught
 ```
 Both absolute saved-token counts AND percentages are shown. Percent alone hides scale — 50% of 200 reads identical to 50% of 200K. Counts humanize via floor truncation: <1000 raw integer, K/M with one decimal (12450 → "12.4K", 1234567 → "1.2M").
 Parts:
-- `[ultra]`: active output compression level (lite/strict/ultra/super-ultra). Default is `ultra` per Pass 4.4 — see memory/DECISIONS.md.
+- `[super-ultra]`: active output compression level (lite/strict/ultra/super-ultra). Default is `super-ultra` (v0.2.0+); was `ultra` per Pass 4.4 — see memory/DECISIONS.md.
 - `↑<abs> (<pct>%)`: input token savings this session (file compression + tool result truncation + subagent return compression). Sum of `tokens_saved_est` from meter entries; pct = saved / cost-weighted input denominator.
 - `↓<abs> (<pct>%)`: output token savings estimate (session output tokens × reduction factor from calibrated baseline). High-value number — output tokens cost 3-5×.
 - `bugs caught`: count of reviewer/security findings with `severity=error` and confidence ≥ threshold this session.

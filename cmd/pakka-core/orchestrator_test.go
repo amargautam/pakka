@@ -36,6 +36,36 @@ func withStubLookPath(t *testing.T, present bool) {
 	}
 }
 
+func boolPtr(b bool) *bool { return &b }
+
+// TestSemanticEnabled is a table-driven guard for the semanticEnabled pure
+// function. Rows are added one at a time (TDD discipline).
+func TestSemanticEnabled(t *testing.T) {
+	cases := []struct {
+		name     string
+		level    string
+		explicit *bool
+		want     bool
+	}{
+		{"super-ultra nil → enforced true", "super-ultra", nil, true},
+		{"super-ultra ptr(false) → still true (enforced)", "super-ultra", boolPtr(false), true},
+		{"ultra nil → default on", "ultra", nil, true},
+		{"ultra ptr(false) → opt-out", "ultra", boolPtr(false), false},
+		{"ultra ptr(true) → explicit on", "ultra", boolPtr(true), true},
+		{"lite nil → false", "lite", nil, false},
+		{"strict nil → false", "strict", nil, false},
+		{"lite ptr(true) → explicit opt-in", "lite", boolPtr(true), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := semanticEnabled(tc.level, tc.explicit)
+			if got != tc.want {
+				t.Errorf("semanticEnabled(%q, %v) = %v; want %v", tc.level, tc.explicit, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestForkOrchestratorReturnsImmediately is a behavioral guard for the
 // SessionStart 50ms budget. forkOrchestrator must construct + spawn the child
 // without blocking on its execution, even when the allowlist would require
@@ -68,11 +98,15 @@ func TestForkOrchestratorReturnsImmediately(t *testing.T) {
 }
 
 // TestOrchestratorEnabledFlag — the SessionStart fork is gated by
-// compress.semantic AND a non-empty target list. Default settings (no plugin
-// settings.json on disk in test) → false.
+// semanticEnabled AND a non-empty target list. At super-ultra (brand default),
+// semantic is enforced (always true). With DefaultTargets non-empty,
+// orchestratorEnabled() returns true by default in test env.
 func TestOrchestratorEnabledFlag(t *testing.T) {
-	if orchestratorEnabled() {
-		t.Errorf("orchestratorEnabled should default to false in test env")
+	// super-ultra is the brand default; semanticEnabled enforces semantic at
+	// super-ultra regardless of settings. DefaultTargets is non-empty, so
+	// orchestratorEnabled() returns true when no settings.json overrides it.
+	if !orchestratorEnabled() {
+		t.Errorf("orchestratorEnabled should default to true in test env (super-ultra enforces semantic)")
 	}
 }
 

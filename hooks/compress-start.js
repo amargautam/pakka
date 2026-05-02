@@ -35,12 +35,22 @@ try {
   content = null;
 }
 
+// Ambient behaviors appended to every non-off ruleset output
+const ambientBehaviors =
+  '\n## Verification discipline\n' +
+  'Before outputting "done", "working", "fixed", "passing", or any completion claim:\n' +
+  'run the relevant command and show the actual exit code. Exit 0 = evidence. "Should work" is not evidence.\n' +
+  '\n## Skill-check discipline\n' +
+  'Before responding to each message: does it call for /pakka:plan (design/spec/probe/challenge/slice), ' +
+  '/pakka:build (TDD/debug/map/audit), or /pakka:review (verify/receive/finish)? ' +
+  'If yes, invoke the command before anything else.\n';
+
 if (content !== null) {
   // filterRuleset: replaces header level marker and strips other-level rows/examples.
   // output-compress.md line 1 IS "PAKKA COMPRESSION ACTIVE — level: <level>"
   // (after the replace inside filterRuleset). Emit directly — no prepend.
   const filtered = filterRuleset(content, level);
-  process.stdout.write(filtered);
+  process.stdout.write(filtered + ambientBehaviors);
 } else {
   // Fallback: hardcoded minimal ruleset
   const fallback =
@@ -52,5 +62,5 @@ if (content !== null) {
     'Pattern: [thing] [action] [reason]. [next step].\n\n' +
     '## Boundaries\n' +
     'Code/commits/PRs/error messages: write normal. Never compress code output.\n';
-  process.stdout.write(fallback);
+  process.stdout.write(fallback + ambientBehaviors);
 }

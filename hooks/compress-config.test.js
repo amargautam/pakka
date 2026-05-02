@@ -46,12 +46,40 @@ const {
   safeWriteFlag,
   readFlag,
   filterRuleset,
+  getSemanticEnabled,
 } = require('./compress-config');
+
+// ===========================================================================
+// getSemanticEnabled
+// ===========================================================================
+test('getSemanticEnabled — ultra, undefined → true (on by default)', () => {
+  assert.equal(getSemanticEnabled('ultra', undefined), true);
+});
+
+test('getSemanticEnabled — ultra, false → false (user opt-out respected)', () => {
+  assert.equal(getSemanticEnabled('ultra', false), false);
+});
+
+test('getSemanticEnabled — super-ultra, undefined → true', () => {
+  assert.equal(getSemanticEnabled('super-ultra', undefined), true);
+});
+
+test('getSemanticEnabled — super-ultra, false → true (enforced, cannot be disabled)', () => {
+  assert.equal(getSemanticEnabled('super-ultra', false), true);
+});
+
+test('getSemanticEnabled — lite, undefined → false', () => {
+  assert.equal(getSemanticEnabled('lite', undefined), false);
+});
+
+test('getSemanticEnabled — lite, true → true (explicit opt-in respected)', () => {
+  assert.equal(getSemanticEnabled('lite', true), true);
+});
 
 // ===========================================================================
 // getDefaultLevel
 // ===========================================================================
-test('getDefaultLevel — no env/config/settings → ultra', () => {
+test('getDefaultLevel — no env/config/settings → super-ultra', () => {
   const tmp = makeTmpDir();
   const restore = saveEnv('PAKKA_DEFAULT_LEVEL', 'CLAUDE_PLUGIN_ROOT', 'HOME');
   try {
@@ -59,7 +87,21 @@ test('getDefaultLevel — no env/config/settings → ultra', () => {
     delete process.env.CLAUDE_PLUGIN_ROOT;
     // Point HOME at empty tmp dir so ~/.config/pakka/config.json doesn't exist
     process.env.HOME = tmp.dir;
-    assert.equal(getDefaultLevel(), 'ultra');
+    assert.equal(getDefaultLevel(), 'super-ultra');
+  } finally {
+    restore();
+    tmp.cleanup();
+  }
+});
+
+test('getDefaultLevel — no env/config/settings → super-ultra (new default)', () => {
+  const tmp = makeTmpDir();
+  const restore = saveEnv('PAKKA_DEFAULT_LEVEL', 'CLAUDE_PLUGIN_ROOT', 'HOME');
+  try {
+    delete process.env.PAKKA_DEFAULT_LEVEL;
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+    process.env.HOME = tmp.dir;
+    assert.equal(getDefaultLevel(), 'super-ultra');
   } finally {
     restore();
     tmp.cleanup();
@@ -76,14 +118,14 @@ test('getDefaultLevel — PAKKA_DEFAULT_LEVEL=lite → lite', () => {
   }
 });
 
-test('getDefaultLevel — PAKKA_DEFAULT_LEVEL=invalid → falls through to ultra', () => {
+test('getDefaultLevel — PAKKA_DEFAULT_LEVEL=invalid → falls through to super-ultra', () => {
   const tmp = makeTmpDir();
   const restore = saveEnv('PAKKA_DEFAULT_LEVEL', 'CLAUDE_PLUGIN_ROOT', 'HOME');
   try {
     process.env.PAKKA_DEFAULT_LEVEL = 'invalid';
     delete process.env.CLAUDE_PLUGIN_ROOT;
     process.env.HOME = tmp.dir;
-    assert.equal(getDefaultLevel(), 'ultra');
+    assert.equal(getDefaultLevel(), 'super-ultra');
   } finally {
     restore();
     tmp.cleanup();
@@ -108,7 +150,7 @@ test('getDefaultLevel — config.json defaultLevel:strict → strict', () => {
   }
 });
 
-test('getDefaultLevel — config.json with invalid defaultLevel → falls through to ultra', () => {
+test('getDefaultLevel — config.json with invalid defaultLevel → falls through to super-ultra', () => {
   const tmp = makeTmpDir();
   const restore = saveEnv('PAKKA_DEFAULT_LEVEL', 'CLAUDE_PLUGIN_ROOT', 'HOME');
   try {
@@ -118,7 +160,7 @@ test('getDefaultLevel — config.json with invalid defaultLevel → falls throug
     const cfgDir = path.join(tmp.dir, '.config', 'pakka');
     fs.mkdirSync(cfgDir, { recursive: true });
     fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({ defaultLevel: 'bogus' }));
-    assert.equal(getDefaultLevel(), 'ultra');
+    assert.equal(getDefaultLevel(), 'super-ultra');
   } finally {
     restore();
     tmp.cleanup();
@@ -141,7 +183,7 @@ test('getDefaultLevel — CLAUDE_PLUGIN_ROOT settings.json outputLevel:lite → 
   }
 });
 
-test('getDefaultLevel — settings.json outputLevel invalid → falls through to ultra', () => {
+test('getDefaultLevel — settings.json outputLevel invalid → falls through to super-ultra', () => {
   const tmp = makeTmpDir();
   const restore = saveEnv('PAKKA_DEFAULT_LEVEL', 'CLAUDE_PLUGIN_ROOT', 'HOME');
   try {
@@ -150,7 +192,7 @@ test('getDefaultLevel — settings.json outputLevel invalid → falls through to
     process.env.CLAUDE_PLUGIN_ROOT = tmp.dir;
     const settings = { pakka: { compress: { outputLevel: 'nope' } } };
     fs.writeFileSync(path.join(tmp.dir, 'settings.json'), JSON.stringify(settings));
-    assert.equal(getDefaultLevel(), 'ultra');
+    assert.equal(getDefaultLevel(), 'super-ultra');
   } finally {
     restore();
     tmp.cleanup();

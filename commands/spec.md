@@ -1,14 +1,5 @@
 ---
-description: Synthesize a PRD from current conversation context and publish it to the issue tracker — spec before code.
-allowed-tools: Read, Write, Bash, Agent
-argument-hint: "[optional: additional context or constraints]"
+description: Alias for /pakka:plan (spec mode). Use /pakka:plan instead.
+allowed-tools: Read
 ---
-
-## Instructions
-
-Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-spec/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
-
-## Red Flags
-
-- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
-- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.
+This command is now part of `/pakka:plan`. Invoke `/pakka:plan` with your feature description to write a spec.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -75,14 +76,24 @@ func TestEmitCommitRewrite_VariesWithInput(t *testing.T) {
 	}
 }
 
-// TestLoadOutputLevel_DefaultsToUltra is the Pass 4.4 regression guard for
-// the brand default. Empty settings, missing-field settings, and garbage
-// values must all collapse to "ultra" — pakka's brand thesis is fewer
-// tokens, and the default reflects it. A future edit that re-introduces
-// "strict" as the silent default will fail this test loudly.
+// TestResolveOutputLevelDefaultSuperUltra asserts the brand default has been
+// changed to super-ultra. When resolveOutputLevel("") returns "ultra" this
+// test will be RED — which is the expected state before Step 2.
+func TestResolveOutputLevelDefaultSuperUltra(t *testing.T) {
+	got := resolveOutputLevel("")
+	if got != "super-ultra" {
+		t.Errorf("resolveOutputLevel(\"\") = %q; want %q (brand default changed to super-ultra)", got, "super-ultra")
+	}
+}
+
+// TestLoadOutputLevel_DefaultsToSuperUltra is the brand-default regression
+// guard. Empty settings, missing-field settings, and garbage values must all
+// collapse to "super-ultra" — pakka's brand thesis is fewer tokens, and the
+// default reflects it. A future edit that silently reintroduces "ultra" or
+// "strict" as the default will fail this test loudly.
 //
-// See memory/DECISIONS.md "Default output level: ultra (decided 2026-04-29)".
-func TestLoadOutputLevel_DefaultsToUltra(t *testing.T) {
+// See memory/DECISIONS.md "Default output level: super-ultra".
+func TestLoadOutputLevel_DefaultsToSuperUltra(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -99,13 +110,17 @@ func TestLoadOutputLevel_DefaultsToUltra(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := resolveOutputLevel(tc.raw)
-			if got != "ultra" {
+			if got != "super-ultra" {
 				t.Errorf("resolveOutputLevel(%q) = %q; want %q (brand default — see DECISIONS.md)",
-					tc.raw, got, "ultra")
+					tc.raw, got, "super-ultra")
 			}
-			// Negative guard: the legacy default must not leak through.
+			// Negative guard: legacy defaults must not leak through.
 			if got == "strict" && tc.raw != "strict" {
-				t.Errorf("resolveOutputLevel(%q) returned legacy default %q; Pass 4.4 flipped it to ultra",
+				t.Errorf("resolveOutputLevel(%q) returned legacy default %q; brand default is now super-ultra",
+					tc.raw, got)
+			}
+			if got == "ultra" && tc.raw != "ultra" {
+				t.Errorf("resolveOutputLevel(%q) returned stale default %q; brand default is now super-ultra",
 					tc.raw, got)
 			}
 		})
@@ -136,15 +151,144 @@ func TestLoadOutputLevel_LegalValuesPassThrough(t *testing.T) {
 // values shipped as if measured).
 func TestLoadOutputLevel_DefaultDiffersFromAllNonDefaults(t *testing.T) {
 	def := resolveOutputLevel("") // empty → default
-	if def != "ultra" {
-		t.Fatalf("empty-input default = %q, expected %q", def, "ultra")
+	if def != "super-ultra" {
+		t.Fatalf("empty-input default = %q, expected %q", def, "super-ultra")
 	}
-	// "lite" and "strict" must produce outputs that differ from the default.
-	for _, other := range []string{"lite", "strict"} {
+	// "lite", "strict", and "ultra" must produce outputs that differ from the default.
+	for _, other := range []string{"lite", "strict", "ultra"} {
 		got := resolveOutputLevel(other)
 		if got == def {
 			t.Errorf("resolveOutputLevel(%q) = %q == default; legal-value branch is collapsing",
 				other, got)
 		}
+	}
+}
+
+// --- cycle 1: parseStrict (hard-fail, used by guard and commit-gate) ---
+
+// TestParseStrictMalformedJSON_ReturnsError — RED until parseStrict is added.
+// Guard/commit-gate must surface parse errors as stderr message + false return.
+func TestParseStrictMalformedJSON_ReturnsError(t *testing.T) {
+	var errBuf bytes.Buffer
+	event, ok := parseStrict(strings.NewReader("{not json"), &errBuf)
+	if ok {
+		t.Fatal("parseStrict with malformed JSON: want ok=false, got ok=true")
+	}
+	if event != nil {
+		t.Errorf("parseStrict malformed: want nil event, got %+v", event)
+	}
+	if !strings.Contains(errBuf.String(), "pakka: malformed hook event") {
+		t.Errorf("parseStrict malformed: stderr should mention 'pakka: malformed hook event', got %q", errBuf.String())
+	}
+}
+
+// TestParseStrictEmptyInput_SilentSkip — empty stdin means the hook is not
+// being invoked for a hook event (e.g. skill direct call). Silent skip: ok=true, event=nil.
+func TestParseStrictEmptyInput_SilentSkip(t *testing.T) {
+	var errBuf bytes.Buffer
+	event, ok := parseStrict(strings.NewReader(""), &errBuf)
+	if !ok {
+		t.Fatalf("parseStrict empty: want ok=true (silent skip), got ok=false; stderr=%q", errBuf.String())
+	}
+	if event != nil {
+		t.Errorf("parseStrict empty: want nil event, got %+v", event)
+	}
+	if errBuf.Len() != 0 {
+		t.Errorf("parseStrict empty: want no stderr, got %q", errBuf.String())
+	}
+}
+
+// TestParseStrictValidJSON_ReturnsEvent — happy path.
+func TestParseStrictValidJSON_ReturnsEvent(t *testing.T) {
+	var errBuf bytes.Buffer
+	input := `{"session_id":"abc123","hook_event_name":"PreToolUse","tool_name":"Bash"}`
+	event, ok := parseStrict(strings.NewReader(input), &errBuf)
+	if !ok {
+		t.Fatalf("parseStrict valid: want ok=true, got false; stderr=%q", errBuf.String())
+	}
+	if event == nil {
+		t.Fatal("parseStrict valid: want non-nil event, got nil")
+	}
+	if event.SessionID != "abc123" {
+		t.Errorf("parseStrict: session_id=%q want %q", event.SessionID, "abc123")
+	}
+	if event.ToolName != "Bash" {
+		t.Errorf("parseStrict: tool_name=%q want %q", event.ToolName, "Bash")
+	}
+}
+
+// TestParseStrictVariesWithInput — behavioral guard: two different inputs must
+// produce distinguishably different results.
+func TestParseStrictVariesWithInput(t *testing.T) {
+	var e1Buf, e2Buf bytes.Buffer
+	e1, ok1 := parseStrict(strings.NewReader(`{"session_id":"A","tool_name":"Read"}`), &e1Buf)
+	e2, ok2 := parseStrict(strings.NewReader(`{"session_id":"B","tool_name":"Bash"}`), &e2Buf)
+	if !ok1 || !ok2 {
+		t.Fatalf("parseStrict vary: both valid inputs must succeed (ok1=%v ok2=%v)", ok1, ok2)
+	}
+	if e1.SessionID == e2.SessionID {
+		t.Errorf("parseStrict vary: session_id must differ; both=%q", e1.SessionID)
+	}
+	if e1.ToolName == e2.ToolName {
+		t.Errorf("parseStrict vary: tool_name must differ; both=%q", e1.ToolName)
+	}
+}
+
+// --- cycle 2: parseLenient (silent fallback, used by meter/audit/statusline/compress) ---
+
+// TestParseLenientMalformedJSON_FallbackEvent — silent callers must get a
+// fallback event (not nil) with a generated SessionID on bad JSON.
+func TestParseLenientMalformedJSON_FallbackEvent(t *testing.T) {
+	event := parseLenient(strings.NewReader("{not json"))
+	if event == nil {
+		t.Fatal("parseLenient malformed: want non-nil fallback event, got nil")
+	}
+	if event.SessionID == "" {
+		t.Error("parseLenient malformed: SessionID should be non-empty (fallback)")
+	}
+	if !strings.HasPrefix(event.SessionID, "sess-") {
+		t.Errorf("parseLenient malformed: fallback SessionID should start with sess-, got %q", event.SessionID)
+	}
+}
+
+// TestParseLenientEmptyInput_FallbackEvent — empty stdin must still return
+// a usable fallback event (not nil).
+func TestParseLenientEmptyInput_FallbackEvent(t *testing.T) {
+	event := parseLenient(strings.NewReader(""))
+	if event == nil {
+		t.Fatal("parseLenient empty: want non-nil fallback event, got nil")
+	}
+	if event.SessionID == "" {
+		t.Error("parseLenient empty: SessionID should be non-empty (fallback)")
+	}
+}
+
+// TestParseLenientValidJSON_ReturnsEvent — happy path, field values preserved.
+func TestParseLenientValidJSON_ReturnsEvent(t *testing.T) {
+	input := `{"session_id":"sid99","hook_event_name":"Stop","cwd":"/work/proj"}`
+	event := parseLenient(strings.NewReader(input))
+	if event == nil {
+		t.Fatal("parseLenient valid: want non-nil event, got nil")
+	}
+	if event.SessionID != "sid99" {
+		t.Errorf("parseLenient: session_id=%q want %q", event.SessionID, "sid99")
+	}
+	if event.CWD != "/work/proj" {
+		t.Errorf("parseLenient: cwd=%q want %q", event.CWD, "/work/proj")
+	}
+}
+
+// TestParseLenientVariesWithInput — behavioral guard.
+func TestParseLenientVariesWithInput(t *testing.T) {
+	e1 := parseLenient(strings.NewReader(`{"session_id":"X","cwd":"/a"}`))
+	e2 := parseLenient(strings.NewReader(`{"session_id":"Y","cwd":"/b"}`))
+	if e1 == nil || e2 == nil {
+		t.Fatal("parseLenient vary: both must return non-nil")
+	}
+	if e1.SessionID == e2.SessionID {
+		t.Errorf("parseLenient vary: session_id must differ; both=%q", e1.SessionID)
+	}
+	if e1.CWD == e2.CWD {
+		t.Errorf("parseLenient vary: cwd must differ; e1=%q e2=%q", e1.CWD, e2.CWD)
 	}
 }

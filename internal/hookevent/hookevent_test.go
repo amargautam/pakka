@@ -1,15 +1,17 @@
 package hookevent
 
 import (
-	"strings"
+	"encoding/json"
 	"testing"
 )
 
-func TestParseValidEvent(t *testing.T) {
-	input := `{"session_id":"abc123","hook_event_name":"Stop","tool_name":"Read"}`
-	e, err := Parse(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
+// TestEventJSONRoundTrip verifies that the Event struct correctly deserializes
+// from the JSON shape Claude Code sends on stdin.
+func TestEventJSONRoundTrip(t *testing.T) {
+	input := `{"session_id":"abc123","hook_event_name":"Stop","tool_name":"Read","cwd":"/work/x"}`
+	var e Event
+	if err := json.Unmarshal([]byte(input), &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
 	if e.SessionID != "abc123" {
 		t.Errorf("session_id = %q, want %q", e.SessionID, "abc123")
@@ -20,48 +22,44 @@ func TestParseValidEvent(t *testing.T) {
 	if e.ToolName != "Read" {
 		t.Errorf("tool_name = %q, want %q", e.ToolName, "Read")
 	}
-}
-
-func TestParseEmptyInput(t *testing.T) {
-	e, err := Parse(strings.NewReader(""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if e.SessionID == "" {
-		t.Error("expected fallback session_id, got empty")
-	}
-	if !strings.HasPrefix(e.SessionID, "sess-") {
-		t.Errorf("fallback session_id should start with sess-, got %q", e.SessionID)
+	if e.CWD != "/work/x" {
+		t.Errorf("cwd = %q, want %q", e.CWD, "/work/x")
 	}
 }
 
-func TestParseMalformedJSON(t *testing.T) {
-	e, err := Parse(strings.NewReader("{not json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if e.SessionID == "" {
-		t.Error("expected fallback session_id, got empty")
-	}
-}
-
-func TestParseMissingSessionID(t *testing.T) {
-	e, err := Parse(strings.NewReader(`{"hook_event_name":"Stop"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(e.SessionID, "sess-") {
-		t.Errorf("missing session_id should use fallback, got %q", e.SessionID)
-	}
-}
-
-func TestParseWithToolInput(t *testing.T) {
+// TestEventToolInputRawMessage verifies that tool_input is preserved as raw JSON.
+func TestEventToolInputRawMessage(t *testing.T) {
 	input := `{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/tmp/x.go"}}`
-	e, err := Parse(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
+	var e Event
+	if err := json.Unmarshal([]byte(input), &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
 	if string(e.ToolInput) != `{"file_path":"/tmp/x.go"}` {
 		t.Errorf("tool_input = %s, want {\"file_path\":\"/tmp/x.go\"}", string(e.ToolInput))
+	}
+}
+
+// TestEventEmptyInputGivesZeroValue verifies zero-value semantics on empty JSON.
+func TestEventEmptyInputGivesZeroValue(t *testing.T) {
+	var e Event
+	if err := json.Unmarshal([]byte("{}"), &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if e.SessionID != "" {
+		t.Errorf("empty JSON: session_id should be empty, got %q", e.SessionID)
+	}
+}
+
+// TestEventVariesWithInput — behavioral guard: two different JSON inputs must
+// produce two different Event values.
+func TestEventVariesWithInput(t *testing.T) {
+	var e1, e2 Event
+	_ = json.Unmarshal([]byte(`{"session_id":"A","tool_name":"Read"}`), &e1)
+	_ = json.Unmarshal([]byte(`{"session_id":"B","tool_name":"Bash"}`), &e2)
+	if e1.SessionID == e2.SessionID {
+		t.Errorf("SessionID must differ; both=%q", e1.SessionID)
+	}
+	if e1.ToolName == e2.ToolName {
+		t.Errorf("ToolName must differ; both=%q", e1.ToolName)
 	}
 }

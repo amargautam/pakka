@@ -1,14 +1,5 @@
 ---
-description: Break a plan into independent vertical slices and publish them as issues — each slice complete end-to-end.
-allowed-tools: Read, Write, Bash, Agent
-argument-hint: "[issue number, URL, or plan description]"
+description: Alias for /pakka:plan (slice mode). Use /pakka:plan instead.
+allowed-tools: Read
 ---
-
-## Instructions
-
-Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-slice/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
-
-## Red Flags
-
-- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
-- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.
+This command is now part of `/pakka:plan`. Say "break this into tickets" or "slice this" to trigger slice mode.

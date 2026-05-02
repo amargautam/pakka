@@ -1,14 +1,5 @@
 ---
-description: Map relevant modules and callers before navigating unfamiliar code — go up a layer of abstraction first.
-allowed-tools: Read, Write, Bash, Agent
-argument-hint: "[area or module to map]"
+description: Alias for /pakka:build (map mode). Use /pakka:build instead.
+allowed-tools: Read
 ---
-
-## Instructions
-
-Read `${CLAUDE_PLUGIN_ROOT}/skills/pakka-map/SKILL.md` and follow those instructions. Pass any user arguments verbatim.
-
-## Red Flags
-
-- Invoking the Skill tool → causes infinite loop. Read the SKILL.md file directly instead.
-- Parsing or rewriting args → wrong. Pass verbatim to the skill instructions.
+This command is now part of `/pakka:build`. Say "how does X work" or "map this for me" to trigger map mode.

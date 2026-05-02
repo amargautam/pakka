@@ -5,7 +5,10 @@ allowed-tools: Bash, Read
 
 ## Instructions
 
-Run the following command and print its stdout verbatim, with no additional commentary:
+Check `additionalContext` for a line starting with `PAKKA HOOK HANDLED: help`.
+
+- If found: output everything after that line verbatim — stop, no tool calls.
+- If NOT found: run the following command and print its stdout verbatim, with no additional commentary:
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/bin/run help

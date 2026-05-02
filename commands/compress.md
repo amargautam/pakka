@@ -6,7 +6,18 @@ argument-hint: "[lite|strict|ultra|super-ultra|restore|status]"
 
 ## Instructions
 
-### Determine action from argument
+### Hook pre-handling (check first, always)
+
+The UserPromptSubmit hook runs before this command and handles level switches, status, and help directly — no tool calls needed on your part.
+
+Check `additionalContext` for a line starting with `PAKKA HOOK HANDLED:`.
+
+- If found for `compress level set to <level>`: output exactly "Output compression set to <level>. Active now." — stop, no tool calls.
+- If found for `compress status`: output the pre-computed table verbatim — stop, no tool calls.
+- If found for `compress off`: output exactly "Output compression turned off." — stop, no tool calls.
+- If NOT found: the hook did not run (e.g. direct invocation) — proceed with the steps below.
+
+### Determine action from argument (only if hook did not pre-handle)
 
 - `lite` | `strict` | `ultra` | `super-ultra` → switch output compression level (see below).
 - `restore` → restore all `.original.md` backups.
@@ -22,8 +33,11 @@ argument-hint: "[lite|strict|ultra|super-ultra|restore|status]"
 5. Write the validated level string to the flag file for immediate per-turn effect:
    - Path: `${CLAUDE_CONFIG_DIR}/.pakka-level` if `$CLAUDE_CONFIG_DIR` is set, else `~/.claude/.pakka-level`.
    - Overwrite atomically (write to `.pakka-level.tmp`, rename). Mode 0600.
-6. Only if `pakka.compress.semantic` is `true` in `${CLAUDE_PLUGIN_ROOT}/settings.json`:
-   run `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=<validated-level>`.
+6. Determine whether semantic orchestration runs using this logic:
+   - `super-ultra` → always run (enforced, cannot be disabled)
+   - `ultra` → run unless `pakka.compress.semantic` is explicitly `false` in `${CLAUDE_PLUGIN_ROOT}/settings.json`
+   - `lite` | `strict` → only run if `pakka.compress.semantic` is explicitly `true`
+   If semantic should run: `${CLAUDE_PLUGIN_ROOT}/bin/run compress --orchestrator-run --level=<validated-level>`.
    Never pass the raw user argument without prior allowlist validation.
 7. Confirm: "Output compression set to [level]. Active now."
 
@@ -39,7 +53,7 @@ Level effects:
 2. Find the most recent meter file: `ls -t ~/.pakka/meter/*.jsonl 2>/dev/null | head -1` and read it for bytes saved.
 3. Report:
    - Output level: `lite` | `strict` | `ultra` | `super-ultra`
-   - Semantic mode: `on` | `off`
+   - Semantic mode: `on` | `off` (derived: super-ultra=always on, ultra=on unless explicit false, lite/strict=off unless explicit true)
    - Input bytes saved this session
    - Estimated input tokens saved (bytes_saved / 3.5)
 

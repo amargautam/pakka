@@ -25,31 +25,25 @@ Zero-config. Uses your existing Claude Code auth. No API key required.
 
 <a id="skills"></a>
 
-### 10 engineering skills — auto-invoked by trigger phrase
+### 7 commands — context-inferred, discipline-driven
 
-Skills encode best practices. Pakka injects them into the session — Claude invokes automatically when it recognises the trigger. Call explicitly any time with `/pakka:<skill>`.
+Pakka injects discipline into every session. Commands infer what you need from context — no mode flags, no guessing.
 
-| Command | Triggers automatically when you say… | What it does |
+| Command | Infers from | What it does |
 |---|---|---|
-| `/pakka:spec` | "build X", "implement X", "add feature" | Spec before code. Synthesizes PRD from conversation, publishes to issue tracker. Hard rule: runs before any implementation. |
-| `/pakka:debug` | "debug", "fix this bug", "broken", "failing" | Builds a deterministic fail/pass feedback loop first. Reproduce → hypothesize → instrument → fix → regression test. |
-| `/pakka:tdd` | "write tests", "TDD", "test first" | One failing test → minimal code → repeat. Vertical slices only. Tests verify behavior through public interfaces. |
-| `/pakka:audit-code-arch` | "architecture", "coupling", "hard to test", "refactor" | Finds modules where the interface costs as much to learn as the implementation. Proposes targeted refactors. |
-| `/pakka:challenge` | "challenge this", "stress test my plan", "poke holes" | Cross-examines a plan against project docs and domain vocabulary. Updates CONTEXT.md inline as decisions harden. |
-| `/pakka:probe` | "probe me", "question my design", "what am I missing" | One question at a time — each with a recommended answer — until every design branch is resolved. |
-| `/pakka:map` | "how does X work", "explain this module", "I don't know this code" | Maps all relevant modules and callers before navigating. Context cost: one view, not ten files. |
-| `/pakka:triage` | "triage", "look at issue #N", "what needs attention" | Routes bugs and feature requests through a classification state machine. Produces agent-ready briefs. |
-| `/pakka:slice` | "break into tickets", "create issues", "slice this" | Decomposes a plan into thin vertical slices — each end-to-end, independently runnable — and publishes as issues. |
-| `/pakka:guard` | "protect git", "block force push" | Wires a PreToolUse hook that blocks force-push, hard-reset, and branch deletion before Claude executes them. |
+| `/pakka:plan` | "build X", "design", "challenge this", "probe me", "break into tickets" | Design hub. Writes spec to `docs/specs/`. Routes to spec · challenge · probe · slice based on context. Never auto-chains to build. |
+| `/pakka:build` | "implement", "write tests", "broken", "how does X work", "hard to test" | Implementation hub. Checks for spec approval first. Routes to TDD · debug · map · audit based on context. Blocks completion claims without exit-code evidence. |
+| `/pakka:review` | "done?", "ship?", "they said...", "merge?" | Quality hub. Verifies first (exit codes), then runs reviewer + security agents. Handles incoming feedback and branch landing. |
+| `/pakka:triage` | "triage", "look at issue #N", "what needs attention" | Issue queue. Routes bugs and features through classification state machine. Produces agent-ready briefs. |
+| `/pakka:setup` | one-time setup | Detects stack, writes permissions overlay. `setup guard` installs git guard hook. |
+| `/pakka:compress` | — | Compression control. `[lite\|strict\|ultra\|super-ultra\|status]`. Default: `super-ultra`. Hook-handled — instant, no LLM round-trip. |
+| `/pakka:help` | — | Show pakka status — active level, gate config, hooks. |
 
-### Core harness
+### Ambient disciplines (always active, no invocation needed)
 
-| Command | What it does |
-|---|---|
-| `/pakka:review` | Run reviewer + security agents on staged diff in parallel. Confidence ≥ 80 to surface. `[--base=<ref>]` `[--install-hook]`. |
-| `/pakka:init` | One-time setup. Detect stack, write permissions overlay, verify hooks. `[--force]`. |
-| `/pakka:compress` | Switch output compression level. `[lite|strict|ultra|super-ultra|restore|status]`. Default: `ultra`. |
-| `/pakka:help` | Show pakka status — what's on, what you can run. |
+**Verification:** before any "done", "working", "passing" claim — pakka requires actual exit-code evidence. Injected at session start.
+
+**Skill-check:** before each response — pakka checks whether the message calls for `/pakka:plan`, `/pakka:build`, or `/pakka:review`. Catches cases that explicit invocation misses.
 
 **4-vector compression:** output tokens · input context · tool results · subagent returns — all compressed independently.
 
@@ -59,7 +53,7 @@ Skills encode best practices. Pakka injects them into the session — Claude inv
 
 **Audit trail:** every tool call appended to `~/.pakka/audit/<session>.jsonl`. No dial-home.
 
-**Status line:** `pakka [ultra]` — active compression level, always visible.
+**Status line:** `pakka [super-ultra]` — active compression level, always visible.
 
 ## Results (v0.1.0)
 

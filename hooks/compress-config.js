@@ -52,7 +52,7 @@ function getDefaultLevel() {
   }
 
   // 4. Brand default
-  return 'ultra';
+  return 'super-ultra';
 }
 
 // safeWriteFlag writes content to flagPath atomically with 0600 permissions.
@@ -116,4 +116,14 @@ function filterRuleset(content, level) {
     .join('\n');
 }
 
-module.exports = { VALID_LEVELS, getDefaultLevel, safeWriteFlag, readFlag, filterRuleset };
+// getSemanticEnabled returns whether semantic compression is enabled.
+// 'super-ultra' always enforces it; 'ultra' defaults on but respects opt-out;
+// other levels default off but respect explicit opt-in.
+function getSemanticEnabled(level, explicitSetting) {
+  if (level === 'super-ultra') return true;
+  if (explicitSetting === true) return true;
+  if (level === 'ultra' && explicitSetting === undefined) return true;
+  return false;
+}
+
+module.exports = { VALID_LEVELS, getDefaultLevel, safeWriteFlag, readFlag, filterRuleset, getSemanticEnabled };

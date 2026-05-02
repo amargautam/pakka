@@ -16,6 +16,30 @@ import (
 	"github.com/amargautam/pakka/internal/meter"
 )
 
+// semanticEnabled returns whether semantic orchestration should run for the
+// given level and explicit user setting.
+//
+// Rules:
+//   - "super-ultra": always true — enforced, cannot be disabled
+//   - "ultra": true unless explicitly disabled (explicit == false pointer)
+//   - "lite", "strict", or unknown: false unless explicitly enabled
+func semanticEnabled(level string, explicit *bool) bool {
+	switch level {
+	case "super-ultra":
+		return true // enforced — cannot be disabled
+	case "ultra":
+		if explicit != nil && !*explicit {
+			return false // opt-out
+		}
+		return true // default on
+	default:
+		if explicit != nil && *explicit {
+			return true // explicit opt-in
+		}
+		return false
+	}
+}
+
 // lookPath wraps exec.LookPath so tests can stub PATH resolution without
 // mutating $PATH (which would race other parallel tests).
 var lookPath = exec.LookPath
@@ -41,12 +65,13 @@ func orchestratorTargets() []string {
 }
 
 // orchestratorEnabled returns whether the SessionStart auto-orchestrator is
-// allowed to run. It requires (a) compress.semantic=true in settings AND
+// allowed to run. It requires (a) semanticEnabled check passes AND
 // (b) at least one target. Auth (claude CLI or ANTHROPIC_API_KEY) is checked
 // later in resolveRewriter — the orchestrator silently no-ops without one.
 func orchestratorEnabled() bool {
 	s := loadSettings()
-	if s.Pakka.Compress.Semantic == nil || !*s.Pakka.Compress.Semantic {
+	level := loadOutputLevel()
+	if !semanticEnabled(level, s.Pakka.Compress.Semantic) {
 		return false
 	}
 	if len(orchestratorTargets()) == 0 {

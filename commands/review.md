@@ -1,70 +1,108 @@
 ---
-description: Run reviewer + security in parallel on staged diff, filter by confidence, print grouped verdicts.
+description: Quality gate hub — verify, review, receive feedback, or finish branch. Infers mode from context.
 allowed-tools: Agent, Bash, Read
-argument-hint: "[--base=<ref>] [--install-hook]"
+argument-hint: "[--base=<ref>] [--install-hook] [--receive] [--finish]"
 ---
 
 ## Instructions
 
-### Handle `--install-hook`
+### Hook pre-handling
 
-If the user's argument contains `--install-hook`, run:
-```
-${CLAUDE_PLUGIN_ROOT}/bin/run install-git-hook
-```
-Print the result and stop. Do not run a review.
+Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim and stop.
 
-Note: Optional. Installs a prepare-commit-msg git hook so human-authored commits (typed in a terminal) also get the trailer. Claude Code commits are auto-signed via the plugin; no hook install needed.
+---
 
-### Run review
+### 1. Infer mode from context
 
-1. **Get the diff.** If `--base=<ref>` is provided, use `git diff <ref>...HEAD`.
-   Otherwise, use `git diff --cached`. If the diff is empty, say so and exit.
+| Signal | Mode |
+|--------|------|
+| No signal, "done?", "ship?", "PR?", "ready to merge?" | **verify → review** (verification first, then code review) |
+| "they said", "feedback says", "reviewer commented", "they want me to" | **receive** — handle incoming review feedback |
+| "merge?", "land this?", "finish branch?", "close this out?" | **finish** — structured branch landing |
+| `--install-hook` in args | install prepare-commit-msg hook, stop |
 
-2. **Compute the changed-line set.** Get the same range with `--unified=0`
-   (e.g. `git diff --cached --unified=0`) and parse hunk headers to build the
-   set of `(file, line)` pairs that are added or modified in the post-image.
-   This is the **review scope**. Any finding whose `(file, line)` is not in
-   this set will be dropped before the verdict — pre-existing code is not in
-   scope.
+---
 
-3. **Launch both agents in parallel** using the Agent tool:
-   - Agent `reviewer` — pass **only the diff** as context. Do not attach whole-file contents. Do not invite the agent to `Read` unrelated files.
-   - Agent `security` — pass the same diff under the same constraint.
+### Mode: verify → review
 
-4. **Collect findings.** Each agent returns JSON lines. Parse all lines from both agents into a single list.
+**Verification gate (mandatory, runs before review):**
 
-5. **Write full log (pre-filter).** Write **every** parsed finding —
-   pre-confidence-filter, pre-scope-filter — to
-   `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create the directory if
-   needed. The audit trail keeps the unfiltered set for debugging false
-   positives.
+1. Run the relevant test/lint/build command for the current project
+2. Show actual exit code and output
+3. If exit code ≠ 0: stop — do not review broken code. Fix first.
+4. Only if exit code = 0: proceed to code review
 
-6. **Filter by confidence.** Drop any finding where `confidence < 80` (or the value of `pakka.review.confidenceThreshold` from settings). Drop any finding missing a `line` field.
+**Code review (runs after verification passes):**
 
-7. **Filter by scope.** Drop any finding whose `(file, line)` is not in the
-   changed-line set computed in step 2. Findings on context lines, deleted
-   lines, or unstaged files must not survive this filter.
+1. **Get the diff.** If `--base=<ref>` provided: `git diff <ref>...HEAD`. Otherwise: `git diff --cached`. Empty diff → say so and exit.
 
-8. **Group by file.** Sort surviving findings by file path, then by line number.
+2. **Compute changed-line set.** Run `git diff --cached --unified=0` (or with base ref), parse hunk headers to build `(file, line)` pairs added or modified. This is the review scope. Findings outside scope are dropped.
 
-9. **Print verdicts.** For each surviving finding, print one line:
+3. **Launch both agents in parallel:**
+   - Agent `reviewer` — diff only as context. No whole-file reads.
+   - Agent `security` — same diff, same constraint.
+
+4. **Collect findings.** Parse JSON lines from both agents into one list.
+
+5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed.
+
+6. **Filter by confidence.** Drop findings where `confidence < 80` (or `pakka.review.confidenceThreshold`). Drop findings missing `line` field.
+
+7. **Filter by scope.** Drop findings whose `(file, line)` is not in the changed-line set.
+
+8. **Group and print.** Sort by file + line. Print:
    ```
    [severity] file:line — rationale (confidence%)
      fix: proposed fix
    ```
 
-10. **Determine pass/fail.**
-    - If any surviving finding has `severity=error` → **FAIL**. Print `VERDICT: FAIL — N error(s) above threshold`. Exit with code 2.
-    - Otherwise → **PASS**. Print `VERDICT: PASS`. Write the current Unix timestamp to `.pakka/reviews/last-pass-ts`.
+9. **Verdict.**
+   - Any `severity=error` → `VERDICT: FAIL — N error(s) above threshold`. Exit 2.
+   - Otherwise → `VERDICT: PASS`. Write timestamp to `.pakka/reviews/last-pass-ts`.
 
-### Red Flags
+---
 
-- Running review on an empty diff → warn and exit, don't fabricate findings.
-- Reporting agent parse errors as review failures → log the error but don't block the commit.
-- Showing findings below the confidence threshold → never. Filter first, display second.
-- Lowering the threshold to catch more issues without recalibrating → unsafe. Threshold exists for a reason.
-- Reporting findings on lines the diff did not touch → never. Pre-existing
-  code is out of scope. The scope filter (step 7) is mandatory; do not skip
-  it even if the agents claim a finding is "important context."
-- Letting agents read whole files for context → no. Diff-only input keeps findings anchored to the change. The line-set filter is the safety net regardless.
+### Mode: receive
+
+Handle incoming code review feedback with technical rigor.
+
+1. Read all feedback before responding to any of it
+2. For each item: assess technically — is the finding correct?
+3. If correct: acknowledge and fix. No performative agreement — just fix it.
+4. If incorrect or contradicts an established decision: push back with evidence. Cite the relevant code, test, or `memory/DECISIONS.md` entry.
+5. If ambiguous: ask one clarifying question. Do not implement until clear.
+
+Do not agree with feedback that is wrong just to be agreeable. Technical accuracy over social smoothness.
+
+---
+
+### Mode: finish
+
+Structured branch landing. Four options:
+
+1. **Merge locally** — merge into main/master now. Requires clean diff + passing tests.
+2. **Push + PR** — push branch, open pull request. Use `gh pr create`.
+3. **Keep branch** — not ready to land. Document why in a comment.
+4. **Discard** — abandon work on this branch. Confirm with user before any destructive action.
+
+Present all four options. User picks. Do not default.
+
+Before any merge or push: run verification gate (same as verify→review mode). Never land broken code.
+
+---
+
+### Handle `--install-hook`
+
+Run `${CLAUDE_PLUGIN_ROOT}/bin/run install-git-hook`. Print result. Stop.
+
+---
+
+## Red Flags
+
+- Skipping verification before review → wrong. Always verify first.
+- Claiming "done" or "passing" without running the tests → wrong. Exit code is the evidence.
+- Reviewing an empty diff → warn and exit, don't fabricate findings.
+- Showing findings below confidence threshold → never.
+- Findings on lines the diff did not touch → never. Scope filter is mandatory.
+- Agreeing with incoming feedback that is technically wrong → wrong. Push back with evidence.
+- Auto-merging or auto-pushing without user's explicit choice → wrong. Always present the four options.
