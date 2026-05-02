@@ -2,6 +2,13 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.1.2] — 2026-05-02
+
+### Fixed
+
+- `/pakka:compress <level>` now writes to `~/.config/pakka/config.json` (`defaultLevel`) and `~/.claude/.pakka-level` flag file — persists across plugin reinstalls and takes effect immediately in current session
+- Skip `--orchestrator-run` binary invocation when `semantic: false` — eliminates latency on every level switch
+
 ## [v0.1.1] — 2026-05-02
 
 ### Fixed
