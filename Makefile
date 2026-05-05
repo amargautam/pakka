@@ -41,7 +41,7 @@ bench:
 
 self-report:
 	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') report \
-		--format=md > RECEIPTS.md
+		--format=md --repo-root=.. > RECEIPTS.md
 	@echo "RECEIPTS.md generated."
 
 clean:

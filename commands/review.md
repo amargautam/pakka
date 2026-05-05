@@ -36,20 +36,27 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
 1. **Get the diff.** If `--base=<ref>` provided: `git diff <ref>...HEAD`. Otherwise: `git diff --cached`. Empty diff → say so and exit.
 
-2. **Compute changed-line set.** Run `git diff --cached --unified=0` (or with base ref), parse hunk headers to build `(file, line)` pairs added or modified. This is the review scope. Findings outside scope are dropped.
+2. **Compute changed-line set.** Run `git diff --cached --unified=0` (or with base ref), parse hunk headers to build `(file, line)` pairs added or modified. This is the review scope. Findings outside scope are dropped (except `spec-divergence` — see step 7).
 
-3. **Launch all three agents in parallel:**
-   - Agent `reviewer` — diff only as context. No whole-file reads.
-   - Agent `security` — same diff, same constraint.
-   - Agent `architect` — same diff. May Read files the diff touches to resolve coupling context only.
+2a. **Discover spec.** If `--spec <file>` was passed, use it directly as SPEC_FILE. Otherwise:
+   - If `--base=<ref>` provided: `CHANGED=$(git diff <ref>...HEAD --name-only | paste -sd, -)` else `CHANGED=$(git diff --cached --name-only | paste -sd, -)`
+   - Run: `SPEC_FILE=$(${CLAUDE_PLUGIN_ROOT}/bin/run spec-find --branch "$(git branch --show-current)" --changed "$CHANGED")`
+   - If `docs/specs/` does not exist → SPEC_FILE is empty, no advisory.
+   - If `docs/specs/` exists and SPEC_FILE is empty → set ADVISORY=true.
+   - If SPEC_FILE is non-empty → read file contents into SPEC_CONTENT.
+
+3. **Launch all three agents in parallel.** Pass diff as context. If SPEC_CONTENT is set, append it as a `## Spec context` block in each agent's prompt.
+   - Agent `reviewer` — no whole-file reads.
+   - Agent `security` — no whole-file reads.
+   - Agent `architect` — may Read files the diff touches for coupling context only.
 
 4. **Collect findings.** Parse JSON lines from all three agents into one list.
 
 5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed.
 
-6. **Filter by confidence.** Drop findings where `confidence < 80` (or `pakka.review.confidenceThreshold`). Drop findings missing `line` field.
+6. **Filter by confidence.** Drop findings where `confidence < 80` (or `pakka.review.confidenceThreshold`). Drop findings missing `line` field. Exception: `kind=spec-divergence` findings are never dropped by confidence filter.
 
-7. **Filter by scope.** Drop findings whose `(file, line)` is not in the changed-line set.
+7. **Filter by scope.** Drop findings whose `(file, line)` is not in the changed-line set. Exception: `kind=spec-divergence` findings are exempt from scope filtering.
 
 8. **Group and print.** Sort by file + line. Print:
    ```
@@ -58,6 +65,7 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
    ```
 
 9. **Verdict.**
+   - If ADVISORY=true → append: `note: no matching spec found in docs/specs/ — review ran without spec context. Run /pakka:plan to write one.`
    - Any `severity=error` → `VERDICT: FAIL — N error(s) above threshold`. Exit 2.
    - Otherwise → `VERDICT: PASS`. Write timestamp to `.pakka/reviews/last-pass-ts`.
 

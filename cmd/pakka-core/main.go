@@ -57,6 +57,8 @@ func main() {
 		_ = (&IndexCmd{}).Run(os.Args[2:])
 	case "query":
 		_ = (&QueryCmd{}).Run(os.Args[2:])
+	case "spec-find":
+		_ = (&SpecFindCmd{}).Run(os.Args[2:])
 	case "output-rules":
 		_ = (&OutputRulesCmd{}).Run(os.Args[2:])
 	case "output-reinforce":

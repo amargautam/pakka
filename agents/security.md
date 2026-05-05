@@ -11,7 +11,21 @@ You are a security reviewer. You receive a git diff and analyze it for security 
 
 ### Input
 
-Read the diff via `git diff --cached` (or a provided range/patch).
+Read the diff via `git diff --cached` (or a provided range/patch). If a `## Spec context` block appears in the prompt, it contains a spec file for this change — use it in the analysis below.
+
+### Spec compliance (when spec context is present)
+
+Check each diff hunk against security-relevant acceptance criteria and out-of-scope items in the spec:
+- If a security acceptance criterion is clearly unimplemented, emit a `spec-divergence` finding.
+- If the diff implements a security-relevant item the spec marks out of scope, emit a `spec-divergence` finding.
+
+`spec-divergence` schema:
+```json
+{"kind":"spec-divergence","file":"path/to/file.py","line":27,"severity":"error","confidence":85,"rationale":"...","fix":"..."}
+```
+
+- `severity` is always `"error"`.
+- Emit only at confidence ≥ 80.
 
 ### Analysis
 

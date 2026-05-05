@@ -441,6 +441,22 @@ func sumMeterFile(path, repo string) int64 {
 	return total
 }
 
+// RepoOutputTokens returns the sum of assistant output tokens across all
+// Claude Code transcripts for the given repo root path.
+// projectsDir defaults to ~/.claude/projects if empty.
+func RepoOutputTokens(projectsDir, repoRoot string) (int64, error) {
+	if projectsDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return 0, err
+		}
+		projectsDir = filepath.Join(home, ".claude", "projects")
+	}
+	repo := meter.RepoKey(repoRoot)
+	_, _, _, outTokens := readAllTranscripts(projectsDir, repo)
+	return outTokens, nil
+}
+
 // decodeProjectDir converts a Claude Code project subdir name back into a
 // best-effort original cwd. Claude encodes both '/' AND '.' as '-' in the
 // directory name, so the mapping is genuinely ambiguous; this helper exists

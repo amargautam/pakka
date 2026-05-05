@@ -32,7 +32,7 @@ func TestGatherMeter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := Gather(meterDir, auditDir)
+	stats, err := Gather(meterDir, auditDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +57,7 @@ func TestGatherMeter(t *testing.T) {
 	}
 }
 
+
 func TestGatherAudit(t *testing.T) {
 	tmp := t.TempDir()
 	meterDir := filepath.Join(tmp, "meter")
@@ -78,7 +79,7 @@ func TestGatherAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := Gather(meterDir, auditDir)
+	stats, err := Gather(meterDir, auditDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestGatherAudit(t *testing.T) {
 }
 
 func TestGatherBothEmpty(t *testing.T) {
-	_, err := Gather("/nonexistent/meter", "/nonexistent/audit")
+	_, err := Gather("/nonexistent/meter", "/nonexistent/audit", "")
 	if err == nil {
 		t.Error("expected error when both dirs are unreadable, got nil")
 	}
@@ -117,7 +118,7 @@ func TestGatherOneDirMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := Gather(meterDir, "/nonexistent/audit")
+	stats, err := Gather(meterDir, "/nonexistent/audit", "")
 	if err != nil {
 		t.Fatalf("expected nil error when one dir exists, got: %v", err)
 	}

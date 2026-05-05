@@ -12,21 +12,23 @@ import (
 	"time"
 
 	"github.com/amargautam/pakka/internal/data"
+	"github.com/amargautam/pakka/internal/statusline"
 )
 
 // Stats holds aggregated metrics from meter and audit data.
 type Stats struct {
-	SessionCount    int
-	TotalTokensUsed int64
-	TotalBytesSaved int64
-	TokensSavedEst  int64
-	AuditEventCount int
-	ToolUseCounts   map[string]int // tool_name -> count
-	GateVerdicts    int            // count of verdict files
-	GatePassCount   int
-	BugsCaught      int // error findings above threshold
-	FirstSession    time.Time
-	LastSession     time.Time
+	SessionCount      int
+	TotalTokensUsed   int64
+	OutputTokensTotal int64
+	TotalBytesSaved   int64
+	TokensSavedEst    int64
+	AuditEventCount   int
+	ToolUseCounts     map[string]int // tool_name -> count
+	GateVerdicts      int            // count of verdict files
+	GatePassCount     int
+	BugsCaught        int // error findings above threshold
+	FirstSession      time.Time
+	LastSession       time.Time
 }
 
 // meterEntry mirrors one line in a meter JSONL file.
@@ -36,6 +38,7 @@ type meterEntry struct {
 	TokensUsed     int64  `json:"tokens_used"`
 	BytesSaved     int64  `json:"bytes_saved"`
 	TokensSavedEst int64  `json:"tokens_saved_est"`
+	OutputTokens   int64  `json:"output_tokens,omitempty"`
 }
 
 // auditEntry mirrors one line in an audit JSONL file.
@@ -57,10 +60,14 @@ type verdictEntry struct {
 
 // Gather reads all JSONL files from meterDir and auditDir and returns Stats.
 //
+// repoRoot is the absolute path of the git repository root (or working
+// directory). It is used to look up output tokens from Claude Code transcripts
+// via the statusline package. Pass "" or "." to use the current directory.
+//
 // Purpose: Aggregate token usage, compression savings, tool counts, and gate
 // verdicts from on-disk JSONL data.
 // Errors: Returns error if neither meterDir nor auditDir can be read.
-func Gather(meterDir, auditDir string) (*Stats, error) {
+func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 	s := &Stats{
 		ToolUseCounts: make(map[string]int),
 	}
@@ -72,6 +79,12 @@ func Gather(meterDir, auditDir string) (*Stats, error) {
 	// If both dirs are unreadable, report an error.
 	if meterErr != nil && auditErr != nil {
 		return nil, fmt.Errorf("meter: %v; audit: %v", meterErr, auditErr)
+	}
+
+	// Override OutputTokensTotal with actual output tokens from transcripts.
+	// Graceful degradation: if transcripts are unreadable, keep meter-derived value.
+	if outTokens, err := statusline.RepoOutputTokens("", repoRoot); err == nil {
+		s.OutputTokensTotal = outTokens
 	}
 
 	return s, nil
@@ -100,6 +113,7 @@ func gatherMeter(s *Stats, dir string) error {
 				continue
 			}
 			s.TotalTokensUsed += me.TokensUsed
+			s.OutputTokensTotal += me.OutputTokens
 			s.TotalBytesSaved += me.BytesSaved
 			s.TokensSavedEst += me.TokensSavedEst
 
@@ -212,8 +226,10 @@ func FormatMarkdown(s *Stats, version string) string {
 	b.WriteString(fmt.Sprintf("| est. tokens saved (bytes ÷ 3.5) | %s |\n", fmtInt(s.TokensSavedEst)))
 
 	// Output compression savings section.
-	outputTokensEst := s.TotalTokensUsed * 2 / 100
-	outputTokensAvoided := outputTokensEst * 66 / 100
+	outputTokensEst := s.OutputTokensTotal
+	mult := 1.94 // super-ultra calibrated multiplier (matches statusline.go)
+	calibratedRatio := mult / (1 + mult)
+	outputTokensAvoided := int64(float64(outputTokensEst) * calibratedRatio)
 	outputDollarSavings := float64(outputTokensAvoided) / 1_000_000 * 15.0
 	inputDollarSavings := float64(s.TokensSavedEst) / 1_000_000 * 3.0
 	totalDollarSavings := outputDollarSavings + inputDollarSavings
@@ -228,7 +244,7 @@ func FormatMarkdown(s *Stats, version string) string {
 	b.WriteString("| super-ultra | **~66%** | **~$1.65/MTok output** |\n")
 	b.WriteString("\nAt Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.\n\n")
 	b.WriteString("**Estimated total output savings across this build:**\n")
-	b.WriteString(fmt.Sprintf("- Transcript output tokens (all %d sessions, this repo): ~%s\n", s.SessionCount, fmtInt(outputTokensEst)))
+	b.WriteString(fmt.Sprintf("- Output tokens measured across %d sessions: %s\n", s.SessionCount, fmtInt(outputTokensEst)))
 	b.WriteString(fmt.Sprintf("- At super-ultra 66%% reduction: ~%s tokens avoided\n", fmtInt(outputTokensAvoided)))
 	b.WriteString(fmt.Sprintf("- At $15/MTok: **~$%.2f saved on output tokens alone**\n", outputDollarSavings))
 	b.WriteString(fmt.Sprintf("- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$%.2f\n", inputDollarSavings))
