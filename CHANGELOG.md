@@ -2,6 +2,19 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.4.0] — 2026-05-05
+
+### Added
+- `pakka-core spec-find`: discovers spec file for current change via name match → LLM fallback (`internal/specfind/`)
+- Spec-anchored review: `/pakka:review` injects matched spec into all three reviewer agent prompts
+- Reviewer agents (`reviewer`, `security`, `architect`) emit `spec-divergence` findings against spec acceptance criteria and out-of-scope items
+- `docs/specs/` support: absent = silent skip; present + no match = advisory; matched = full spec context
+- Judge prompt (`internal/specfind/spec_match_prompt.md`) embedded via `go:embed`
+
+### Fixed
+- `RECEIPTS.md` savings calculation: was using 2% heuristic (~$6); now reads actual output tokens from Claude Code transcripts (~$41)
+- `pakka-core report --repo-root` flag: allows pointing at workspace root for transcript lookup
+
 ## [v0.3.0] — 2026-05-02
 
 ### Added
