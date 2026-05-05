@@ -1,18 +1,18 @@
 # RECEIPTS.md — pakka built with pakka
 
-version: v0.3.0
-generated: 2026-05-02T21:34:50Z
+version: v0.4.0
+generated: 2026-05-05T17:07:19Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 194 |
+| sessions | 214 |
 | first session | 2026-04-24 |
-| last session | 2026-05-02 |
-| total tokens used | 29,986,288 |
-| bytes saved (V2+V3+V4 compression) | 96,305 |
-| est. tokens saved (bytes ÷ 3.5) | 27,641 |
+| last session | 2026-05-05 |
+| total tokens used | 30,341,523 |
+| bytes saved (V2+V3+V4 compression) | 126,640 |
+| est. tokens saved (bytes ÷ 3.5) | 36,312 |
 
 ## output compression savings (V1 — calibrated bench)
 
@@ -28,22 +28,22 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Transcript output tokens (all 194 sessions, this repo): ~599,725
-- At super-ultra 66% reduction: ~395,818 tokens avoided
-- At $15/MTok: **~$5.94 saved on output tokens alone**
-- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.08
-- **Total estimated savings: ~$6.02**
+- Output tokens measured across 214 sessions: 4,190,569
+- At super-ultra 66% reduction: ~2,765,205 tokens avoided
+- At $15/MTok: **~$41.48 saved on output tokens alone**
+- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.11
+- **Total estimated savings: ~$41.59**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 7,749 |
-| Read | 3,846 |
-| Edit | 2,487 |
+| Bash | 7,971 |
+| Read | 3,918 |
+| Edit | 2,533 |
+| Write | 602 |
 | Grep | 599 |
-| Write | 591 |
-| Agent | 376 |
+| Agent | 389 |
 | WebFetch | 130 |
 | Glob | 126 |
 | TodoWrite | 11 |
@@ -52,9 +52,9 @@ At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million ou
 
 | metric | value |
 |---|---|
-| verdicts run | 35 |
-| verdicts passed | 18 |
-| pass rate | 51.4% |
+| verdicts run | 37 |
+| verdicts passed | 20 |
+| pass rate | 54.1% |
 
 ---
 
