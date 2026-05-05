@@ -67,7 +67,7 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 9. **Verdict.**
    - If ADVISORY=true → append: `note: no matching spec found in docs/specs/ — review ran without spec context. Run /pakka:plan to write one.`
    - Any `severity=error` → `VERDICT: FAIL — N error(s) above threshold`. Exit 2.
-   - Otherwise → `VERDICT: PASS`. Write timestamp to `.pakka/reviews/last-pass-ts`.
+   - Otherwise → `VERDICT: PASS`. Write unix epoch timestamp to `.pakka/reviews/last-pass-ts` via `date +%s` (e.g. `echo $(date +%s) > .pakka/reviews/last-pass-ts`). Path is relative to the repo root being reviewed, not the session CWD.
 
 ---
 

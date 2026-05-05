@@ -82,7 +82,8 @@ func runCommitGate() {
 	}
 
 	cfg := loadCommitGateConfig()
-	state := gatherReviewState(cfg)
+	reviewsDir := resolveReviewsDir(input.Command)
+	state := gatherReviewState(cfg, input.Command)
 	d := commitgate.Evaluate(input.Command, cfg, state)
 
 	// Inject status trailer on allowed commits.
@@ -108,7 +109,7 @@ func runCommitGate() {
 
 	// Write verdict for auto-gate decisions on git commit commands
 	if commitgate.IsGitCommit(input.Command) && cfg.AutoGate {
-		writeVerdict(event.SessionID, d)
+		writeVerdict(event.SessionID, d, reviewsDir)
 	}
 
 	if !d.Allow {
@@ -197,14 +198,142 @@ func repoRoot() string {
 	return strings.TrimSpace(string(out))
 }
 
-func gatherReviewState(cfg *commitgate.Config) *commitgate.State {
+// repoRootAt returns the absolute git repo root for the given directory,
+// or "" if git cannot resolve one.
+func repoRootAt(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// isCWS reports whether b is an ASCII whitespace character.
+func isCWS(b byte) bool { return b == ' ' || b == '\t' || b == '\n' }
+
+// parseCPath returns the path argument from "git -C <path>" or "cd <path> && git" in cmd, or "".
+func parseCPath(cmd string) string {
+	trimmed := strings.TrimLeft(cmd, " \t\n")
+	// cd <path> && git commit
+	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
+		i := 2
+		for i < len(trimmed) && isCWS(trimmed[i]) {
+			i++
+		}
+		if i >= len(trimmed) {
+			return ""
+		}
+		arg, _ := readShellArg(trimmed, i)
+		return arg
+	}
+	// git -C <path> commit
+	if !strings.HasPrefix(trimmed, "git ") && !strings.HasPrefix(trimmed, "git\t") {
+		return ""
+	}
+	i := 3
+	for i < len(trimmed) && isCWS(trimmed[i]) {
+		i++
+	}
+	if !strings.HasPrefix(trimmed[i:], "-C") {
+		return ""
+	}
+	j := i + 2
+	for j < len(trimmed) && (isCWS(trimmed[j]) || trimmed[j] == '=') {
+		j++
+	}
+	if j >= len(trimmed) {
+		return ""
+	}
+	arg, _ := readShellArg(trimmed, j)
+	return arg
+}
+
+// readShellArg reads a single shell argument (double-quoted, single-quoted, or bare)
+// from s at position i. Returns the unquoted value and the position after the argument.
+func readShellArg(s string, i int) (string, int) {
+	if i >= len(s) {
+		return "", i
+	}
+	switch s[i] {
+	case '"':
+		i++
+		var b strings.Builder
+		for i < len(s) && s[i] != '"' {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				i++
+				continue
+			}
+			b.WriteByte(s[i])
+			i++
+		}
+		if i < len(s) {
+			i++
+		}
+		return b.String(), i
+	case '\'':
+		i++
+		start := i
+		for i < len(s) && s[i] != '\'' {
+			i++
+		}
+		val := s[start:i]
+		if i < len(s) {
+			i++
+		}
+		return val, i
+	default:
+		start := i
+		for i < len(s) && !isCWS(s[i]) {
+			i++
+		}
+		return s[start:i], i
+	}
+}
+
+// resolveReviewsDir returns the path to .pakka/reviews for the repo that the
+// given git command targets. It prefers the -C path (or cd path) embedded in
+// cmd over the process CWD repo root, because the hook may be invoked from a
+// session root that is itself a different git repo.
+func resolveReviewsDir(cmd string) string {
+	cmdDir := parseCPath(cmd)
+	var root string
+	if cmdDir != "" {
+		root = repoRootAt(cmdDir)
+		if root == "" {
+			root = cmdDir // last resort
+		}
+	}
+	if root == "" {
+		root = repoRoot()
+	}
+	if root != "" {
+		return filepath.Join(root, ".pakka", "reviews")
+	}
+	return ".pakka/reviews"
+}
+
+func gatherReviewState(cfg *commitgate.Config, cmd string) *commitgate.State {
 	state := &commitgate.State{}
 
-	// Resolve repo root so the diff works when the hook runs from a
-	// subdirectory. Without -C <root>, a CWD outside or below the repo
-	// boundary can yield an empty diff and cause the gate to block a
-	// legitimate commit.
-	root := repoRoot()
+	// Resolve the actual repo root: prefer -C path or cd path from the command,
+	// fall back to git rev-parse from process CWD. This matters when the hook
+	// runs via `git -C /path/to/repo commit` from a session root that is itself
+	// a different git repo.
+	reviewsDir := resolveReviewsDir(cmd)
+
+	cmdDir := parseCPath(cmd)
+	var root string
+	if cmdDir != "" {
+		root = repoRootAt(cmdDir)
+		if root == "" {
+			root = cmdDir // last resort
+		}
+	}
+	if root == "" {
+		root = repoRoot()
+	}
 
 	// Diff size via git
 	diffArgs := []string{}
@@ -217,11 +346,17 @@ func gatherReviewState(cfg *commitgate.Config) *commitgate.State {
 		state.DiffBytes = len(out)
 	}
 
-	// Recent pass check
-	data, err := os.ReadFile(".pakka/reviews/last-pass-ts")
+	// Recent pass check — support both unix epoch (int64) and RFC3339 formats.
+	data, err := os.ReadFile(filepath.Join(reviewsDir, "last-pass-ts"))
 	if err == nil {
-		ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-		if err == nil && time.Since(time.Unix(ts, 0)) < 300*time.Second {
+		raw := strings.TrimSpace(string(data))
+		var passTime time.Time
+		if ts, err2 := strconv.ParseInt(raw, 10, 64); err2 == nil {
+			passTime = time.Unix(ts, 0)
+		} else if t, err2 := time.Parse(time.RFC3339, raw); err2 == nil {
+			passTime = t
+		}
+		if !passTime.IsZero() && time.Since(passTime) < 300*time.Second {
 			state.HasRecentPass = true
 		}
 	}
@@ -231,7 +366,7 @@ func gatherReviewState(cfg *commitgate.Config) *commitgate.State {
 	// block a commit that doesn't touch those lines. The unfiltered
 	// findings remain on disk (.pakka/reviews/<id>.jsonl) for debugging.
 	if !state.HasRecentPass {
-		state.ErrorFindings = loadLatestErrors(cfg.ConfidenceThreshold, scopeFromStagedDiff())
+		state.ErrorFindings = loadLatestErrors(cfg.ConfidenceThreshold, scopeFromStagedDiff(root), reviewsDir)
 	}
 
 	return state
@@ -242,8 +377,13 @@ func gatherReviewState(cfg *commitgate.Config) *commitgate.State {
 // Returns an empty (non-nil) Scope on git failure or empty diff — the
 // resulting filter drops everything, which is the safe default for the gate
 // (no scope → no findings can fire → no false-positive block).
-func scopeFromStagedDiff() commitgate.Scope {
-	out, err := exec.Command("git", "diff", "--cached", "--unified=0").Output()
+func scopeFromStagedDiff(root string) commitgate.Scope {
+	args := []string{}
+	if root != "" {
+		args = append(args, "-C", root)
+	}
+	args = append(args, "diff", "--cached", "--unified=0")
+	out, err := exec.Command("git", args...).Output()
 	if err != nil {
 		return commitgate.Scope{}
 	}
@@ -261,8 +401,8 @@ func scopeFromStagedDiff() commitgate.Scope {
 // pre-existing code that the current commit does not touch and must not block
 // it. The on-disk file is left intact so the audit trail keeps the unfiltered
 // findings for debugging.
-func loadLatestErrors(threshold int, scope commitgate.Scope) []commitgate.Finding {
-	entries, err := os.ReadDir(".pakka/reviews")
+func loadLatestErrors(threshold int, scope commitgate.Scope, reviewsDir string) []commitgate.Finding {
+	entries, err := os.ReadDir(reviewsDir)
 	if err != nil {
 		return nil
 	}
@@ -290,7 +430,7 @@ func loadLatestErrors(threshold int, scope commitgate.Scope) []commitgate.Findin
 		return nil
 	}
 
-	data, err := os.ReadFile(filepath.Join(".pakka", "reviews", latest))
+	data, err := os.ReadFile(filepath.Join(reviewsDir, latest))
 	if err != nil {
 		return nil
 	}
@@ -316,8 +456,8 @@ func loadLatestErrors(threshold int, scope commitgate.Scope) []commitgate.Findin
 // writeVerdict writes a verdict file to .pakka/reviews/.
 // Naming convention: verdict-<timestamp>.jsonl — distinguishes from findings files
 // written by /pakka:review (which use <sha-or-ts>.jsonl without a prefix).
-func writeVerdict(sessionID string, d *commitgate.Decision) {
-	dir := ".pakka/reviews"
+func writeVerdict(sessionID string, d *commitgate.Decision, reviewsDir string) {
+	dir := reviewsDir
 	_ = os.MkdirAll(dir, 0755)
 
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
