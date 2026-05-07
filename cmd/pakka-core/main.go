@@ -9,7 +9,6 @@
 //	Pass 3.1: commit-gate, help
 //	Pass 4: stack-detect, stack-gate, eval
 //	Pass 5: report
-//	Pass 5b: bench
 package main
 
 import (
@@ -51,8 +50,6 @@ func main() {
 		_ = (&EvalCmd{}).Run(os.Args[2:])
 	case "report":
 		_ = (&ReportCmd{}).Run(os.Args[2:])
-	case "bench":
-		_ = (&BenchCmd{}).Run(os.Args[2:])
 	case "index":
 		_ = (&IndexCmd{}).Run(os.Args[2:])
 	case "query":

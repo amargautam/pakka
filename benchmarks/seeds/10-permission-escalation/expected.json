@@ -1,1 +1,0 @@
-{"kind":"security","severity":"error","file":"setup/dirs.py","line_approx":4,"bug_class":"permission-escalation","description":"chmod 777 on data directory allows arbitrary access"}

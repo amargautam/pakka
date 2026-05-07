@@ -1,1 +1,0 @@
-{"kind":"security","severity":"warn","file":"fileutil.py","line_approx":5,"bug_class":"toctou","description":"Time-of-check-to-time-of-use race between isfile() and open()"}

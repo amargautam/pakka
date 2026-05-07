@@ -5,7 +5,7 @@ GO     ?= go
 BIN    := bin/pakka-core
 PKG    := ./cmd/pakka-core
 
-.PHONY: help build cross test bench self-report clean
+.PHONY: help build cross test self-report clean
 
 help:
 	@echo "pakka — Claude Code harness"
@@ -14,7 +14,6 @@ help:
 	@echo "  build         Build pakka-core for current arch.         (Pass 1)"
 	@echo "  cross         Build pakka-core for all release arches.   (Pass 5)"
 	@echo "  test          Run Go unit tests.                          (Pass 1)"
-	@echo "  bench         Run v0 benchmark corpus end-to-end.         (Pass 5)"
 	@echo "  self-report   Emit RECEIPTS.md from pakka's own audit.    (Pass 5)"
 	@echo "  clean         Remove built binaries."
 
@@ -30,14 +29,6 @@ cross:
 
 test:
 	$(GO) test ./...
-
-bench:
-	@echo "Running benchmark corpus (requires claude -p)..."
-	@mkdir -p benchmarks/results
-	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') bench \
-		--corpus=benchmarks/corpus.json \
-		--out=benchmarks/results/$$(date +%Y%m%d-%H%M%S).json
-	@echo "Results written. Update README claim numbers if changed."
 
 self-report:
 	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') report \

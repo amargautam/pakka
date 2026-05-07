@@ -1,1 +1,0 @@
-{"kind":"correctness","severity":"error","file":"db/user.go","line_approx":8,"bug_class":"null-deref","description":"Removed error check on sql.Row.Scan; nil row causes zero-value dereference"}

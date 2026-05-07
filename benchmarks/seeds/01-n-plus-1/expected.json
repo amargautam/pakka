@@ -1,1 +1,0 @@
-{"kind":"correctness","severity":"error","file":"handlers/users.go","line_approx":18,"bug_class":"n-plus-1-query","description":"SQL query inside loop creates N+1 query pattern"}

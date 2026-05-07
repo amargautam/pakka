@@ -1,1 +1,0 @@
-{"kind":"correctness","severity":"error","file":"metrics/counter.go","line_approx":5,"bug_class":"race-condition","description":"Shared counter modified without mutex or atomic"}
