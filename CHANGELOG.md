@@ -2,6 +2,14 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.4.1] — 2026-05-07
+
+### Fixed
+- Commit-gate review loop: `HasRecentPass` was always false for `git -C <path> commit` and `cd <path> && git commit` — `last-pass-ts` and findings were read from process CWD, not the actual repo root. `parseCPath` + `resolveReviewsDir` now derive repo root from the commit command.
+- Commit-gate timestamp format: gate expected unix epoch int; review skill wrote RFC3339. Dual-format parser (int64 → RFC3339 fallback) added; `review.md` updated to write `date +%s` going forward.
+- `RECEIPTS.md` generation: `release` skill now uses `make self-report` (passes `--repo-root=..`). Running the binary without this flag silently uses wrong transcript scope (~7× undercount).
+- Version string: `main.go` was stuck at `0.3.0`; corrected to `0.4.1`.
+
 ## [v0.4.0] — 2026-05-05
 
 ### Added
