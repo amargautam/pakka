@@ -17,7 +17,7 @@ import (
 	"os"
 )
 
-const version = "0.3.0"
+const version = "0.4.1"
 
 
 func main() {
