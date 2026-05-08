@@ -2,6 +2,12 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.1] — 2026-05-08
+
+### Fixed
+
+- Status-line color codes missing from v0.5.0 binaries — savings now green (111,208,140), bugs caught now red (232,99,74). Binaries were built before the color changes landed in `internal/statusline/statusline.go`.
+
 ## [v0.5.0] — 2026-05-08
 
 ### Added
