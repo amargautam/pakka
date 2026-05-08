@@ -2,6 +2,22 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.0] — 2026-05-08
+
+### Added
+- `pakka-core spec-generate` subcommand: validates 6 required sections, writes to `docs/specs/YYYY-MM-DD-<slug>.md`, hybrid diff on amend (git-tracked → `git diff`; untracked → `diff -u`), slug validated against path traversal
+- `/pakka:plan` now pipes spec content to `spec-generate` via Bash (no `Write` tool)
+- `commands/review.md` step 2b: spec-drift detection — warns when spec modified on current branch before merge (warning-level finding, not a gate block)
+- `internal/statusline.ReadCWDFromTranscriptPath`: exported; `readProjectCWD` delegates to `readCWDFromSingleFile` (deduplication)
+- Status-line ANSI 24-bit color: savings green `#6FD08C`, bugs caught red `#E8634A`
+
+### Fixed
+- Status-line CWD fix: derives cwd from `transcript_path` directory instead of `event.CWD` (which pointed at inner git sub-repo on split-repo setups), correcting savings display from ~$6 to ~$46
+- `specfind`: date-prefixed specs (`YYYY-MM-DD-*.md`) skip LLM fallback — resolved via name-match only
+
+### Security
+- `spec-generate`: slug validated against `^[a-z0-9][a-z0-9-]*[a-z0-9]$` before path construction (prevents path traversal); `--` separator added to all exec.Command calls
+
 ## [v0.4.1] — 2026-05-07
 
 ### Fixed
