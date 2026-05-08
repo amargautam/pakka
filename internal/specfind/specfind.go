@@ -92,8 +92,28 @@ func Find(opts Options) (FindResult, error) {
 		}
 	}
 
+	// Guard: date-prefixed specs are resolved via name-match only.
+	// If name-match failed and all specs are date-prefixed, skip LLM.
+	if allDatePrefixed(specFiles) {
+		return FindResult{Advisory: true}, nil
+	}
+
 	// Step 4: LLM fallback — defer to llmFind.
 	return llmFind(opts, specsDir, specFiles)
+}
+
+// allDatePrefixed returns true if every filename in the slice has a
+// YYYY-MM-DD- date prefix. Returns false for empty slices.
+func allDatePrefixed(files []string) bool {
+	if len(files) == 0 {
+		return false
+	}
+	for _, f := range files {
+		if !reDatePrefix.MatchString(f) {
+			return false
+		}
+	}
+	return true
 }
 
 // llmFind builds the judge prompt, calls the LLM, parses JSON, and returns

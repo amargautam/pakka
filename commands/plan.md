@@ -1,6 +1,6 @@
 ---
 description: Design hub — spec, probe, challenge, or slice. Infers mode from context. Writes spec to docs/specs/.
-allowed-tools: Read, Write, Bash
+allowed-tools: Read, Bash
 argument-hint: "[feature description or no argument]"
 ---
 
@@ -30,10 +30,8 @@ Ask the minimum questions needed to fill the spec. One round only. Do not back-a
 
 **Step 2 — Write spec file**
 
-Path: `docs/specs/YYYY-MM-DD-<kebab-name>.md`
-Create `docs/specs/` if it does not exist.
+Synthesize the spec content from the conversation into the six-section format:
 
-Format:
 ```
 # <Feature name>
 Date: YYYY-MM-DD
@@ -59,8 +57,24 @@ Explicit list. Prevents scope creep.
 Anything unresolved that will block implementation. Empty if none.
 ```
 
+Then write it via `pakka-core spec-generate` — do NOT use the Write tool:
+
+```bash
+printf '%s' "<spec content>" | ${CLAUDE_PLUGIN_ROOT}/bin/run spec-generate --slug <kebab-name>
+```
+
+Where `<kebab-name>` is a short descriptive slug derived from the feature name (e.g. `spec-generation`, `auth-refresh-token`).
+
+If `CLAUDE_PLUGIN_ROOT` is not set, fall back to:
+```bash
+printf '%s' "<spec content>" | pakka-core spec-generate --slug <kebab-name>
+```
+
+If `spec-generate` exits non-zero: show the error and stop — do not retry or fall back to Write.
+
 **Step 3 — End**
-Output: "Spec written to `docs/specs/YYYY-MM-DD-<name>.md`. Review it, then run `/pakka:build` when ready."
+
+`pakka-core spec-generate` prints the result line. Do not add any additional output after it.
 
 Stop. Do not auto-chain to build. Do not write any code.
 

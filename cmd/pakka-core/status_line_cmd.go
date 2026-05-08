@@ -21,10 +21,16 @@ func (c *StatusLineCmd) Run(args []string) error {
 func runStatusLine() {
 	event := parseLenient(os.Stdin)
 	level := loadOutputLevel()
-	cwd := event.CWD
+
+	cwd := statusline.ReadCWDFromTranscriptPath(event.TranscriptPath)
+	if cwd == "" {
+		cwd = event.CWD
+	}
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
+	event.CWD = cwd
+
 	repoKey := meter.RepoKey(cwd)
 	stale := orchestrator.CountStaleFromDisk(repoKey)
 	if err := statusline.Run(event, os.Stdout, level, stale); err != nil {

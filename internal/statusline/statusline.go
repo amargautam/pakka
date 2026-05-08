@@ -260,15 +260,16 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 // The dollar amount is formatted with FormatUSD (2 decimal places, "$" prefix).
 // A "~" tilde prefix indicates estimated savings (not measured to-the-cent).
 // Stale segment appended only when staleCompress > 0.
+// ANSI 24-bit color: savings in green (111,208,140), bugs in red (232,99,74).
 func formatRunLine(m metrics, sep string) string {
 	staleSeg := ""
 	if m.staleCompress > 0 {
 		staleSeg = fmt.Sprintf(" %s ! %d stale", sep, m.staleCompress)
 	}
-	return fmt.Sprintf("[%s] %s ~%s saved %s %d bugs caught%s",
-		m.outputLevel, sep,
-		pricing.FormatUSD(m.savedUSD),
-		sep, m.bugsCaught, staleSeg)
+	savedStr := fmt.Sprintf("\033[38;2;111;208;140m~%s saved\033[0m", pricing.FormatUSD(m.savedUSD))
+	bugsStr := fmt.Sprintf("\033[38;2;232;99;74m%d bugs caught\033[0m", m.bugsCaught)
+	return fmt.Sprintf("[%s] %s %s %s %s%s",
+		m.outputLevel, sep, savedStr, sep, bugsStr, staleSeg)
 }
 
 // resolveLevel returns a valid compression level from the supplied string.
@@ -471,6 +472,42 @@ func decodeProjectDir(name string) string {
 	return strings.ReplaceAll(name, "-", "/")
 }
 
+// ReadCWDFromTranscriptPath returns the session cwd by reading the transcript
+// at path and, if not found there, scanning siblings in the same directory.
+// Returns "" if path is empty or no cwd line is found.
+func ReadCWDFromTranscriptPath(transcriptPath string) string {
+	if transcriptPath == "" {
+		return ""
+	}
+	// Try the named file first via a single-file scan.
+	if cwd := readCWDFromSingleFile(transcriptPath); cwd != "" {
+		return cwd
+	}
+	// Fall back to scanning siblings.
+	return readProjectCWD(filepath.Dir(transcriptPath))
+}
+
+// readCWDFromSingleFile scans one transcript file for the first cwd field.
+func readCWDFromSingleFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 4*1024*1024)
+	for sc.Scan() {
+		var probe struct {
+			CWD string `json:"cwd"`
+		}
+		if json.Unmarshal(sc.Bytes(), &probe) == nil && probe.CWD != "" {
+			return probe.CWD
+		}
+	}
+	return ""
+}
+
 // readProjectCWD scans transcript files in dir for the first line carrying a
 // `cwd` field. Claude Code embeds the original working directory in many
 // event lines (permission-mode, user, assistant, etc.), which lets us
@@ -487,24 +524,9 @@ func readProjectCWD(dir string) string {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 			continue
 		}
-		path := filepath.Join(dir, f.Name())
-		fp, err := os.Open(path)
-		if err != nil {
-			continue
+		if cwd := readCWDFromSingleFile(filepath.Join(dir, f.Name())); cwd != "" {
+			return cwd
 		}
-		sc := bufio.NewScanner(fp)
-		buf := make([]byte, 0, 64*1024)
-		sc.Buffer(buf, 4*1024*1024)
-		for sc.Scan() {
-			var probe struct {
-				CWD string `json:"cwd"`
-			}
-			if json.Unmarshal(sc.Bytes(), &probe) == nil && probe.CWD != "" {
-				fp.Close()
-				return probe.CWD
-			}
-		}
-		fp.Close()
 	}
 	return ""
 }

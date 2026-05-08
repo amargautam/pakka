@@ -105,8 +105,9 @@ func TestFind(t *testing.T) {
 		{
 			name: "name match miss — LLM returns high confidence — spec path returned",
 			opts: func(t *testing.T) specfind.Options {
-				dir := makeSpecsDir(t, specFile)
-				llm := &fakeLLM{resp: `{"match":"2026-05-05-spec-anchored-review.md","confidence":0.8}`}
+				const undatedSpec = "spec-anchored-review.md"
+				dir := makeSpecsDir(t, undatedSpec)
+				llm := &fakeLLM{resp: `{"match":"spec-anchored-review.md","confidence":0.8}`}
 				return specfind.Options{
 					SpecsDir: dir,
 					Branch:   "main",
@@ -114,15 +115,16 @@ func TestFind(t *testing.T) {
 					LLM:      llm,
 				}
 			},
-			wantPath:      specFile,
+			wantPath:      "spec-anchored-review.md",
 			wantAdvisory:  false,
 			wantLLMCalled: true,
 		},
 		{
 			name: "name match miss — LLM returns low confidence — Advisory=true, empty path",
 			opts: func(t *testing.T) specfind.Options {
-				dir := makeSpecsDir(t, specFile)
-				llm := &fakeLLM{resp: `{"match":"2026-05-05-spec-anchored-review.md","confidence":0.5}`}
+				const undatedSpec = "spec-anchored-review.md"
+				dir := makeSpecsDir(t, undatedSpec)
+				llm := &fakeLLM{resp: `{"match":"spec-anchored-review.md","confidence":0.5}`}
 				return specfind.Options{
 					SpecsDir: dir,
 					Branch:   "main",
@@ -132,6 +134,44 @@ func TestFind(t *testing.T) {
 			},
 			wantPath:      "",
 			wantAdvisory:  true,
+			wantLLMCalled: true,
+		},
+		{
+			name: "all date-prefixed specs — name match miss — LLM not called, Advisory=true",
+			opts: func(t *testing.T) specfind.Options {
+				dir := makeSpecsDir(t,
+					"2026-05-05-spec-anchored-review.md",
+					"2026-05-07-spec-generation.md",
+				)
+				llm := &fakeLLM{resp: `{"match":"2026-05-07-spec-generation.md","confidence":0.9}`}
+				return specfind.Options{
+					SpecsDir: dir,
+					Branch:   "main",
+					Changed:  []string{},
+					LLM:      llm,
+				}
+			},
+			wantPath:      "",
+			wantAdvisory:  true,
+			wantLLMCalled: false,
+		},
+		{
+			name: "mixed specs (some date-prefixed, some not) — name match miss — LLM called",
+			opts: func(t *testing.T) specfind.Options {
+				dir := makeSpecsDir(t,
+					"2026-05-05-spec-anchored-review.md",
+					"old-spec-no-date.md",
+				)
+				llm := &fakeLLM{resp: `{"match":"old-spec-no-date.md","confidence":0.85}`}
+				return specfind.Options{
+					SpecsDir: dir,
+					Branch:   "main",
+					Changed:  []string{},
+					LLM:      llm,
+				}
+			},
+			wantPath:      "old-spec-no-date.md",
+			wantAdvisory:  false,
 			wantLLMCalled: true,
 		},
 	}

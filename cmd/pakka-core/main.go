@@ -8,7 +8,7 @@
 //	Pass 3: guard, install-git-hook
 //	Pass 3.1: commit-gate, help
 //	Pass 4: stack-detect, stack-gate, eval
-//	Pass 5: report
+//	Pass 5: report, spec-generate
 package main
 
 import (
@@ -16,7 +16,7 @@ import (
 	"os"
 )
 
-const version = "0.4.1"
+const version = "0.5.0"
 
 
 func main() {
@@ -56,6 +56,8 @@ func main() {
 		_ = (&QueryCmd{}).Run(os.Args[2:])
 	case "spec-find":
 		_ = (&SpecFindCmd{}).Run(os.Args[2:])
+	case "spec-generate":
+		_ = (&SpecGenerateCmd{}).Run(os.Args[2:])
 	case "output-rules":
 		_ = (&OutputRulesCmd{}).Run(os.Args[2:])
 	case "output-reinforce":
