@@ -212,7 +212,7 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 			return
 		}
 		o.logf("rewrite error: %s level=%s err=%v", abs, level, err)
-		state.Record(abs, level, sourceSHA, now().UTC().Format(time.RFC3339), false)
+		// Transient error: leave state unchanged so retry is silent (no stale glyph).
 		return
 	}
 

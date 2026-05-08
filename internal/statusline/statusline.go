@@ -149,8 +149,8 @@ func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
 	mult := outputMultiplier[outputLevel]
 	outPct := int64(math.Round(mult / (1 + mult) * 100))
 
-	// All-time bug count across the repo's review findings.
-	bugs := countBugsCaught(filepath.Join(repo, ".pakka", "reviews"))
+	// All-time bug count across the repo's review findings (root + sub-repos).
+	bugs := countAllBugsCaught(repo)
 
 	// Estimated USD saved using pricing.Default (Sonnet 4.6) since we don't
 	// know the model from meter/transcripts.
@@ -268,7 +268,7 @@ func formatRunLine(m metrics, sep string) string {
 	}
 	savedStr := fmt.Sprintf("\033[38;2;111;208;140m~%s saved\033[0m", pricing.FormatUSD(m.savedUSD))
 	bugsStr := fmt.Sprintf("\033[38;2;232;99;74m%d bugs caught\033[0m", m.bugsCaught)
-	return fmt.Sprintf("[%s] %s %s %s %s%s",
+	return fmt.Sprintf("\033[38;2;245;158;11m[%s]\033[0m %s %s %s %s%s",
 		m.outputLevel, sep, savedStr, sep, bugsStr, staleSeg)
 }
 
@@ -376,6 +376,33 @@ func countBugsCaught(dir string) int {
 	return count
 }
 
+// countAllBugsCaught counts bugs at root/.pakka/reviews and at each immediate
+// child directory's .pakka/reviews. One level deep only. Skips dirs starting
+// with "." and dirs named node_modules, vendor, __pycache__.
+func countAllBugsCaught(root string) int {
+	total := countBugsCaught(filepath.Join(root, ".pakka", "reviews"))
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return total
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		switch name {
+		case "node_modules", "vendor", "__pycache__":
+			continue
+		}
+		total += countBugsCaught(filepath.Join(root, name, ".pakka", "reviews"))
+	}
+	return total
+}
+
 func shortSID(sid string) string {
 	if len(sid) > 8 {
 		return sid[:8]
@@ -416,8 +443,8 @@ func readAllMeter(meterDir, repo string) (savedTokens int64) {
 }
 
 // sumMeterFile returns the sum of tokens_saved_est across entries in path
-// whose `repo` field equals the supplied repo.
-func sumMeterFile(path, repo string) int64 {
+// whose `repo` field equals root or has root+"/" as a prefix (sub-repos).
+func sumMeterFile(path, root string) int64 {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0
@@ -434,7 +461,7 @@ func sumMeterFile(path, repo string) int64 {
 		if json.Unmarshal(sc.Bytes(), &e) != nil {
 			continue
 		}
-		if e.Repo != repo {
+		if e.Repo != root && !strings.HasPrefix(e.Repo, root+"/") {
 			continue
 		}
 		total += e.TokensSavedEst
@@ -563,7 +590,8 @@ func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead,
 		if cwd == "" {
 			continue
 		}
-		if resolveRepoKey(cwd) != repo {
+		resolved := resolveRepoKey(cwd)
+		if resolved != repo && !strings.HasPrefix(resolved, repo+"/") {
 			continue
 		}
 

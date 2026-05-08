@@ -141,3 +141,13 @@ func TestClaudeCLI_LargeInputPassesViaStdin(t *testing.T) {
 		t.Error("stdin dump missing input marker — payload truncated")
 	}
 }
+
+// TestNewClaudeCLI_DefaultTimeout — Fix F: NewClaudeCLI must use 180s timeout,
+// not 60s. 60s always fires before completion for ~92s super-ultra calls.
+func TestNewClaudeCLI_DefaultTimeout(t *testing.T) {
+	c := NewClaudeCLI()
+	want := 180 * time.Second
+	if c.Timeout != want {
+		t.Errorf("NewClaudeCLI().Timeout = %v, want %v", c.Timeout, want)
+	}
+}

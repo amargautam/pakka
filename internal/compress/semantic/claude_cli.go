@@ -39,7 +39,7 @@ var configureProcessGroup func(cmd *exec.Cmd)
 // Path defaults to "claude" (resolved via PATH at exec time). Tests override
 // it with a path to a fake POSIX-shell script that echoes a canned response.
 //
-// Timeout caps a single rewrite call. Default 60s. The validator/cherry-pick
+// Timeout caps a single rewrite call. Default 180s. The validator/cherry-pick
 // retry loop in runner.go can call Rewrite up to 3 times, so the orchestrator
 // effective ceiling is ~3× this value.
 //
@@ -60,7 +60,7 @@ type ClaudeCLI struct {
 func NewClaudeCLI() *ClaudeCLI {
 	return &ClaudeCLI{
 		Path:    "claude",
-		Timeout: 60 * time.Second,
+		Timeout: 180 * time.Second,
 	}
 }
 
@@ -116,7 +116,7 @@ func (c *ClaudeCLI) RewriteFix(ctx context.Context, input string, level Level, v
 func (c *ClaudeCLI) run(parentCtx context.Context, prompt string) (string, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = 60 * time.Second
+		timeout = 180 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()

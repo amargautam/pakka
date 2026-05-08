@@ -398,6 +398,8 @@ func (alwaysErrRewriter) Rewrite(context.Context, string, semantic.Level) (strin
 	return "", errAlways
 }
 
+// TestOrchestratorRewriterError — transient (non-FailedError) rewrite errors
+// must NOT record state. File must remain untouched; state must have no entry.
 func TestOrchestratorRewriterError(t *testing.T) {
 	repo := t.TempDir()
 	src := filepath.Join(repo, "CLAUDE.md")
@@ -412,11 +414,65 @@ func TestOrchestratorRewriterError(t *testing.T) {
 	if string(got) != body {
 		t.Errorf("file must not change on rewriter error; got %q", got)
 	}
+	// Fix E: transient errors leave state unchanged — no entry should exist.
 	st, _ := LoadState(repo)
 	abs, _ := filepath.Abs(src)
+	if _, ok := st.Get(abs); ok {
+		t.Errorf("transient error must NOT record state entry; got entry for %s", abs)
+	}
+}
+
+// TestTransientErrorPreservesPriorState — Fix E regression guard.
+// A prior successful entry must survive a subsequent transient rewrite error
+// (validatorPasses=true must remain, not be overwritten to false).
+func TestTransientErrorPreservesPriorState(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, "CLAUDE.md")
+	body := "# Title\n`loadBearing()` body longer than any rewrite"
+	writeFile(t, src, body)
+
+	// First run: succeeds and records validatorPasses=true.
+	rew := &stubRewriter{out: "# Title\n`loadBearing()` x"}
+	o := &Orchestrator{Repo: repo, Targets: []string{"CLAUDE.md"}, Level: "strict",
+		Rewriter: rew, SessionID: "transient1", LogWriter: &bytes.Buffer{}}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+	abs, _ := filepath.Abs(src)
+	st, _ := LoadState(repo)
 	e, ok := st.Get(abs)
-	if !ok || e.ValidatorPasses {
-		t.Errorf("expected failure recorded; e=%+v ok=%v", e, ok)
+	if !ok || !e.ValidatorPasses {
+		t.Fatalf("expected successful first run; e=%+v ok=%v", e, ok)
+	}
+	priorSHA := e.SourceSHA
+	priorTS := e.CompressedAt
+
+	// Force file to be re-read as original so next run sees it as stale.
+	// Delete the .original.md so the next run re-baselines from current file.
+	_ = os.Remove(src + ".original.md")
+	// Write a changed file so SHA differs → stale.
+	writeFile(t, src, body+" changed")
+
+	// Second run: transient error.
+	o.Rewriter = alwaysErrRewriter{}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run2: %v", err)
+	}
+
+	// Prior entry must be unchanged.
+	st2, _ := LoadState(repo)
+	e2, ok2 := st2.Get(abs)
+	if !ok2 {
+		t.Fatalf("prior state entry must not be removed by transient error")
+	}
+	if !e2.ValidatorPasses {
+		t.Errorf("transient error must not flip ValidatorPasses to false; e=%+v", e2)
+	}
+	if e2.SourceSHA != priorSHA {
+		t.Errorf("SourceSHA must not change on transient error: want %q got %q", priorSHA, e2.SourceSHA)
+	}
+	if e2.CompressedAt != priorTS {
+		t.Errorf("CompressedAt must not change on transient error")
 	}
 }
 

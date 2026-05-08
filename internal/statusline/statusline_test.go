@@ -832,3 +832,171 @@ func TestUnknownLevelDefaultsToUltra(t *testing.T) {
 		}
 	}
 }
+
+// --- Fix A: [level] bracket in formatRunLine uses amber ANSI color ---
+
+// TestFormatRunLineAmberBracket verifies that formatRunLine wraps the level
+// bracket with the same amber ANSI color used for the "pakka" label in Run().
+func TestFormatRunLineAmberBracket(t *testing.T) {
+	m := metrics{outputLevel: "super-ultra", savedUSD: 1.23, bugsCaught: 0}
+	out := formatRunLine(m, "·")
+	const amberOpen = "\033[38;2;245;158;11m"
+	const reset = "\033[0m"
+	if !strings.Contains(out, amberOpen+"[super-ultra]"+reset) {
+		t.Errorf("formatRunLine must wrap [level] with amber ANSI: %q", out)
+	}
+}
+
+// --- Fix B: countAllBugsCaught aggregates sub-repo findings ---
+
+// TestCountAllBugsCaught_SubRepo verifies that bugs in a child repo's
+// .pakka/reviews are included in the aggregate count.
+func TestCountAllBugsCaught_SubRepo(t *testing.T) {
+	root := t.TempDir()
+
+	mkFinding := func(dir string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		line := `{"severity":"error","confidence":85}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "findings.jsonl"), []byte(line), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mkFinding(filepath.Join(root, ".pakka", "reviews"))
+	mkFinding(filepath.Join(root, "subrepo", ".pakka", "reviews"))
+
+	got := countAllBugsCaught(root)
+	if got != 2 {
+		t.Errorf("countAllBugsCaught want 2, got %d", got)
+	}
+}
+
+// TestCountAllBugsCaught_SkipsDotAndVendorDirs verifies that hidden dirs
+// (starting with ".") and dirs named node_modules/vendor/__pycache__ are not
+// walked, while normal child dirs are.
+func TestCountAllBugsCaught_SkipsDotAndVendorDirs(t *testing.T) {
+	root := t.TempDir()
+
+	mkFinding := func(dir string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		line := `{"severity":"error","confidence":85}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "findings.jsonl"), []byte(line), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// These should be skipped.
+	mkFinding(filepath.Join(root, ".hidden", ".pakka", "reviews"))
+	mkFinding(filepath.Join(root, "node_modules", ".pakka", "reviews"))
+	mkFinding(filepath.Join(root, "vendor", ".pakka", "reviews"))
+	mkFinding(filepath.Join(root, "__pycache__", ".pakka", "reviews"))
+
+	// This should be counted.
+	mkFinding(filepath.Join(root, "legit", ".pakka", "reviews"))
+
+	got := countAllBugsCaught(root)
+	if got != 1 {
+		t.Errorf("countAllBugsCaught want 1 (legit only), got %d", got)
+	}
+}
+
+// --- Fix C: readAllMeter sums sub-repo entries via prefix match ---
+
+// TestReadAllMeter_SubRepoPrefix verifies that meter entries with repo=root+"/subrepo"
+// are included when reading with root.
+func TestReadAllMeter_SubRepoPrefix(t *testing.T) {
+	home := t.TempDir()
+	useFakeHome(t, home)
+
+	root := "/projects/myrepo"
+	// Entry for root itself.
+	writeMeterEntry(t, home, "meter001", map[string]any{
+		"ts": "t", "session_id": "meter001", "repo": root,
+		"tokens_saved_est": 100,
+	})
+	// Entry for sub-repo.
+	writeMeterEntry(t, home, "meter002", map[string]any{
+		"ts": "t", "session_id": "meter002", "repo": root + "/subrepo",
+		"tokens_saved_est": 200,
+	})
+	// Entry for a different root — must NOT be included.
+	writeMeterEntry(t, home, "meter003", map[string]any{
+		"ts": "t", "session_id": "meter003", "repo": "/projects/other",
+		"tokens_saved_est": 9999,
+	})
+
+	got := readAllMeter(filepath.Join(home, ".pakka", "meter"), root)
+	if got != 300 {
+		t.Errorf("readAllMeter with sub-repo prefix want 300, got %d", got)
+	}
+}
+
+// --- Fix D: readAllTranscripts includes sub-repo cwd paths ---
+
+// TestReadAllTranscripts_SubRepoCWD verifies that a transcript whose cwd
+// resolves to root+"/subrepo" is included when aggregating for root.
+func TestReadAllTranscripts_SubRepoCWD(t *testing.T) {
+	home := t.TempDir()
+	useFakeHome(t, home)
+
+	root := "/projects/myrepo"
+	sub := root + "/subrepo"
+
+	// Override RepoKey so both root and sub map to themselves (identity).
+	useFakeRepoKey(t, map[string]string{
+		root: root,
+		sub:  sub,
+	})
+
+	// Transcript for root cwd — direct match.
+	writeTranscriptWithCWD(t, home, "proj-root", "t1.jsonl", root, []map[string]int64{
+		{"input_tokens": 100, "output_tokens": 50},
+	})
+	// Transcript for sub-repo cwd — prefix match.
+	writeTranscriptWithCWD(t, home, "proj-sub", "t2.jsonl", sub, []map[string]int64{
+		{"input_tokens": 200, "output_tokens": 80},
+	})
+	// Transcript for unrelated repo — must be excluded.
+	writeTranscriptWithCWD(t, home, "proj-other", "t3.jsonl", "/projects/other", []map[string]int64{
+		{"input_tokens": 9999, "output_tokens": 9999},
+	})
+
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	in, _, _, out := readAllTranscripts(projectsDir, root)
+	if in != 300 {
+		t.Errorf("readAllTranscripts sub-repo: want in=300, got %d", in)
+	}
+	if out != 130 {
+		t.Errorf("readAllTranscripts sub-repo: want out=130, got %d", out)
+	}
+}
+
+// writeTranscriptWithCWD creates a project dir with a transcript that embeds
+// the given cwd in each line, so readProjectCWD can resolve it unambiguously.
+func writeTranscriptWithCWD(t *testing.T, home, encodedName, transcriptName, cwd string, turns []map[string]int64) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "projects", encodedName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var sb strings.Builder
+	for _, u := range turns {
+		line := map[string]any{
+			"type":    "assistant",
+			"cwd":     cwd,
+			"message": map[string]any{"usage": u},
+		}
+		data, _ := json.Marshal(line)
+		sb.Write(data)
+		sb.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, transcriptName), []byte(sb.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
