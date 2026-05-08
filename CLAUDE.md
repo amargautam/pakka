@@ -1,7 +1,7 @@
 # CLAUDE.md — pakka plugin
 
 ## Mission
-Ship Claude Code plugin: (a) fewer tokens, (b) catches bugs raw Claude Code misses, (c) proves both via `make bench`. Three numbers. Apache-2.0.
+Ship Claude Code plugin: (a) fewer tokens, (b) catches bugs raw Claude Code misses, (c) proves both via `RECEIPTS.md` and gate enforcement. Apache-2.0.
 
 ## Rules
 - Terse. One word when it works.

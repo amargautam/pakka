@@ -2,11 +2,11 @@
 Target: `github.com/amargautam/pakka` (plugin) + `github.com/amargautam/pakka-marketplace` (catalog). License: Apache-2.0. Internal code: Go. Build window: ~3–5 days over 5 long-running Claude Code passes. Drive with Claude Code. Dogfood from Pass 1.
 This doc is spec. Everything else derives from it.
 ---
-## 1. v0 scope — three absolute claims (vs-raw deferred to v0.2.0)
-1. **Bug catch rate.** 9/10 seeded bugs caught on Pass 5b in-session corpus (combined `pakka:reviewer` + `pakka:security` over 12 corpus entries). Raw Claude Code A/B comparison deferred to v0.2.0 — `claude -p --bare` requires `ANTHROPIC_API_KEY` and skips OAuth/keychain (see DECISIONS.md "Bench methodology"); honest A/B needs API-key bench budget.
+## 1. v0 scope — three absolute claims
+1. **Bug catch rate.** 9/10 seeded bugs caught on Pass 5b in-session corpus (combined `pakka:reviewer` + `pakka:security` over 12 corpus entries).
 2. **Bytes saved (compression).** Cumulative `bytes_saved` and `tokens_saved_est` (= bytes ÷ 3.5) reported by `make self-report` in `RECEIPTS.md`. Token figure is an estimate from byte count, not a measured token count.
 3. **Gate enforcement (architectural).** Review gate runs on every Claude-authored `git commit` against pakka. The `Reviewed-by-pakka` trailer is the visible artifact when the hook fires. Trailer injection fix shipped in Pass 4.7 (v0.1.0). Architectural claim — gate runs, blocks on findings — remains the primary assertion. Verify: `git log --format='%H' | while read sha; do git show -s --format='%(trailers:key=Reviewed-by-pakka,valueonly=true)' "$sha" | grep -q . && echo "$sha"; done | wc -l`.
-No claim without a check. Numbers come from `RECEIPTS.md` and `git log`, not narrative. vs-raw measurement returns at v0.2.0 with budget for `ANTHROPIC_API_KEY` headless runs. See §10 build order.
+No claim without a check. Numbers come from `RECEIPTS.md` and `git log`, not narrative. See §10 build order.
 ---
 ## 2. Repos
 **`amargautam/pakka`** — plugin. Apache-2.0. Public from commit one.
@@ -607,40 +607,9 @@ Rules:
 - Pass: trigger rate ≥ 0.8, false-positive ≤ 0.1, cost within ±10% of last green run.
 Output: `.pakka/eval/<ts>.json` — full results, per-layer verdicts, diffs vs previous green run. Gate: no skill change merges without layer-3 green.
 ---
-## 9. Benchmark corpus — 40 cases
-`benchmarks/corpus.json` indexes everything. Entries:
-```
-{
-  "id": "bench-001",
-  "kind": "real-pr|seeded-bug",
-  "language": "go|ts|py",
-  "repo": "gin-gonic/gin",
-  "pr": 3421,
-  "diff": "benchmarks/diffs/bench-001.patch",
-  "prompt": "benchmarks/prompts/bench-001.md",
-  "expected": { "should_block": false, "findings_required": ["..."] },
-  "baseline_tokens": 12400
-}
-```
-**30 real PRs** (10 each: Go, TS, Python): small-to-medium diffs (50–500 LOC), pulled from well-maintained repos. Suggested sources:
-- Go: `gin-gonic/gin`, `labstack/echo`, `hashicorp/consul`
-- TS: `vercel/next.js`, `tRPC/tRPC`, `honojs/hono`
-- Python: `pydantic/pydantic`, `encode/httpx`, `fastapi/fastapi`
-**10 seeded-bug PRs**: clean PRs mutated with one known-bug-class each:
-1. N+1 query (DB)
-2. Missing null/undefined check
-3. Off-by-one in slice/loop
-4. TOCTOU in file access
-5. SQL injection via string concat
-6. Shell injection via unquoted arg
-7. Secret literal committed
-8. Missing error check (ignored `err`)
-9. Race: shared state without lock
-10. Permission escalation (sudo/chmod 777)
-Each seed has expected finding; `pakka:review` must surface it with confidence ≥ 80. Baseline: run raw Claude Code on same prompts; record what it catches.
-`make bench` executes all 40 via `claude -p`, writes `benchmarks/results/<ts>.json`, updates `README.md` claim numbers via post-script.
-### 9.1 `make self-report` — receipts from building Pakka with Pakka
-Companion target to `make bench`. Reads pakka-build's own `~/.pakka/meter/*.jsonl` + `~/.pakka/audit/*.jsonl` from every session that contributed to repo, emits `RECEIPTS.md`:
+## 9. Self-report — receipts from building Pakka with Pakka
+### 9.1 `make self-report`
+Reads pakka-build's own `~/.pakka/meter/*.jsonl` + `~/.pakka/audit/*.jsonl` from every session that contributed to repo, emits `RECEIPTS.md`:
 - Session count and total wall-clock.
 - Total tokens consumed across build.
 - Estimated tokens saved by compressor (ratio × baseline).
@@ -827,20 +796,18 @@ Then V3 (tool-result truncation). Then V4 (subagent-return).
 V2 (input files) already works. Tests for all. Squash to one commit.
 Push v0.1.0-dev.
 ```
-### Pass 5 — benchmarks + self-report + release (~1 day wall-clock)
-- `benchmarks/corpus.json` with 30 real PRs (10 each TS/Go/Python).
-- `make bench` reproduces claims 1 and 2 end-to-end.
+### Pass 5 — self-report + release (~1 day wall-clock)
 - `make self-report` (§9.1) — reads pakka-build's own audit + meter, emits `RECEIPTS.md`.
 - Tag `v0.1.0`; update `marketplace.json` to pin version.
 - Submit to Anthropic's official marketplace.
 Run:
 ```
 claude --resume <id> \
-       "Execute Pass 5. Run make bench, write numbers into README, run make self-report into RECEIPTS.md, tag v0.1.0."
+       "Execute Pass 5. Run make self-report into RECEIPTS.md, tag v0.1.0."
 ```
-**Gate:** README shows three numbers with commit-hash provenance. `RECEIPTS.md` exists. v0.1.0 tagged.
+**Gate:** README shows claim numbers with commit-hash provenance. `RECEIPTS.md` exists. v0.1.0 tagged.
 ### Total
-~2.5 days of active dev + ~1 day wall-clock on benchmark runs. Calendar 3–5 days with daily review cadence.
+~2.5 days of active dev. Calendar 3–5 days with daily review cadence.
 **Stretch (not blocking v0.1):** Go and Python stack overlays; `pakka-status` command.
 ---
 ## 11. Dogfood protocol

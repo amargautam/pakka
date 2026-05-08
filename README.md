@@ -58,15 +58,15 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **skill-check:** `UserPromptSubmit` hook keyword-scans every message. if a build/plan/review signal matches, targeted alert fires before the model responds. no more relying on model memory.
 
-**Status line:** `pakka [super-ultra] · ↑12.4K (43%) / ↓7.0K (40%) tokens saved · 2 bugs caught` — compression level, token savings, and bugs caught, always visible.
+**Status line:** `pakka [super-ultra] · ~$46.79 saved · 4 bugs caught` — compression level, token savings, and bugs caught, always visible.
 
-## Results (v0.4.0)
+## Results (v0.5.0)
 
 Three absolute numbers, each verifiable from artifacts in this repo.
 
-1. **Bug catch rate: 9/10.** Combined reviewer + security + architect agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus. vs-raw A/B deferred to v0.2.0.
+1. **Bug catch rate: 9/10.** Combined reviewer + security + architect agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus.
 
-2. **Bytes saved: 126,640 cumulative** since 2026-04-24. Estimated tokens: 36,312 (bytes ÷ 3.5). Source: `RECEIPTS.md`, regenerated via `make self-report`.
+2. **Bytes saved: 198,590 cumulative** since 2026-04-24. Estimated tokens: 56,902 (bytes ÷ 3.5). Total estimated savings: ~$46.79. Source: `RECEIPTS.md`, regenerated via `make self-report`.
 
 3. **Gate enforcement: every Claude-authored commit path.** Architectural claim — gate runs and blocks on findings. Verify: `git log --format='%H' | while read sha; do git show -s --format='%(trailers:key=Reviewed-by-pakka,valueonly=true)' "$sha" | grep -q . && echo "$sha"; done | wc -l`.
 
@@ -75,7 +75,7 @@ Three absolute numbers, each verifiable from artifacts in this repo.
 Every commit pakka reviews carries:
 
 ```
-Reviewed-by-pakka: v0.4.0 (gate: passed)
+Reviewed-by-pakka: v0.5.0 (gate: passed)
 Co-authored-by: pakka <279024857+pakka-bot@users.noreply.github.com>
 ```
 
