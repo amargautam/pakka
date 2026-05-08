@@ -2,6 +2,18 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.2] — 2026-05-08
+
+### Fixed
+- Status-line bug count always 0: `countBugsCaught` only scanned exact repo dir; sessions from parent dir (`pakka.dev/`, not a git repo) missed bugs in sub-repos. New `countAllBugsCaught` walks one level of immediate child dirs. Count: 4 → 7.
+- Status-line savings always $0 from parent dir: `readAllMeter` + `readAllTranscripts` used exact repo key match. Now prefix-matches (`root+"/"`) so sub-repo sessions aggregate correctly.
+- `! 1 stale` persistent since v0.4.x: `DECISIONS.md` always timed out at 60s (measured: ~92s actual for 15KB at super-ultra). Transient rewrite errors no longer record `validatorPasses=false` — stale glyph no longer shown for transient failures. `ClaudeCLI` timeout raised 60s → 180s.
+- `[level]` bracket in status line now amber to match `pakka` label color.
+
+### Changed
+- Savings: 298 sessions · 242,664 bytes · ~$64.16 (was 269 · 198,590 · ~$46.79)
+- Bug count: 7 (was 4, now counts sub-repo findings)
+
 ## [v0.5.1] — 2026-05-08
 
 ### Fixed
