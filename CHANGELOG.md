@@ -2,6 +2,24 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.7.0] — 2026-05-09
+
+### Fixed
+- **report**: `fmtInt` MinInt64 guard — infinite recursion on crafted JSONL input eliminated
+- **validator**: `reInlineCode` `{2,}` → `{1,}` — single-char identifiers (`i`, `x`, `-v`) now preserved
+- **validator**: `reEnvVar` extended to `${VAR}`, `${var}`, `$var` (braced and lowercase forms)
+- **validator**: `reVersion` extended to semver pre-release/build suffixes (`-rc1`, `+build.42`)
+- **validator**: `reMarker` case-insensitive — `todo`, `Todo`, `TODO` all protected
+- **validator**: `reFencedTriple`/`reFencedTilde` language tag includes `#` and `.` — `c#`, `f#`, `.proto` fences now validated
+- **validator**: `rePathAbs` trailing punctuation stripped from captures — fewer false-positive validator retries
+- **meter**: `estimateTokens` calibrated to 3.5 bytes/token (was 4) — consistent with `WriteSavings`
+- **recall**: rune-safe preview truncation — no more split UTF-8 codepoints in JSON output
+- **stackgate**: quote chars (`"`, `'`) added to `shellMetaRe` — explicit unquoted-argv contract enforced
+
+### Added
+- **internal/claudecli**: extracted shared package for `claude -p` argv construction — single source of truth for both `specfind` and `compress/semantic` callers
+- **orchestrator**: `RunAsync()` now returns error; fork failures logged via `debugLogf`
+
 ## [v0.6.0] — 2026-05-09
 
 ### Fixed
