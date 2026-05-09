@@ -32,10 +32,11 @@ const StateFileName = "compress-state.json"
 
 // Entry is one record in the state map.
 type Entry struct {
-	SourceSHA        string `json:"sourceSHA"`
-	Level            string `json:"level"`
-	CompressedAt     string `json:"compressedAt"`
-	ValidatorPasses  bool   `json:"validatorPasses"`
+	SourceSHA       string `json:"sourceSHA"`
+	OutputSHA       string `json:"outputSHA"`
+	Level           string `json:"level"`
+	CompressedAt    string `json:"compressedAt"`
+	ValidatorPasses bool   `json:"validatorPasses"`
 }
 
 // State is the in-memory map keyed by absolute target file path.
@@ -151,17 +152,36 @@ func (s *State) Stale(absPath, currentLevel, sourceSHA string) bool {
 // the supplied compressedAt string (RFC3339 UTC). The Save method must be
 // called separately to persist.
 //
+// outputSHA is the hex-encoded SHA-256 of the compressed output written to the
+// live file. Pass "" for failed compressions or legacy entries.
+//
 // Purpose: Mark a successful (or failed) compression in memory.
 // Errors: None.
-func (s *State) Record(absPath, level, sourceSHA, compressedAt string, validatorPasses bool) {
+func (s *State) Record(absPath, level, sourceSHA, outputSHA, compressedAt string, validatorPasses bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries[absPath] = Entry{
 		SourceSHA:       sourceSHA,
+		OutputSHA:       outputSHA,
 		Level:           level,
 		CompressedAt:    compressedAt,
 		ValidatorPasses: validatorPasses,
 	}
+}
+
+// GetOutputSHA returns the recorded compression output SHA for absPath, or ""
+// if no entry exists or the entry has no outputSHA (legacy).
+//
+// Purpose: Detect user edits to the live file between runs.
+// Errors: None.
+func (s *State) GetOutputSHA(absPath string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[absPath]
+	if !ok {
+		return ""
+	}
+	return e.OutputSHA
 }
 
 // Get returns the entry for absPath and a found flag.

@@ -191,6 +191,23 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 			o.logf("skip read original: %s (%v)", originalPath, err)
 			return
 		}
+		// Detect user edits: compare live file against last compression output.
+		// If they differ, the user edited the live file — adopt it as new baseline.
+		// Skip when outputSHA is empty (legacy entries or prior validator failure).
+		if outputSHA := state.GetOutputSHA(abs); outputSHA != "" {
+			if live, liveErr := os.ReadFile(abs); liveErr == nil {
+				if sha256Hex(live) != outputSHA {
+					// User edited the live file — adopt as new baseline.
+					if writeErr := atomicWrite(originalPath, live); writeErr == nil {
+						o.logf("snapshot refreshed from user edits: %s", abs)
+						origBytes = live
+					} else {
+						o.logf("skip: snapshot refresh failed for %s (%v) — preserving user edits", abs, writeErr)
+						return
+					}
+				}
+			}
+		}
 	}
 	sourceSHA := sha256Hex(origBytes)
 
@@ -210,7 +227,7 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 		var failed *semantic.FailedError
 		if errors.As(err, &failed) {
 			o.logFailure(abs, level, failed.Violations())
-			state.Record(abs, level, sourceSHA, now().UTC().Format(time.RFC3339), false)
+			state.Record(abs, level, sourceSHA, "", now().UTC().Format(time.RFC3339), false)
 			return
 		}
 		o.logf("rewrite error: %s level=%s err=%v", abs, level, err)
@@ -229,7 +246,8 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 	saved := int64(len(origBytes) - len(out))
 	_ = meter.WriteSavings(o.SessionID, o.Repo, saved)
 
-	state.Record(abs, level, sourceSHA, now().UTC().Format(time.RFC3339), true)
+	outputSHA := sha256Hex([]byte(out))
+	state.Record(abs, level, sourceSHA, outputSHA, now().UTC().Format(time.RFC3339), true)
 	o.logf("compressed: %s level=%s bytes=%d→%d saved=%d",
 		abs, level, len(origBytes), len(out), saved)
 }

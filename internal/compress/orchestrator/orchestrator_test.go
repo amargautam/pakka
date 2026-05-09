@@ -21,8 +21,8 @@ import (
 func TestStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s := NewState()
-	s.Record("/x/CLAUDE.md", "ultra", "abc", "2026-04-29T00:00:00Z", true)
-	s.Record("/x/DESIGN.md", "strict", "def", "2026-04-29T00:00:01Z", false)
+	s.Record("/x/CLAUDE.md", "ultra", "abc", "", "2026-04-29T00:00:00Z", true)
+	s.Record("/x/DESIGN.md", "strict", "def", "", "2026-04-29T00:00:01Z", false)
 	if err := s.Save(dir); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -55,8 +55,8 @@ func TestStateRoundTrip(t *testing.T) {
 
 func TestStaleMatrix(t *testing.T) {
 	s := NewState()
-	s.Record("/a", "strict", "sha-1", "t", true)
-	s.Record("/b", "strict", "sha-1", "t", false)
+	s.Record("/a", "strict", "sha-1", "", "t", true)
+	s.Record("/b", "strict", "sha-1", "", "t", false)
 
 	cases := []struct {
 		name      string
@@ -374,14 +374,165 @@ func TestCountStaleFromDisk(t *testing.T) {
 	}
 	// Good state with 2 failures.
 	s := NewState()
-	s.Record("/a", "strict", "x", "t", false)
-	s.Record("/b", "strict", "y", "t", false)
-	s.Record("/c", "strict", "z", "t", true)
+	s.Record("/a", "strict", "x", "", "t", false)
+	s.Record("/b", "strict", "y", "", "t", false)
+	s.Record("/c", "strict", "z", "", "t", true)
 	if err := s.Save(repo); err != nil {
 		t.Fatal(err)
 	}
 	if got := CountStaleFromDisk(repo); got != 2 {
 		t.Errorf("CountStaleFromDisk want 2 got %d", got)
+	}
+}
+
+// TestUserEditPreservedOnLevelChange ensures that when a user edits the live
+// compressed file and the orchestrator runs at a new level, the user edits are
+// adopted as the new baseline rather than being silently overwritten.
+func TestUserEditPreservedOnLevelChange(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, "CLAUDE.md")
+	original := "# Title\n\nOriginal body that is definitely longer than any rewrite output here."
+	writeFile(t, src, original)
+
+	// Level A: compress the file.
+	rewA := &stubRewriter{out: "# Title\ncompressed-A"}
+	var logBuf bytes.Buffer
+	o := &Orchestrator{
+		Repo:      repo,
+		Targets:   []string{"CLAUDE.md"},
+		Level:     "strict",
+		SessionID: "editTest1",
+		Rewriter:  rewA,
+		LogWriter: &logBuf,
+	}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run A: %v", err)
+	}
+	abs, _ := filepath.Abs(src)
+	got, _ := os.ReadFile(abs)
+	if string(got) != "# Title\ncompressed-A" {
+		t.Fatalf("after level-A compress, expected compressed output, got %q", got)
+	}
+
+	// User edits the live file.
+	userEdited := "# Title\n\nUser edited content with extra detail added manually."
+	writeFile(t, src, userEdited)
+
+	// Level B: run at a new level — orchestrator must use user-edited content
+	// as compression input (not the original snapshot).
+	rewB := &stubRewriter{out: "# Title\ncompressed-B"}
+	o.Level = "ultra"
+	o.Rewriter = rewB
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run B: %v", err)
+	}
+
+	// The rewriter must have seen the user-edited content as input.
+	rewB.mu.Lock()
+	seen := rewB.lastSeen
+	rewB.mu.Unlock()
+	if seen != userEdited {
+		t.Errorf("rewriter input: got %q, want user-edited content %q", seen, userEdited)
+	}
+}
+
+// TestNoEditNoSnapshotRefresh verifies that when the live file has NOT been
+// edited after compression, a level change does NOT trigger a snapshot refresh.
+func TestNoEditNoSnapshotRefresh(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, "CLAUDE.md")
+	original := "# Title\n\nOriginal body that is definitely longer than any rewrite output here."
+	writeFile(t, src, original)
+
+	// Level A: compress.
+	rewA := &stubRewriter{out: "# Title\ncompressed-A"}
+	var logBuf bytes.Buffer
+	o := &Orchestrator{
+		Repo:      repo,
+		Targets:   []string{"CLAUDE.md"},
+		Level:     "strict",
+		SessionID: "noEditTest1",
+		Rewriter:  rewA,
+		LogWriter: &logBuf,
+	}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run A: %v", err)
+	}
+
+	// Read the snapshot BEFORE level-B run.
+	origPath := strings.TrimSuffix(src, ".md") + ".original.md"
+	snapBefore, err := os.ReadFile(origPath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+
+	// Level B: no user edits — the live file still contains "# Title\ncompressed-A".
+	rewB := &stubRewriter{out: "# Title\ncompressed-B"}
+	o.Level = "ultra"
+	o.Rewriter = rewB
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run B: %v", err)
+	}
+
+	// Snapshot must remain unchanged (no spurious refresh).
+	snapAfter, err := os.ReadFile(origPath)
+	if err != nil {
+		t.Fatalf("read snapshot after: %v", err)
+	}
+	if string(snapAfter) != string(snapBefore) {
+		t.Errorf("snapshot was spuriously refreshed: before=%q after=%q", snapBefore, snapAfter)
+	}
+}
+
+// TestLegacyStateNoOutputSHA verifies that entries without an outputSHA field
+// (legacy state) do NOT trigger a snapshot refresh — empty outputSHA is a safe
+// no-op fallback.
+func TestLegacyStateNoOutputSHA(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, "CLAUDE.md")
+	original := "# Title\n\nOriginal body that is definitely longer than any rewrite output here."
+	writeFile(t, src, original)
+
+	// Manually write a legacy state entry (no outputSHA field).
+	origPath := strings.TrimSuffix(src, ".md") + ".original.md"
+	writeFile(t, origPath, original)
+	abs, _ := filepath.Abs(src)
+	sourceSHA := sha256Hex([]byte(original))
+
+	s := NewState()
+	// Record with empty outputSHA (legacy — 4th positional arg is "").
+	s.Record(abs, "strict", sourceSHA, "", "2026-01-01T00:00:00Z", true)
+	if err := s.Save(repo); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	// Simulate user editing the live file after the legacy run.
+	userEdited := "# Title\n\nUser added something important here."
+	writeFile(t, src, userEdited)
+
+	// Run at a new level. Legacy entry (outputSHA="") must NOT cause refresh.
+	// Because outputSHA is empty, detection is skipped → snapshot stays original.
+	rewB := &stubRewriter{out: "# Title\ncompressed-B"}
+	var logBuf bytes.Buffer
+	o := &Orchestrator{
+		Repo:      repo,
+		Targets:   []string{"CLAUDE.md"},
+		Level:     "ultra",
+		SessionID: "legacyTest1",
+		Rewriter:  rewB,
+		LogWriter: &logBuf,
+	}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// Snapshot must remain as original (no refresh triggered by legacy entry).
+	snapAfter, err := os.ReadFile(origPath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if string(snapAfter) != original {
+		t.Errorf("legacy state caused spurious snapshot refresh: got %q, want %q", snapAfter, original)
 	}
 }
 
@@ -522,7 +673,7 @@ func (f *flakyRewriter) Rewrite(_ context.Context, _ string, _ semantic.Level) (
 func TestSavedStateJSON(t *testing.T) {
 	repo := t.TempDir()
 	s := NewState()
-	s.Record("/abs/CLAUDE.md", "ultra", "deadbeef", "2026-04-29T12:34:56Z", true)
+	s.Record("/abs/CLAUDE.md", "ultra", "deadbeef", "", "2026-04-29T12:34:56Z", true)
 	if err := s.Save(repo); err != nil {
 		t.Fatal(err)
 	}
