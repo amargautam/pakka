@@ -27,6 +27,9 @@ MAX_AGE=300
 
 if [ ! -f "$PASS_FILE" ]; then exit 0; fi
 PASS_TS=$(cat "$PASS_FILE" 2>/dev/null)
+case "$PASS_TS" in
+  ''|*[!0-9]*) exit 0 ;;
+esac
 NOW=$(date +%s)
 AGE=$(( NOW - PASS_TS ))
 if [ "$AGE" -gt "$MAX_AGE" ]; then exit 0; fi

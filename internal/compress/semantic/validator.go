@@ -32,7 +32,9 @@ const (
 	KindDateChanged        = "date-changed"
 	KindVersionChanged     = "version-changed"
 	KindEnvVarChanged      = "env-var-changed"
-	KindCriticalMarkerLost = "critical-marker-lost"
+	KindCriticalMarkerLost   = "critical-marker-lost"
+	KindNegationLost         = "negation-lost"
+	KindPercentageChanged    = "percentage-changed"
 )
 
 // excerpt returns at most 120 chars of s for logging, with newlines collapsed
@@ -69,6 +71,11 @@ var (
 	reVersion    = regexp.MustCompile(`\bv?\d+\.\d+(?:\.\d+)?\b`)
 	reEnvVar     = regexp.MustCompile(`\$[A-Z_][A-Z0-9_]*`)
 	reMarker     = regexp.MustCompile(`\b(?:TODO|FIXME|SECURITY|HACK|BUG|XXX)\b`)
+	// reNegation matches negation words whose removal or alteration inverts meaning.
+	// Case-insensitive: "Not", "NOT", "not" all load-bearing.
+	reNegation = regexp.MustCompile(`(?i)\b(?:not|never|no|cannot|can't|shouldn't|won't|don't|isn't|aren't|wasn't|weren't|nor)\b`)
+	// rePercent matches numeric percentages. Handles decimals (99.9%).
+	rePercent  = regexp.MustCompile(`\b\d+(?:\.\d+)?%`)
 )
 
 // extractAll runs re over s and returns the captured strings. When the regexp
@@ -167,6 +174,12 @@ func Validate(original, rewritten string) []Violation {
 	// Critical markers — uppercase only; the deterministic engine already
 	// preserves lines containing these. Semantic mode must too.
 	out = checkRegion(out, KindCriticalMarkerLost, original, rewritten, reMarker)
+
+	// Negation words — removal inverts meaning of policy/security statements.
+	out = checkRegion(out, KindNegationLost, original, rewritten, reNegation)
+
+	// Percentages — LLM can silently substitute numeric values.
+	out = checkRegion(out, KindPercentageChanged, original, rewritten, rePercent)
 
 	return out
 }

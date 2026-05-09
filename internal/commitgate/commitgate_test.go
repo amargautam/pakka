@@ -316,8 +316,8 @@ func TestSkipPakkaNoTrailers(t *testing.T) {
 	if d.Command != "" {
 		t.Errorf("[skip pakka] must not produce any trailers, got Command = %q", d.Command)
 	}
-	if d.AuditNote != "review_skipped=user_skip" {
-		t.Errorf("AuditNote = %q, want review_skipped=user_skip", d.AuditNote)
+	if d.AuditNote != "review_skipped=skip_marker" {
+		t.Errorf("AuditNote = %q, want review_skipped=skip_marker", d.AuditNote)
 	}
 }
 

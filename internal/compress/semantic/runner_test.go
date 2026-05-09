@@ -331,9 +331,9 @@ func TestParseLevel(t *testing.T) {
 		"strict":      LevelStrict,
 		"ultra":       LevelUltra,
 		"super-ultra": LevelSuperUltra,
-		// Empty + unknown fall back to the brand default (ultra).
-		"":      LevelUltra,
-		"weird": LevelUltra,
+		// Empty + unknown fall back to the brand default (super-ultra).
+		"":      LevelSuperUltra,
+		"weird": LevelSuperUltra,
 	}
 	for in, want := range cases {
 		if got := ParseLevel(in); got != want {

@@ -42,14 +42,14 @@ func AllLevels() []Level {
 // with loadOutputLevel() in cmd/pakka-core.
 //
 // Purpose: Safe level parsing for CLI flag values and skill arguments.
-// Errors: Never errors; unknown strings map to LevelUltra (intentional default).
+// Errors: Never errors; unknown strings map to LevelSuperUltra (intentional default).
 func ParseLevel(s string) Level {
 	switch Level(s) {
 	case LevelLite, LevelStrict, LevelUltra, LevelSuperUltra:
 		return Level(s)
 	default:
-		// ultra is the intentional default — see DECISIONS.md.
-		return LevelUltra
+		// super-ultra is the intentional default — see DECISIONS.md.
+		return LevelSuperUltra
 	}
 }
 

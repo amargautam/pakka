@@ -700,8 +700,16 @@ func shellQuote(s string) string {
 // Purpose: Pure decision logic for commit gating. No I/O, no side effects.
 // Errors: Never errors; always returns a valid Decision.
 func Evaluate(cmd string, cfg *Config, state *State) *Decision {
-	// Not a git commit — pass through.
+	// Not a git commit — pass through, unless the command still contains
+	// "git commit" in a shape the gate cannot safely parse (e.g. compound
+	// commands with ;, &&, |, >).  Those must be blocked, not waved through.
 	if !IsGitCommit(cmd) {
+		if strings.Contains(cmd, "git commit") {
+			return &Decision{
+				Allow:  false,
+				Stderr: "pakka: unrecognized git commit shape — gate cannot verify safety; use a plain form or add [skip pakka] to bypass",
+			}
+		}
 		return &Decision{Allow: true}
 	}
 
@@ -711,8 +719,14 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	}
 
 	// Per-commit skip → allow, no trailers, no gate.
+	// Emit a stderr notice so skips are visible; audit note uses neutral tag
+	// since the gate cannot distinguish human-provided vs model-inserted markers.
 	if HasSkipMarker(cmd) {
-		return &Decision{Allow: true, AuditNote: "review_skipped=user_skip"}
+		return &Decision{
+			Allow:     true,
+			AuditNote: "review_skipped=skip_marker",
+			Stderr:    "pakka: [skip pakka] detected — gate, trailers, and audit bypassed for this commit",
+		}
 	}
 
 	// Per-trailer idempotency.

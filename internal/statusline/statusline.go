@@ -273,14 +273,14 @@ func formatRunLine(m metrics, sep string) string {
 }
 
 // resolveLevel returns a valid compression level from the supplied string.
-// Empty string and unknown levels both fall back to "ultra" — pakka's brand
-// default per memory/DECISIONS.md "Default output level: ultra".
+// Empty string and unknown levels both fall back to "super-ultra" — pakka's brand
+// default per memory/DECISIONS.md "Default output level: super-ultra".
 func resolveLevel(outputLevel string) string {
 	if outputLevel == "" {
-		return "ultra"
+		return "super-ultra"
 	}
 	if _, ok := outputMultiplier[outputLevel]; !ok {
-		return "ultra"
+		return "super-ultra"
 	}
 	return outputLevel
 }
