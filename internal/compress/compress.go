@@ -143,7 +143,7 @@ func apply(input string, mode Mode) string {
 	out := make([]string, 0, len(lines))
 
 	inCode := false
-	seen := make(map[string]bool)
+	var lastHeading string
 	blanks := 0
 
 	for _, line := range lines {
@@ -158,8 +158,13 @@ func apply(input string, mode Mode) string {
 				continue
 			}
 			inCode = true
-			// Strip language identifier from opening fence
-			out = append(out, trimmed[:3])
+			// Strict mode strips the language tag to save tokens; other modes
+			// preserve it verbatim (language tag is load-bearing for tooling).
+			if mode == ModeStrict {
+				out = append(out, trimmed[:3])
+			} else {
+				out = append(out, strings.TrimRight(trimmed, " \t"))
+			}
 			blanks = 0
 			continue
 		}
@@ -191,13 +196,16 @@ func apply(input string, mode Mode) string {
 		}
 		blanks = 0
 
-		// Heading deduplication (outside code blocks)
+		// Consecutive heading deduplication (outside code blocks).
+		// Only drops a heading if it immediately follows the identical heading —
+		// preserves repeated headings in different sections.
 		if strings.HasPrefix(trimmed, "#") {
-			key := strings.ToLower(trimmed)
-			if seen[key] {
+			if strings.ToLower(trimmed) == lastHeading {
 				continue
 			}
-			seen[key] = true
+			lastHeading = strings.ToLower(trimmed)
+		} else {
+			lastHeading = "" // reset on non-heading content so only truly consecutive duplicates are dropped
 		}
 
 		// Strict: collapse inline whitespace, trim trailing spaces

@@ -117,12 +117,25 @@ func TestStrictStripsFenceHeader(t *testing.T) {
 }
 
 func TestStrictDedupsHeadings(t *testing.T) {
+	// Headings separated by content must both be preserved.
 	input := "# Intro\nfoo\n# Intro\nbar\n"
 	r := Run(input, ModeStrict)
-	if strings.Count(r.Output, "# Intro") != 1 {
-		t.Errorf("expected 1 heading, got %q", r.Output)
+	if strings.Count(r.Output, "# Intro") != 2 {
+		t.Errorf("expected 2 headings (non-consecutive dedup should not drop), got %q", r.Output)
 	}
 	if !strings.Contains(r.Output, "foo") || !strings.Contains(r.Output, "bar") {
+		t.Errorf("non-heading content should be preserved, got %q", r.Output)
+	}
+}
+
+func TestStrictDedupsConsecutiveHeadings(t *testing.T) {
+	// Truly consecutive identical headings must be collapsed to one.
+	input := "# Intro\n# Intro\nfoo\n"
+	r := Run(input, ModeStrict)
+	if strings.Count(r.Output, "# Intro") != 1 {
+		t.Errorf("expected 1 heading for consecutive duplicates, got %q", r.Output)
+	}
+	if !strings.Contains(r.Output, "foo") {
 		t.Errorf("non-heading content should be preserved, got %q", r.Output)
 	}
 }
@@ -213,11 +226,20 @@ func TestFormatRatio(t *testing.T) {
 }
 
 func TestHeadingDedup_CaseSensitive(t *testing.T) {
+	// Headings with different case separated by content must both be preserved.
 	input := "# Intro\nfoo\n# intro\nbar\n"
 	r := Run(input, ModeStrict)
-	// Both should be deduplicated (case-insensitive)
+	if strings.Count(r.Output, "ntro") != 2 {
+		t.Errorf("heading dedup should not drop non-consecutive headings (even same case), got %q", r.Output)
+	}
+}
+
+func TestHeadingDedup_ConsecutiveCaseInsensitive(t *testing.T) {
+	// Consecutive headings differing only in case must be collapsed (case-insensitive).
+	input := "# Intro\n# intro\nfoo\n"
+	r := Run(input, ModeStrict)
 	if strings.Count(r.Output, "ntro") != 1 {
-		t.Errorf("heading dedup should be case-insensitive, got %q", r.Output)
+		t.Errorf("consecutive heading dedup should be case-insensitive, got %q", r.Output)
 	}
 }
 

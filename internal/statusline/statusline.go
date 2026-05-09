@@ -67,6 +67,45 @@ var outputMultiplier = map[string]float64{
 	"super-ultra": 1.94,
 }
 
+// transcriptCacheEntry holds pre-summed token counts for one transcript file.
+type transcriptCacheEntry struct {
+	Mtime         int64 `json:"mtime"`
+	Size          int64 `json:"size"`
+	InTokens      int64 `json:"in_tokens"`
+	CacheCreation int64 `json:"cache_creation"`
+	CacheRead     int64 `json:"cache_read"`
+	OutTokens     int64 `json:"out_tokens"`
+}
+
+type transcriptCache struct {
+	Entries map[string]transcriptCacheEntry `json:"entries"`
+}
+
+func loadTranscriptCache(path string) *transcriptCache {
+	c := &transcriptCache{Entries: make(map[string]transcriptCacheEntry)}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return c
+	}
+	_ = json.Unmarshal(data, c)
+	if c.Entries == nil {
+		c.Entries = make(map[string]transcriptCacheEntry)
+	}
+	return c
+}
+
+func saveTranscriptCache(path string, c *transcriptCache) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, path)
+}
+
 // metrics holds computed status-line values.
 type metrics struct {
 	outputLevel   string
@@ -574,6 +613,17 @@ func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead,
 	if err != nil {
 		return 0, 0, 0, 0
 	}
+
+	// Resolve cache path.
+	home := OverrideHome
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	cachePath := filepath.Join(home, ".pakka", "transcript-cache.json")
+	cache := loadTranscriptCache(cachePath)
+	dirty := false
+
+	cwdToRepo := make(map[string]string)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -590,7 +640,11 @@ func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead,
 		if cwd == "" {
 			continue
 		}
-		resolved := resolveRepoKey(cwd)
+		resolved, ok := cwdToRepo[cwd]
+		if !ok {
+			resolved = resolveRepoKey(cwd)
+			cwdToRepo[cwd] = resolved
+		}
 		if resolved != repo && !strings.HasPrefix(resolved, repo+"/") {
 			continue
 		}
@@ -603,12 +657,39 @@ func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead,
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
 			}
-			ti, tcc, tcr, to := sumTranscriptFile(filepath.Join(dirPath, f.Name()))
+			absPath := filepath.Join(dirPath, f.Name())
+			info, err := f.Info()
+			if err != nil {
+				continue
+			}
+			mtime := info.ModTime().UnixNano()
+			size := info.Size()
+
+			if entry, ok := cache.Entries[absPath]; ok && entry.Mtime == mtime && entry.Size == size {
+				// Cache hit — use pre-summed values.
+				in += entry.InTokens
+				cacheCreation += entry.CacheCreation
+				cacheRead += entry.CacheRead
+				out += entry.OutTokens
+				continue
+			}
+
+			// Cache miss — re-sum and update.
+			ti, tcc, tcr, to := sumTranscriptFile(absPath)
 			in += ti
 			cacheCreation += tcc
 			cacheRead += tcr
 			out += to
+			cache.Entries[absPath] = transcriptCacheEntry{
+				Mtime: mtime, Size: size,
+				InTokens: ti, CacheCreation: tcc, CacheRead: tcr, OutTokens: to,
+			}
+			dirty = true
 		}
+	}
+
+	if dirty {
+		saveTranscriptCache(cachePath, cache)
 	}
 	return in, cacheCreation, cacheRead, out
 }

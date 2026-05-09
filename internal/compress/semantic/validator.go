@@ -35,6 +35,7 @@ const (
 	KindCriticalMarkerLost   = "critical-marker-lost"
 	KindNegationLost         = "negation-lost"
 	KindPercentageChanged    = "percentage-changed"
+	KindIntegerChanged       = "integer-changed"
 )
 
 // excerpt returns at most 120 chars of s for logging, with newlines collapsed
@@ -63,7 +64,7 @@ var (
 	reInlineCode   = regexp.MustCompile("`[^`\n]{2,}`")
 	reURL          = regexp.MustCompile(`(?:https?|ftp|ssh)://[^\s)]+`)
 	// Path heuristics. Tightened to avoid matching ordinary words.
-	rePathAbs    = regexp.MustCompile(`(?:^|[\s(\[])(/[A-Za-z0-9_.][\w./-]*)`)
+	rePathAbs    = regexp.MustCompile(`(?:^|[\s(\[:"'<>=])(/[A-Za-z0-9_.][\w./-]*)`)
 	rePathHome   = regexp.MustCompile(`(?:^|[\s(\[])(~/[\w./-]+)`)
 	rePathRel    = regexp.MustCompile(`(?:^|[\s(\[])(\./[\w./-]+)`)
 	rePathWin    = regexp.MustCompile(`[A-Za-z]:\\[\w\\.-]+`)
@@ -76,6 +77,9 @@ var (
 	reNegation = regexp.MustCompile(`(?i)\b(?:not|never|no|cannot|can't|shouldn't|won't|don't|isn't|aren't|wasn't|weren't|nor)\b`)
 	// rePercent matches numeric percentages. Handles decimals (99.9%).
 	rePercent  = regexp.MustCompile(`\b\d+(?:\.\d+)?%`)
+	// reInteger matches standalone integers ≥2 digits. Single-digit integers
+	// excluded — too many false positives on list markers, step numbers, etc.
+	reInteger = regexp.MustCompile(`\b\d{2,}\b`)
 )
 
 // extractAll runs re over s and returns the captured strings. When the regexp
@@ -180,6 +184,9 @@ func Validate(original, rewritten string) []Violation {
 
 	// Percentages — LLM can silently substitute numeric values.
 	out = checkRegion(out, KindPercentageChanged, original, rewritten, rePercent)
+
+	// Standalone integers — ports, timeouts, counts are load-bearing.
+	out = checkRegion(out, KindIntegerChanged, original, rewritten, reInteger)
 
 	return out
 }

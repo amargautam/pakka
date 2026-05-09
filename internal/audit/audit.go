@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/amargautam/pakka/internal/data"
@@ -124,8 +125,16 @@ func WriteNote(sessionID, kind, note string) error {
 }
 
 func shortSID(sid string) string {
-	if len(sid) > 8 {
-		return sid[:8]
+	var b strings.Builder
+	for _, r := range sid {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
 	}
-	return sid
+	clean := b.String()
+	if len(clean) > 8 {
+		return clean[:8]
+	}
+	return clean
 }

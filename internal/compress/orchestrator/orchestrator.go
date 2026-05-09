@@ -225,9 +225,7 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 
 	// Meter savings (real bytes saved).
 	saved := int64(len(origBytes) - len(out))
-	if saved > 0 {
-		_ = meter.WriteSavings(o.SessionID, o.Repo, saved)
-	}
+	_ = meter.WriteSavings(o.SessionID, o.Repo, saved)
 
 	state.Record(abs, level, sourceSHA, now().UTC().Format(time.RFC3339), true)
 	o.logf("compressed: %s level=%s bytes=%d→%d saved=%d",

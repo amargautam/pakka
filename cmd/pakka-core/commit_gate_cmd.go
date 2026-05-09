@@ -82,6 +82,7 @@ func runCommitGate() {
 	}
 
 	cfg := loadCommitGateConfig()
+	cfg.SessionID = event.SessionID
 	reviewsDir := resolveReviewsDir(input.Command)
 	state := gatherReviewState(cfg, input.Command)
 	d := commitgate.Evaluate(input.Command, cfg, state)

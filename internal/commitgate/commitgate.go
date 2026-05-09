@@ -26,6 +26,7 @@ type Config struct {
 	MaxDiffBytes        int
 	SkipPaths           []string
 	Version             string
+	SessionID           string // nonce added to trailer to prevent pre-planting forgery
 }
 
 // DefaultConfig returns design-doc defaults.
@@ -77,17 +78,43 @@ type Decision struct {
 // BaselineTrailer returns the baseline trailer value (Trailer A).
 //
 // Purpose: Trailer for commits without a passing review gate.
+// sessionID is embedded as a short nonce to prevent pre-planting forgery.
 // Errors: None.
-func BaselineTrailer(version string) string {
+func BaselineTrailer(version, sessionID string) string {
+	if sid := shortSID(sessionID); sid != "" {
+		return fmt.Sprintf("%s v%s (sid:%s)", trailerKeyA, version, sid)
+	}
 	return fmt.Sprintf("%s v%s", trailerKeyA, version)
 }
 
 // StrongTrailer returns the strong (review-passed) trailer value (Trailer A).
 //
 // Purpose: Trailer for commits that passed the review gate.
+// sessionID is embedded as a short nonce to prevent pre-planting forgery.
 // Errors: None.
-func StrongTrailer(version string) string {
+func StrongTrailer(version, sessionID string) string {
+	if sid := shortSID(sessionID); sid != "" {
+		return fmt.Sprintf("%s v%s (gate: passed, sid:%s)", trailerKeyA, version, sid)
+	}
 	return fmt.Sprintf("%s v%s (gate: passed)", trailerKeyA, version)
+}
+
+// shortSID sanitizes a session ID to [A-Za-z0-9_-] and returns the first 8
+// characters of the result, or the full sanitized ID if 8 chars or fewer.
+// Returns "" for empty input or input with no safe characters.
+func shortSID(sid string) string {
+	var b strings.Builder
+	for _, r := range sid {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	clean := b.String()
+	if len(clean) > 8 {
+		return clean[:8]
+	}
+	return clean
 }
 
 // CoAuthorTrailer returns the Co-authored-by trailer value (Trailer B).
@@ -761,14 +788,14 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	if cfg.AutoGate {
 		// Oversize diff — skip gate.
 		if cfg.MaxDiffBytes > 0 && state.DiffBytes > cfg.MaxDiffBytes {
-			d := maybeRewrite(BaselineTrailer(cfg.Version))
+			d := maybeRewrite(BaselineTrailer(cfg.Version, cfg.SessionID))
 			d.AuditNote = "review_skipped=oversize"
 			return d
 		}
 
 		// Recent passing review — strong trailer.
 		if state.HasRecentPass {
-			return maybeRewrite(StrongTrailer(cfg.Version))
+			return maybeRewrite(StrongTrailer(cfg.Version, cfg.SessionID))
 		}
 
 		// No recent pass — block.
@@ -782,7 +809,7 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	}
 
 	// No gate — baseline Trailer A (if needed) + Trailer B (if needed).
-	return maybeRewrite(BaselineTrailer(cfg.Version))
+	return maybeRewrite(BaselineTrailer(cfg.Version, cfg.SessionID))
 }
 
 // FormatFindings formats error findings for stderr output.

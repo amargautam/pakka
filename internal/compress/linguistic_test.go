@@ -45,8 +45,6 @@ func TestLinguisticHedging(t *testing.T) {
 		{"I believe it works", "it works"},
 		{"in my opinion, it works", "it works"},
 		{"it seems broken", "broken"},
-		{"maybe try again", "try again"},
-		{"perhaps later", "later"},
 	}
 	for _, c := range cases {
 		got := linguisticLine(c.in)

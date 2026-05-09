@@ -12,7 +12,9 @@ package recall
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,7 +172,11 @@ func indexFile(db *sql.DB, path string) error {
 		}
 
 		if readErr != nil {
-			// EOF or real error — flush remaining buffer.
+			if !errors.Is(readErr, io.EOF) {
+				// Real error — do NOT advance offset; caller retries cleanly next run.
+				return fmt.Errorf("recall: read %s: %w", path, readErr)
+			}
+			// EOF — flush any partial line remaining in buffer.
 			if line := strings.TrimSpace(string(buf)); line != "" {
 				currentOffset += int64(len(buf))
 				sid, ts, kind, filePath, content := parseAuditLine(path, line)

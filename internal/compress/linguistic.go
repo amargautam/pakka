@@ -44,9 +44,6 @@ var linguisticRules = []struct {
 	{regexp.MustCompile(`(?i)\bI believe\s+`), ""},
 	{regexp.MustCompile(`(?i)\bin my opinion,?\s*`), ""},
 	{regexp.MustCompile(`(?i)\bit seems\s+`), ""},
-	{regexp.MustCompile(`(?i)\bmaybe\s+`), ""},
-	{regexp.MustCompile(`(?i)\bperhaps\s+`), ""},
-
 	// 4. Pleasantries
 	{regexp.MustCompile(`(?i)\bplease\s+`), ""},
 	{regexp.MustCompile(`(?i)\bthanks\.?\s*`), ""},
@@ -66,7 +63,7 @@ var linguisticRules = []struct {
 	// 1. Articles (last — after phrases containing them)
 	{regexp.MustCompile(`(?i)\bthe\s+`), ""},
 	{regexp.MustCompile(`(?i)\ban\s+`), ""},
-	{regexp.MustCompile(`(?i)\ba\s+`), ""},
+	{regexp.MustCompile(`\ba\s+`), ""},
 }
 
 // applyLinguistic runs word-level compression on already-structurally-compressed text.
