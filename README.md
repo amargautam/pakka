@@ -66,7 +66,7 @@ Three absolute numbers, each verifiable from artifacts in this repo.
 
 1. **Bug catch rate: 9/10.** Combined reviewer + security + architect agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus.
 
-2. **Bytes saved: 300,453 cumulative** since 2026-04-24. Estimated tokens: 85,844 (bytes ÷ 3.5). Total estimated savings: ~$71.19. Source: `RECEIPTS.md`, regenerated via `make self-report`.
+2. **Bytes saved: 303,871 cumulative** since 2026-04-24. Estimated tokens: 87,033 (bytes ÷ 3.5). Total estimated savings: ~$72.01. Source: `RECEIPTS.md`, regenerated via `make self-report`.
 
 3. **Gate enforcement: every Claude-authored commit path.** Architectural claim — gate runs and blocks on findings. Verify: `git log --format='%H' | while read sha; do git show -s --format='%(trailers:key=Reviewed-by-pakka,valueonly=true)' "$sha" | grep -q . && echo "$sha"; done | wc -l`.
 
