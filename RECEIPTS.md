@@ -1,18 +1,18 @@
 # RECEIPTS.md — pakka built with pakka
 
 version: v0.5.0
-generated: 2026-05-08T18:07:29Z
+generated: 2026-05-09T13:17:34Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 298 |
+| sessions | 325 |
 | first session | 2026-04-24 |
-| last session | 2026-05-08 |
-| total tokens used | 31,453,323 |
-| bytes saved (V2+V3+V4 compression) | 242,664 |
-| est. tokens saved (bytes ÷ 3.5) | 69,515 |
+| last session | 2026-05-09 |
+| total tokens used | 32,179,587 |
+| bytes saved (V2+V3+V4 compression) | 288,987 |
+| est. tokens saved (bytes ÷ 3.5) | 82,758 |
 
 ## output compression savings (V1 — calibrated bench)
 
@@ -28,22 +28,22 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Output tokens measured across 298 sessions: 6,461,349
-- At super-ultra 66% reduction: ~4,263,611 tokens avoided
-- At $15/MTok: **~$63.95 saved on output tokens alone**
-- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.21
-- **Total estimated savings: ~$64.16**
+- Output tokens measured across 325 sessions: 6,951,496
+- At super-ultra 66% reduction: ~4,587,041 tokens avoided
+- At $15/MTok: **~$68.81 saved on output tokens alone**
+- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.25
+- **Total estimated savings: ~$69.05**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 8,478 |
-| Read | 4,117 |
-| Edit | 2,674 |
-| Write | 612 |
+| Bash | 8,702 |
+| Read | 4,432 |
+| Edit | 2,712 |
+| Write | 614 |
 | Grep | 600 |
-| Agent | 431 |
+| Agent | 460 |
 | WebFetch | 132 |
 | Glob | 126 |
 | TodoWrite | 11 |
@@ -52,9 +52,9 @@ At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million ou
 
 | metric | value |
 |---|---|
-| verdicts run | 47 |
-| verdicts passed | 26 |
-| pass rate | 55.3% |
+| verdicts run | 48 |
+| verdicts passed | 27 |
+| pass rate | 56.2% |
 
 ---
 
