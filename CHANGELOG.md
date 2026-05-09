@@ -2,6 +2,28 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.6.0] — 2026-05-09
+
+### Fixed
+- **recall**: non-EOF read errors no longer advance `last_offset` — silent index data loss eliminated
+- **compress**: language tag preserved on code fences in non-strict modes (was always stripped)
+- **compress**: heading dedup is consecutive-only — repeated headings in different sections no longer silently dropped
+- **compress/meter**: negative compression (inflation) now written to meter — honest aggregate accounting
+- **linguistic**: `maybe`/`perhaps` removed from drop list — epistemic inversion prevented
+- **linguistic**: article-`a` rule made case-sensitive — "Plan A", "Press A to continue", "vitamin A" no longer mangled
+- **validator**: `reInteger` — standalone integers ≥2 digits now preserved (ports, timeouts, counts)
+- **validator**: `rePathAbs` leading-anchor extended to `:`, `=`, `"`, `'`, `<`, `>` — paths in config values now protected
+- **commitgate**: session nonce in `Reviewed-by-pakka:` trailer — pre-planting forgery prevented
+- **audit/meter/commitgate**: `shortSID` sanitizes to `[A-Za-z0-9_-]` before truncating — path traversal via session ID eliminated
+
+### Added
+- **statusline**: transcript cache at `~/.pakka/transcript-cache.json` (mtime/size invalidation) — O(N) file walk → O(1) hot render
+- **statusline**: `cwdToRepo` memoization in `readAllTranscripts` — O(N) `git rev-parse` per render → O(1)
+- **docs**: spec for `SessionStart autoCompress` deadline fix (backlog for v0.7.0)
+
+### Changed
+- Savings: 331 sessions · 300,453 bytes · ~$71.19 (was 325 · 288,987 · ~$69.05)
+
 ## [v0.5.3] — 2026-05-09
 
 ### Fixed
