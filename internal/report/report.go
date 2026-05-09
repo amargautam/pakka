@@ -5,6 +5,7 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -300,6 +301,9 @@ func FormatMarkdown(s *Stats, version string) string {
 // Purpose: Produce human-readable numbers (e.g., 45200 -> "45,200").
 // Errors: None.
 func fmtInt(n int64) string {
+	if n == math.MinInt64 {
+		return "-9,223,372,036,854,775,808"
+	}
 	if n < 0 {
 		return "-" + fmtInt(-n)
 	}

@@ -101,21 +101,23 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 // via Setsid (POSIX) or CREATE_NEW_PROCESS_GROUP (Windows, set by syscall.go).
 //
 // Purpose: Keep SessionStart hook return time under 50ms.
-// Errors: None reported back; failures are written to the orchestrator log.
-func (o *Orchestrator) RunAsync() {
+// Errors: Fork errors are returned to the caller; other failures are written
+// to the orchestrator log.
+func (o *Orchestrator) RunAsync() error {
 	cmd := o.AsyncCommand()
 	if cmd == nil {
 		o.logf("async: cannot construct command — current executable unavailable")
-		return
+		return fmt.Errorf("orchestrator: current executable unavailable")
 	}
 	if err := cmd.Start(); err != nil {
 		o.logf("async: start failed: %v", err)
-		return
+		return err
 	}
 	// Detach: do not Wait. The child is now in its own process group.
 	go func() {
 		_ = cmd.Process.Release()
 	}()
+	return nil
 }
 
 // AsyncCommand builds (but does not start) the *exec.Cmd that RunAsync would

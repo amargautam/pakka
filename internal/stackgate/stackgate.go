@@ -129,15 +129,15 @@ func isTestFile(path string) bool {
 // shellMetaRe matches shell metacharacters that would enable command
 // injection if the command string were handed to `sh -c`. Any match
 // causes runCommand to refuse to execute.
-var shellMetaRe = regexp.MustCompile("[;|&`>]|\\$\\(")
+var shellMetaRe = regexp.MustCompile("[;|&`>'\"]|\\$\\(")
 
 // runCommand executes a configured stack command (lint/test) with a timeout.
 //
 // The command string comes from .pakka/stack.json which is writable by anyone
 // who can edit the repo. To prevent arbitrary code execution on every
 // Edit/Write, we tokenize via strings.Fields and exec the binary directly
-// instead of routing through `sh -c`. Commands containing shell metacharacters
-// (; | & ` > $( ) are rejected outright.
+// instead of routing through `sh -c`. Commands must use unquoted argv —
+// shell metacharacters (; | & ` > $() and quote chars (" ') are rejected.
 func runCommand(command, cwd string) *Result {
 	if shellMetaRe.MatchString(command) {
 		return &Result{Passed: false, Output: "stack-gate: refusing to run command with shell metacharacters"}

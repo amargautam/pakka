@@ -24,6 +24,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/amargautam/pakka/internal/claudecli"
 )
 
 // killProcessGroup is set by claude_cli_unix.go on POSIX builds and
@@ -126,15 +128,7 @@ func (c *ClaudeCLI) run(parentCtx context.Context, prompt string) (string, error
 		path = "claude"
 	}
 
-	args := []string{
-		"-p",
-		"--output-format", "text",
-		"--permission-mode", "default",
-		"--allowedTools", "",
-	}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
+	args := claudecli.BuildArgs(c.Model)
 
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdin = strings.NewReader(prompt)

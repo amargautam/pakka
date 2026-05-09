@@ -113,8 +113,8 @@ func TestEstimateTokens(t *testing.T) {
 		ToolResponse: json.RawMessage(strings.Repeat("b", 300)),
 	}
 	got := estimateTokens(event)
-	if got != 100 { // (100+300)/4
-		t.Errorf("estimateTokens = %d, want 100", got)
+	if got != 114 { // round(400/3.5) = 114
+		t.Errorf("estimateTokens = %d, want 114", got)
 	}
 }
 

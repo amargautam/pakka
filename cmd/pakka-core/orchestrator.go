@@ -88,7 +88,9 @@ func forkOrchestrator(repo, level, sessionID string) {
 		return
 	}
 	debugLogf("orchestrator: forking bg for repo=%s level=%s", repo, level)
-	o.RunAsync()
+	if err := o.RunAsync(); err != nil {
+		debugLogf("orchestrator: fork failed: %v", err)
+	}
 }
 
 // runOrchestrator is invoked when --orchestrator-bg or --orchestrator-run is

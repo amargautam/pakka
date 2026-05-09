@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -297,9 +298,9 @@ func Query(dbPath, text string, limit int) ([]Entry, error) {
 				return nil, fmt.Errorf("recall: scan: %w", err)
 			}
 		}
-		// Preview: first 120 chars of content.
-		if len(content) > 120 {
-			e.Preview = content[:120]
+		// Preview: first 120 runes of content (rune-safe, avoids splitting multibyte codepoints).
+		if utf8.RuneCountInString(content) > 120 {
+			e.Preview = string([]rune(content)[:120])
 		} else {
 			e.Preview = content
 		}

@@ -55,23 +55,25 @@ func excerpt(s string) string {
 //
 // Multiline patterns use (?s) where dot must match newlines.
 var (
-	reFencedTriple = regexp.MustCompile("(?s)```[a-zA-Z0-9_+-]*\\n.*?\\n```")
-	reFencedTilde  = regexp.MustCompile("(?s)~~~[a-zA-Z0-9_+-]*\\n.*?\\n~~~")
-	// reInlineCode requires ≥2 non-backtick, non-newline chars between the
-	// fences. Single-char spans like `a` or `i` are everyday English usage,
-	// not load-bearing identifiers — matching them produces false-positive
-	// violations that exhaust the validator's cherry-pick retry budget.
-	reInlineCode   = regexp.MustCompile("`[^`\n]{2,}`")
+	reFencedTriple = regexp.MustCompile("(?s)```[\\w.+#-]*\\n.*?\\n```")
+	reFencedTilde  = regexp.MustCompile("(?s)~~~[\\w.+#-]*\\n.*?\\n~~~")
+	// reInlineCode matches all inline code spans including single-char identifiers
+	// (loop variables, flags, options). The prior {2,} guard excluded single-char
+	// spans to avoid FPs on English prose, but single-char backtick spans in
+	// technical docs are almost always identifiers, not quoted letters.
+	reInlineCode   = regexp.MustCompile("`[^`\n]{1,}`")
 	reURL          = regexp.MustCompile(`(?:https?|ftp|ssh)://[^\s)]+`)
 	// Path heuristics. Tightened to avoid matching ordinary words.
-	rePathAbs    = regexp.MustCompile(`(?:^|[\s(\[:"'<>=])(/[A-Za-z0-9_.][\w./-]*)`)
+	rePathAbs    = regexp.MustCompile(`(?:^|[\s(\[:"'<>=])(/[A-Za-z0-9_.][\w./-]*[A-Za-z0-9_/]|/[A-Za-z0-9_.])`)
 	rePathHome   = regexp.MustCompile(`(?:^|[\s(\[])(~/[\w./-]+)`)
 	rePathRel    = regexp.MustCompile(`(?:^|[\s(\[])(\./[\w./-]+)`)
 	rePathWin    = regexp.MustCompile(`[A-Za-z]:\\[\w\\.-]+`)
 	reISODate    = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
-	reVersion    = regexp.MustCompile(`\bv?\d+\.\d+(?:\.\d+)?\b`)
-	reEnvVar     = regexp.MustCompile(`\$[A-Z_][A-Z0-9_]*`)
-	reMarker     = regexp.MustCompile(`\b(?:TODO|FIXME|SECURITY|HACK|BUG|XXX)\b`)
+	reVersion    = regexp.MustCompile(`\bv?\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?\b`)
+	// reEnvVar matches shell env var references: $VAR, ${VAR}, $var, ${var}.
+	reEnvVar     = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*`)
+	// reMarker matches critical code markers case-insensitively (todo, Todo, TODO all load-bearing).
+	reMarker     = regexp.MustCompile(`(?i)\b(?:TODO|FIXME|SECURITY|HACK|BUG|XXX)\b`)
 	// reNegation matches negation words whose removal or alteration inverts meaning.
 	// Case-insensitive: "Not", "NOT", "not" all load-bearing.
 	reNegation = regexp.MustCompile(`(?i)\b(?:not|never|no|cannot|can't|shouldn't|won't|don't|isn't|aren't|wasn't|weren't|nor)\b`)

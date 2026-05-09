@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/amargautam/pakka/internal/claudecli"
 )
 
 // ClaudeLLM implements LLMCaller by shelling out to `claude -p`.
@@ -25,12 +27,7 @@ func (c *ClaudeLLM) Call(prompt string) (string, error) {
 	if path == "" {
 		path = "claude"
 	}
-	args := []string{
-		"-p",
-		"--output-format", "text",
-		"--permission-mode", "default",
-		"--allowedTools", "",
-	}
+	args := claudecli.BuildArgs("")
 	cmd := exec.Command(path, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout, stderr bytes.Buffer

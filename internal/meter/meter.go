@@ -123,10 +123,10 @@ func meterDir() (string, error) {
 }
 
 // estimateTokens approximates token count from event payload sizes.
-// Rough heuristic: 1 token ≈ 4 characters.
+// Uses 3.5 bytes/token — consistent with WriteSavings calibration.
 func estimateTokens(event *hookevent.Event) int64 {
-	n := int64(len(event.ToolInput)) + int64(len(event.ToolResponse))
-	return n / 4
+	n := float64(len(event.ToolInput)) + float64(len(event.ToolResponse))
+	return int64(math.Round(n / 3.5))
 }
 
 func shortSID(sid string) string {
