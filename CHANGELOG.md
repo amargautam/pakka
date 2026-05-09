@@ -2,6 +2,17 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.8.0] — 2026-05-09
+
+### Fixed
+- **orchestrator**: user edits to live compressed files now survive compression level changes — edits were previously silently overwritten when level changed; fix detects edit via `OutputSHA` comparison and adopts live file as new baseline before re-compressing
+- **orchestrator**: snapshot refresh failure now aborts the compression pass rather than proceeding with stale content — prevents user-edited live file from being overwritten when `.original.md` write fails
+
+### Added
+- **state**: `OutputSHA` field in `Entry` (JSON: `outputSHA`) — records SHA of last compression output; empty = legacy entry, user-edit check skipped
+- **state**: `GetOutputSHA(absPath string) string` method
+- **docs**: spec `2026-05-09-compress-user-edit-preservation.md` (Status: implemented)
+
 ## [v0.7.0] — 2026-05-09
 
 ### Fixed
