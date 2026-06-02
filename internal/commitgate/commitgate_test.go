@@ -926,6 +926,60 @@ func TestIsGitCommit_WrappedShapes(t *testing.T) {
 	}
 }
 
+// TestEvaluate_SubstringFallback_AllowsQuotedMentions covers issue #3:
+// the defense-in-depth fallback after !IsGitCommit must not fire on
+// non-git commands that merely mention the literal text "git commit"
+// inside quoted arguments. Quote-aware token detection is required.
+func TestEvaluate_SubstringFallback_AllowsQuotedMentions(t *testing.T) {
+	cfg := DefaultConfig()
+	state := &State{}
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"grep double-quoted", `grep "git commit" file.go`},
+		{"echo single-quoted", `echo 'git commit'`},
+		{"rg double-quoted", `rg "git commit" .`},
+		{"git log grep flag", `git log --grep='git commit'`},
+		{"pipe into grep", `cat /tmp/foo | grep "git commit"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Evaluate(tc.cmd, cfg, state)
+			if !d.Allow {
+				t.Fatalf("expected Allow=true for %q; got Allow=false, stderr=%q", tc.cmd, d.Stderr)
+			}
+		})
+	}
+}
+
+// TestEvaluate_SubstringFallback_BlocksUnsafeShapes is the regression guard
+// for the same fallback path. These shapes contain a real, unquoted
+// `git commit` invocation that IsGitCommit refuses to parse (chained,
+// piped, redirected). The fallback must block each one independently.
+func TestEvaluate_SubstringFallback_BlocksUnsafeShapes(t *testing.T) {
+	cfg := DefaultConfig()
+	state := &State{}
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"and-chained with push", `git commit -m "x" && git push`},
+		{"semicolon-chained", `git commit -m "x"; foo`},
+		{"piped to tee", `git commit -m "x" | tee log`},
+		{"redirected to file", `git commit -m "x" > out`},
+		{"double commit and-chain", `git commit && git commit`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Evaluate(tc.cmd, cfg, state)
+			if d.Allow {
+				t.Fatalf("expected Allow=false for %q; got Allow=true", tc.cmd)
+			}
+		})
+	}
+}
+
 func BenchmarkEvaluateRewrite(b *testing.B) {
 	cfg := DefaultConfig()
 	state := &State{HasRecentPass: true}
