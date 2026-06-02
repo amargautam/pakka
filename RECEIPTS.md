@@ -1,18 +1,18 @@
 # RECEIPTS.md — pakka built with pakka
 
 version: v0.5.0
-generated: 2026-06-02T00:18:00Z
+generated: 2026-06-02T18:27:32Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 369 |
+| sessions | 1103 |
 | first session | 2026-04-24 |
 | last session | 2026-06-02 |
-| total tokens used | 37,952,771 |
-| bytes saved (V2+V3+V4 compression) | 357,090 |
-| est. tokens saved (bytes ÷ 3.5) | 102,271 |
+| total tokens used | 38,335,527 |
+| bytes saved (V2+V3+V4 compression) | 358,953 |
+| est. tokens saved (bytes ÷ 3.5) | 102,820 |
 
 ## output compression savings (V1 — calibrated bench)
 
@@ -28,21 +28,21 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Output tokens measured across 369 sessions: 2,094,704
-- At super-ultra 66% reduction: ~1,382,219 tokens avoided
-- At $15/MTok: **~$20.73 saved on output tokens alone**
+- Output tokens measured across 1103 sessions: 5,939,566
+- At super-ultra 66% reduction: ~3,919,305 tokens avoided
+- At $15/MTok: **~$58.79 saved on output tokens alone**
 - Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.31
-- **Total estimated savings: ~$21.04**
+- **Total estimated savings: ~$59.10**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 10,573 |
-| Read | 5,411 |
-| Edit | 3,369 |
-| Write | 880 |
-| Agent | 618 |
+| Bash | 10,855 |
+| Read | 5,462 |
+| Edit | 3,405 |
+| Write | 903 |
+| Agent | 624 |
 | Grep | 600 |
 | WebFetch | 134 |
 | Glob | 126 |
@@ -52,9 +52,9 @@ At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million ou
 
 | metric | value |
 |---|---|
-| verdicts run | 70 |
-| verdicts passed | 47 |
-| pass rate | 67.1% |
+| verdicts run | 76 |
+| verdicts passed | 52 |
+| pass rate | 68.4% |
 
 ---
 
