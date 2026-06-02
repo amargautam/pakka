@@ -86,6 +86,32 @@ func Run(event *hookevent.Event) error {
 	return data.AppendJSONL(path, entry)
 }
 
+// WriteSessionEnd appends a session-end entry recording the assistant
+// output tokens observed in the session's Claude Code transcripts.
+//
+// Purpose: Persist output_tokens to ~/.pakka/meter so RECEIPTS no longer
+// depends on transcripts (which Claude Code prunes/rotates). Caller is
+// responsible for computing outputTokens from transcripts at SessionEnd.
+// Errors: Returns error on filesystem failures.
+func WriteSessionEnd(sessionID, repo string, outputTokens int64) error {
+	dir, err := meterDir()
+	if err != nil {
+		return err
+	}
+
+	sid := shortSID(sessionID)
+	path := filepath.Join(dir, sid+".jsonl")
+
+	entry := Entry{
+		TS:           time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:    sessionID,
+		Repo:         repo,
+		OutputTokens: outputTokens,
+	}
+
+	return data.AppendJSONL(path, entry)
+}
+
 // WriteSavings appends a compression-savings entry for the given session.
 //
 // Purpose: Record bytes saved by compression with a derived token estimate.

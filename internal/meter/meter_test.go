@@ -107,6 +107,50 @@ func TestWriteSavings(t *testing.T) {
 }
 
 
+func TestWriteOutputTokens(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	if err := WriteSessionEnd("endtok01session", "/repo/y", 12345); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(tmp, ".pakka", "meter", "endtok01.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("meter file not created: %v", err)
+	}
+
+	var entry Entry
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.OutputTokens != 12345 {
+		t.Errorf("output_tokens = %d, want 12345", entry.OutputTokens)
+	}
+	if entry.SessionID != "endtok01session" {
+		t.Errorf("session_id = %q, want endtok01session", entry.SessionID)
+	}
+	if entry.Repo != "/repo/y" {
+		t.Errorf("repo = %q, want /repo/y", entry.Repo)
+	}
+	// Round-trip: re-encode and decode, ensure OutputTokens is preserved.
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"output_tokens":12345`) {
+		t.Errorf("encoded entry missing output_tokens: %s", encoded)
+	}
+	var round Entry
+	if err := json.Unmarshal(encoded, &round); err != nil {
+		t.Fatal(err)
+	}
+	if round.OutputTokens != 12345 {
+		t.Errorf("round-trip output_tokens = %d, want 12345", round.OutputTokens)
+	}
+}
+
 func TestEstimateTokens(t *testing.T) {
 	event := &hookevent.Event{
 		ToolInput:    json.RawMessage(strings.Repeat("a", 100)),

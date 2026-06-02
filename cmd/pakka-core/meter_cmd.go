@@ -3,8 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/amargautam/pakka/internal/hookevent"
 	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/statusline"
 )
 
 // MeterCmd implements the "meter" subcommand.
@@ -17,9 +20,45 @@ func (c *MeterCmd) Run(args []string) error {
 }
 
 func runMeter() {
+	phase := ""
+	for _, a := range os.Args[2:] {
+		if strings.HasPrefix(a, "--phase=") {
+			phase = strings.TrimPrefix(a, "--phase=")
+		}
+	}
+
 	event := parseLenient(os.Stdin)
+
+	if phase == "session-end" {
+		runMeterSessionEnd(event)
+		return
+	}
+
 	if err := meter.Run(event); err != nil {
 		fmt.Fprintf(os.Stderr, "pakka: meter: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// runMeterSessionEnd records the assistant output tokens observed in the
+// session's Claude Code transcripts into ~/.pakka/meter/<sid>.jsonl.
+//
+// Degrades gracefully: if transcripts are unreadable mid-session, writes 0
+// rather than failing the hook. The SessionEnd hook must not block.
+func runMeterSessionEnd(event *hookevent.Event) {
+	cwd := event.CWD
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	repo := meter.RepoKey(cwd)
+
+	var outTokens int64
+	if n, err := statusline.RepoOutputTokens("", repo); err == nil {
+		outTokens = n
+	}
+
+	if err := meter.WriteSessionEnd(event.SessionID, repo, outTokens); err != nil {
+		fmt.Fprintf(os.Stderr, "pakka: meter session-end: %v\n", err)
+		// Non-fatal: don't block SessionEnd.
 	}
 }
