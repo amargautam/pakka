@@ -736,11 +736,20 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	// — e.g. `grep "git commit" file` — are not false-positively
 	// blocked. See issue #3.
 	if !IsGitCommit(cmd) {
-		if countCommitOccurrences(cmd) > 0 {
-			return &Decision{
-				Allow:  false,
-				Stderr: "pakka: unrecognized git commit shape — gate cannot verify safety; use a plain form or add [skip pakka] to bypass",
-			}
+		// Fast path missed. Two reasons to invoke the AST path:
+		//   (a) a real unquoted `git commit` token in a chained, redirected,
+		//       env-prefixed, or subshell shape — the AST splices trailers
+		//       per node and reprints the command verbatim;
+		//   (b) the literal text `git commit` appears anywhere in the raw
+		//       command (including inside `eval "..."` strings or `$(...)`
+		//       substitutions). Those constructs would silently elude the
+		//       gate without AST inspection; the AST walker blocks them
+		//       explicitly so the model gets feedback.
+		// Both routes funnel through the same AST function. If the AST
+		// finds no commit node and no blocker, the command is allowed
+		// through (e.g. `grep "git commit" file.go`).
+		if strings.Contains(cmd, "git commit") || countCommitOccurrences(cmd) > 0 {
+			return evaluateViaAST(cmd, cfg, state)
 		}
 		return &Decision{Allow: true}
 	}
