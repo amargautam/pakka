@@ -2,6 +2,11 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.8.1] — 2026-06-01
+
+### Fixed
+- **commit-gate**: substring fallback no longer rejects non-git bash commands that mention "git commit" in quoted arguments (#3)
+
 ## [v0.8.0] — 2026-05-09
 
 ### Fixed
