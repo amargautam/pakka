@@ -728,10 +728,15 @@ func shellQuote(s string) string {
 // Errors: Never errors; always returns a valid Decision.
 func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	// Not a git commit — pass through, unless the command still contains
-	// "git commit" in a shape the gate cannot safely parse (e.g. compound
-	// commands with ;, &&, |, >).  Those must be blocked, not waved through.
+	// a real `git commit` token in a shape the gate cannot safely parse
+	// (e.g. compound commands with ;, &&, |, >). Those must be blocked,
+	// not waved through. We use countCommitOccurrences (quote-aware,
+	// word-boundary enforced) so that non-git commands which merely
+	// mention the literal text "git commit" inside quoted arguments
+	// — e.g. `grep "git commit" file` — are not false-positively
+	// blocked. See issue #3.
 	if !IsGitCommit(cmd) {
-		if strings.Contains(cmd, "git commit") {
+		if countCommitOccurrences(cmd) > 0 {
 			return &Decision{
 				Allow:  false,
 				Stderr: "pakka: unrecognized git commit shape — gate cannot verify safety; use a plain form or add [skip pakka] to bypass",
