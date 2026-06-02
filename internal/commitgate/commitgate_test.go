@@ -838,28 +838,37 @@ func TestEvaluate_WrappedCommitShapesAreRecognized(t *testing.T) {
 			wantTrailer: true,
 			wantSyntax:  true,
 		},
+		// v0.9.0 (spec 2026-06-02, criteria 1, 2, 4): chained shapes are
+		// no longer rejected. The AST splices --trailer into the commit
+		// segment only and reprints the surrounding chain verbatim. The
+		// old wantTrailer=false expectation pinned the v0.8.x behavior
+		// the new spec explicitly inverts.
 		{
-			name:        "cd && git commit && git push (trailing chain → reject)",
+			name:        "cd && git commit && git push (chain → allowed, trailer in commit segment)",
 			cmd:         `cd /tmp/repo && git commit -m "x" && git push`,
-			wantTrailer: false,
+			wantTrailer: true,
+			wantSyntax:  true,
 		},
 		{
-			name:        "git commit && git push (trailing chain → reject)",
+			name:        "git commit && git push (chain → allowed, trailer in commit segment)",
 			cmd:         `git commit -m "x" && git push`,
-			wantTrailer: false,
+			wantTrailer: true,
+			wantSyntax:  true,
 		},
 		{
-			name:        "git commit ; echo done (trailing semicolon → reject)",
+			name:        "git commit ; echo done (semicolon-chain → allowed)",
 			cmd:         `git commit -m "x" ; echo done`,
-			wantTrailer: false,
+			wantTrailer: true,
+			wantSyntax:  true,
 		},
 		{
-			name:        "cd /a && cd /b && git commit (multi-segment cd → reject)",
+			name:        "cd /a && cd /b && git commit (multi-segment cd → allowed)",
 			cmd:         `cd /a && cd /b && git commit -m "x"`,
-			wantTrailer: false,
+			wantTrailer: true,
+			wantSyntax:  true,
 		},
 		{
-			name:        `echo "git commit" (commit inside string → reject)`,
+			name:        `echo "git commit" (commit inside string → still reject; AST sees no commit node)`,
 			cmd:         `echo "git commit"`,
 			wantTrailer: false,
 		},
@@ -953,13 +962,21 @@ func TestEvaluate_SubstringFallback_AllowsQuotedMentions(t *testing.T) {
 	}
 }
 
-// TestEvaluate_SubstringFallback_BlocksUnsafeShapes is the regression guard
-// for the same fallback path. These shapes contain a real, unquoted
-// `git commit` invocation that IsGitCommit refuses to parse (chained,
-// piped, redirected). The fallback must block each one independently.
-func TestEvaluate_SubstringFallback_BlocksUnsafeShapes(t *testing.T) {
+// TestEvaluate_SubstringFallback_GateAppliesToChainedShapes is the v0.9.0
+// replacement for the legacy "blocks unsafe shapes" guard. The v0.8.x
+// fallback rejected any chained / piped / redirected commit form
+// outright. Per spec 2026-06-02 (criteria 1, 2, 5, 6) the AST path now
+// recognizes those shapes as real commit invocations and applies the
+// regular gate to them — they block when the gate state lacks a recent
+// pass (no review run), and they would allow with trailer splice when
+// HasRecentPass is true (covered by TestEvaluate_AST).
+//
+// This test pins the no-pass branch independently per shape so a
+// regression that silently waves through any one shape surfaces clearly.
+func TestEvaluate_SubstringFallback_GateAppliesToChainedShapes(t *testing.T) {
 	cfg := DefaultConfig()
-	state := &State{}
+	state := &State{} // no recent pass → gate must block
+
 	cases := []struct {
 		name string
 		cmd  string
@@ -974,7 +991,14 @@ func TestEvaluate_SubstringFallback_BlocksUnsafeShapes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := Evaluate(tc.cmd, cfg, state)
 			if d.Allow {
-				t.Fatalf("expected Allow=false for %q; got Allow=true", tc.cmd)
+				t.Fatalf("expected Allow=false (gate blocks, no recent pass) for %q; got Allow=true", tc.cmd)
+			}
+			if d.Stderr == "" {
+				t.Fatalf("expected stderr explaining the block for %q", tc.cmd)
+			}
+			// Gate message — not the parse-error / dynamic-name message.
+			if !strings.Contains(d.Stderr, "review gate active") {
+				t.Errorf("expected gate-active stderr for %q; got %q", tc.cmd, d.Stderr)
 			}
 		})
 	}
