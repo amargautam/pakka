@@ -2,6 +2,19 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.9.0] — 2026-06-02
+
+### Added
+- **commit-gate**: AST-based parser via `mvdan.cc/sh/v3` supports chained shapes — git add then commit then push patterns, env prefix, subshells, redirects (criteria 1-8 of spec)
+- **pakka-core**: `backfill-output-tokens` subcommand recovers historical session output_tokens from transcripts still on disk
+
+### Changed
+- **meter**: persists `output_tokens` per session-end; RECEIPTS figure now monotonic across releases (no longer shrinks as Claude Code rotates transcripts)
+- **release**: checklist step 1.5 part 2 made conditional; new substep 0.1 runnable doc-sync audit
+
+### Fixed
+- **commit-gate**: closes the disease behind v0.8.1 — substring fallback no longer needed since AST handles all real invocations
+
 ## [v0.8.1] — 2026-06-01
 
 ### Fixed
