@@ -1,18 +1,18 @@
 # RECEIPTS.md — pakka built with pakka
 
 version: v0.5.0
-generated: 2026-05-09T18:49:51Z
+generated: 2026-06-02T00:18:00Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 340 |
+| sessions | 369 |
 | first session | 2026-04-24 |
-| last session | 2026-05-09 |
-| total tokens used | 35,205,493 |
-| bytes saved (V2+V3+V4 compression) | 307,451 |
-| est. tokens saved (bytes ÷ 3.5) | 88,073 |
+| last session | 2026-06-02 |
+| total tokens used | 37,952,771 |
+| bytes saved (V2+V3+V4 compression) | 357,090 |
+| est. tokens saved (bytes ÷ 3.5) | 102,271 |
 
 ## output compression savings (V1 — calibrated bench)
 
@@ -28,22 +28,22 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Output tokens measured across 340 sessions: 7,294,774
-- At super-ultra 66% reduction: ~4,813,558 tokens avoided
-- At $15/MTok: **~$72.20 saved on output tokens alone**
-- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.26
-- **Total estimated savings: ~$72.47**
+- Output tokens measured across 369 sessions: 2,094,704
+- At super-ultra 66% reduction: ~1,382,219 tokens avoided
+- At $15/MTok: **~$20.73 saved on output tokens alone**
+- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$0.31
+- **Total estimated savings: ~$21.04**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 9,749 |
-| Read | 5,070 |
-| Edit | 3,107 |
-| Write | 774 |
+| Bash | 10,573 |
+| Read | 5,411 |
+| Edit | 3,369 |
+| Write | 880 |
+| Agent | 618 |
 | Grep | 600 |
-| Agent | 595 |
 | WebFetch | 134 |
 | Glob | 126 |
 | TodoWrite | 11 |
@@ -52,9 +52,9 @@ At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million ou
 
 | metric | value |
 |---|---|
-| verdicts run | 62 |
-| verdicts passed | 41 |
-| pass rate | 66.1% |
+| verdicts run | 70 |
+| verdicts passed | 47 |
+| pass rate | 67.1% |
 
 ---
 
