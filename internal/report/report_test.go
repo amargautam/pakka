@@ -58,6 +58,44 @@ func TestGatherMeter(t *testing.T) {
 }
 
 
+func TestGatherMeterOutputTokens(t *testing.T) {
+	tmp := t.TempDir()
+	meterDir := filepath.Join(tmp, "meter")
+	auditDir := filepath.Join(tmp, "audit")
+	if err := os.MkdirAll(meterDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(auditDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two sessions, each with an output_tokens line.
+	// No transcripts dir set up — if the old transcript override path were
+	// still active and silently zeroing the value, we'd see 0 not 3000.
+	sessA := `{"ts":"2026-05-01T10:00:00Z","session_id":"sess-a","output_tokens":1000}
+`
+	sessB := `{"ts":"2026-05-02T10:00:00Z","session_id":"sess-b","output_tokens":2000}
+`
+	if err := os.WriteFile(filepath.Join(meterDir, "sess-a.jsonl"), []byte(sessA), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meterDir, "sess-b.jsonl"), []byte(sessB), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a tmpdir as fake $HOME so any transcript lookup finds nothing.
+	t.Setenv("HOME", tmp)
+
+	stats, err := Gather(meterDir, auditDir, tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stats.OutputTokensTotal != 3000 {
+		t.Errorf("OutputTokensTotal = %d, want 3000 (sum from meter, not transcript override)", stats.OutputTokensTotal)
+	}
+}
+
 func TestGatherAudit(t *testing.T) {
 	tmp := t.TempDir()
 	meterDir := filepath.Join(tmp, "meter")

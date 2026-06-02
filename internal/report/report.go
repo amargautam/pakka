@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/amargautam/pakka/internal/data"
-	"github.com/amargautam/pakka/internal/statusline"
 )
 
 // Stats holds aggregated metrics from meter and audit data.
@@ -82,11 +81,12 @@ func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 		return nil, fmt.Errorf("meter: %v; audit: %v", meterErr, auditErr)
 	}
 
-	// Override OutputTokensTotal with actual output tokens from transcripts.
-	// Graceful degradation: if transcripts are unreadable, keep meter-derived value.
-	if outTokens, err := statusline.RepoOutputTokens("", repoRoot); err == nil {
-		s.OutputTokensTotal = outTokens
-	}
+	// OutputTokensTotal sourced solely from meter (gatherMeter sums the
+	// output_tokens field across all session entries). Prior v0.8.x logic
+	// overrode the meter value with statusline.RepoOutputTokens(repoRoot),
+	// which read Claude Code transcripts — those get pruned, so the figure
+	// shrank across releases. v0.9.0 fix-forward: meter is sole source.
+	_ = repoRoot
 
 	return s, nil
 }
