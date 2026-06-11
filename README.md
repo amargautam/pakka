@@ -81,6 +81,10 @@ Co-authored-by: pakka <279024857+pakka-bot@users.noreply.github.com>
 
 Opt out: `pakka.signature: false` or `pakka.coAuthor: false` in `settings.json`.
 
+## Sponsor
+
+pakka is built and maintained by [Amar Gautam](https://amargautam.com). If it saves you tokens or catches bugs before they ship, [sponsor its development](https://github.com/sponsors/amargautam).
+
 ## Development
 
 Built using pakka. See [`DESIGN.md`](./DESIGN.md) and [`CLAUDE.md`](./CLAUDE.md).
