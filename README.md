@@ -33,7 +33,7 @@ Pakka injects discipline into every session. Commands infer what you need from c
 |---|---|---|
 | `/pakka:plan` | "build X", "design", "challenge this", "probe me", "break into tickets" | Design hub. Writes spec to `docs/specs/`. Routes to spec · challenge · probe · slice based on context. Never auto-chains to build. |
 | `/pakka:build` | "implement", "write tests", "broken", "how does X work", "hard to test" | Implementation hub. Checks for spec approval first. Routes to TDD · debug · map · audit based on context. Blocks completion claims without exit-code evidence. |
-| `/pakka:review` | "done?", "ship?", "they said...", "merge?" | Quality hub. Verifies first (exit codes), then runs reviewer + security + architect agents in parallel. Handles incoming feedback and branch landing. |
+| `/pakka:review` | "done?", "ship?", "they said...", "merge?" | Quality hub. Verifies first (exit codes), then runs reviewer + security + architect + performance agents in parallel. Handles incoming feedback and branch landing. |
 | `/pakka:triage` | "triage", "look at issue #N", "what needs attention" | Issue queue. Routes bugs and features through classification state machine. Produces agent-ready briefs. |
 | `/pakka:setup` | one-time setup | Detects stack, writes permissions overlay. `setup guard` installs git guard hook. |
 | `/pakka:compress` | — | Compression control. `[lite\|strict\|ultra\|super-ultra\|status]`. Default: `super-ultra`. Hook-handled — instant, no LLM round-trip. |
@@ -48,9 +48,9 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **4-vector compression:** output tokens · input context · tool results · subagent returns — all compressed independently.
 
-**Review gate:** reviewer + security + architect subagents run in parallel on every Claude-authored commit. Confidence threshold ≥ 80. Blocks on `severity=error` findings.
+**Review gate:** reviewer + security + architect + performance subagents run in parallel on every Claude-authored commit. Confidence threshold ≥ 80. Blocks on `severity=error` findings.
 
-**Deny-by-default permissions:** secrets, destructive git, shell-fetched-then-executed commands blocked at the permission layer.
+**Deny-by-default permissions:** secrets, destructive git, shell-fetched-then-executed commands blocked at the permission layer. Guard covers secret reads **and writes** — the hook matches `Read|Write|Edit|MultiEdit|Bash` (was `Read|Bash` before v0.11.0). Repeated overrides teach a per-repo allowlist (`.pakka/guard-allowlist.json`) with override-count decay; secret categories are never allowlistable.
 
 **Audit trail:** every tool call appended to `~/.pakka/audit/<session>.jsonl`. No dial-home.
 
@@ -58,7 +58,11 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **skill-check:** `UserPromptSubmit` hook keyword-scans every message. if a build/plan/review signal matches, targeted alert fires before the model responds. no more relying on model memory.
 
-**Status line:** `pakka [super-ultra] · ~$72.47 saved · 21 bugs caught` — compression level, token savings, and bugs caught, always visible.
+**Status line:** `pakka [super-ultra] · ~$72.47 saved · 21 bugs caught` — compression level, token savings, and bugs caught, always visible. Savings priced per model — Fable 5, Mythos 5, and Opus 4.x covered; dated model IDs resolve by prefix.
+
+**Kill-switch:** `PAKKA_DISABLED=1` turns off every pakka hook for the session. Used by `make bench` to isolate the raw arm; works anywhere.
+
+**Benchmarks:** `make bench` A/Bs pakka vs raw Claude Code via `claude -p` on your existing OAuth session. No API key.
 
 ## Results (v0.8.0)
 
