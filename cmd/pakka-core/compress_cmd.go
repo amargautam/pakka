@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/amargautam/pakka/internal/audit"
 	"github.com/amargautam/pakka/internal/compress"
 	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/hookevent"
@@ -138,9 +140,20 @@ func runCompress() {
 			Level:    level,
 		})
 		if err != nil {
-			// Validator failed after retries — result.Output is the original
-			// input unchanged (safety contract). Log and emit the original.
-			debugLogf("compress semantic: validator failed level=%s bytes=%d err=%v", level, len(input), err)
+			var inj *semantic.InjectionError
+			if errors.As(err, &inj) {
+				// Injection gate rejected the rewrite — result.Output already
+				// carries the deterministic strict fallback (the rejected
+				// rewrite never ships). Audit-log the event.
+				debugLogf("compress semantic: rejected level=%s bytes=%d reason=injection_suspect findings=%d — deterministic strict fallback",
+					level, len(input), len(inj.Violations()))
+				_ = audit.WriteNote(sessionID, "semantic_rejected",
+					fmt.Sprintf("injection_suspect findings=%d", len(inj.Violations())))
+			} else {
+				// Validator failed after retries — result.Output is the original
+				// input unchanged (safety contract). Log and emit the original.
+				debugLogf("compress semantic: validator failed level=%s bytes=%d err=%v", level, len(input), err)
+			}
 		}
 		emitCompressResult(result, sessionID)
 		return

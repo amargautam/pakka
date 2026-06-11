@@ -11,6 +11,7 @@ package compress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -98,7 +99,11 @@ func Run(input string, mode Mode) *Result {
 // Purpose: Single entry point for semantic compression with safety net.
 // Errors: Returns the validator's *semantic.FailedError if retries exhaust;
 // the returned Result.Output carries the ORIGINAL input unchanged in that
-// case so callers can ship it without corruption risk.
+// case so callers can ship it without corruption risk. Returns a
+// *semantic.InjectionError when the rewriter output contains
+// instruction-shaped additions absent from the input; in that case the
+// returned Result is the deterministic strict compression of the input
+// (safe fallback — the rejected rewrite never ships).
 func RunSemantic(input string, opts SemanticOptions) (*Result, error) {
 	orig := len(input)
 	if orig == 0 {
@@ -121,6 +126,13 @@ func RunSemantic(input string, opts SemanticOptions) (*Result, error) {
 	}
 
 	out, err := semantic.RunSemantic(ctx, opts.Rewriter, input, level)
+	var inj *semantic.InjectionError
+	if errors.As(err, &inj) {
+		// Injection-suspect rewrite: discard it entirely and fall back to the
+		// deterministic strict engine. The error is returned alongside so
+		// callers can audit-log the rejection.
+		return Run(input, ModeStrict), err
+	}
 	comp := len(out)
 	var ratio float64
 	if orig > 0 {

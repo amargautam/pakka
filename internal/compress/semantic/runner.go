@@ -39,6 +39,12 @@ func RunSemantic(ctx context.Context, r Rewriter, input string, level Level) (st
 	if err != nil {
 		return input, fmt.Errorf("semantic: rewrite: %w", err)
 	}
+	// Injection gate runs before preservation checks and is NOT retried — a
+	// rewrite that smuggles instruction-shaped additions does not get more
+	// chances. Callers fall back to deterministic compression.
+	if findings := DetectInjection(input, output); len(findings) > 0 {
+		return input, &InjectionError{Findings: findings}
+	}
 	violations := Validate(input, output)
 	if len(violations) == 0 {
 		return output, nil
@@ -49,6 +55,10 @@ func RunSemantic(ctx context.Context, r Rewriter, input string, level Level) (st
 		next, err := fixOnce(ctx, r, input, level, violations)
 		if err != nil {
 			return input, fmt.Errorf("semantic: retry %d: %w", attempt, err)
+		}
+		// Every attempt passes the injection gate, not just the first.
+		if findings := DetectInjection(input, next); len(findings) > 0 {
+			return input, &InjectionError{Findings: findings}
 		}
 		nextViolations := Validate(input, next)
 		if len(nextViolations) == 0 {
