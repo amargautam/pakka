@@ -34,12 +34,12 @@ func AllLevels() []Level {
 	return []Level{LevelLite, LevelStrict, LevelUltra, LevelSuperUltra}
 }
 
-// ParseLevel converts a string to a Level, defaulting to LevelUltra.
+// ParseLevel converts a string to a Level, defaulting to LevelSuperUltra.
 //
-// LevelUltra is pakka's brand default — see memory/DECISIONS.md
-// "Default output level: ultra (decided 2026-04-29)". Empty/unknown inputs
-// fall back to ultra rather than strict so the CLI default stays aligned
-// with loadOutputLevel() in cmd/pakka-core.
+// LevelSuperUltra is pakka's brand default — see memory/DECISIONS.md
+// "Default output level: super-ultra". Empty/unknown inputs fall back to
+// super-ultra so the CLI default stays aligned with loadOutputLevel() in
+// cmd/pakka-core.
 //
 // Purpose: Safe level parsing for CLI flag values and skill arguments.
 // Errors: Never errors; unknown strings map to LevelSuperUltra (intentional default).
