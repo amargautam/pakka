@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/amargautam/pakka/internal/audit"
+	"github.com/amargautam/pakka/internal/compress"
 	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/meter"
 )
@@ -224,6 +226,11 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 	}
 	out, err := semantic.RunSemantic(ctx, o.Rewriter, string(origBytes), semantic.ParseLevel(level))
 	if err != nil {
+		var inj *semantic.InjectionError
+		if errors.As(err, &inj) {
+			o.handleInjectionRejection(abs, level, sourceSHA, origBytes, inj, state, now)
+			return
+		}
 		var failed *semantic.FailedError
 		if errors.As(err, &failed) {
 			o.logFailure(abs, level, failed.Violations())
@@ -357,13 +364,71 @@ func (o *Orchestrator) logFailure(absPath, level string, violations []semantic.V
 	for _, v := range violations {
 		kinds = append(kinds, v.Kind)
 	}
-	entry := map[string]interface{}{
+	o.writeErrorLine(map[string]interface{}{
 		"ts":         time.Now().UTC().Format(time.RFC3339),
 		"file":       absPath,
 		"level":      level,
 		"violations": kinds,
 		"sid":        o.SessionID,
+	})
+}
+
+// handleInjectionRejection processes a semantic rewrite rejected by the
+// injection gate (issue #15): the rewriter output contained
+// instruction-shaped additions absent from the input. The rejected output is
+// never written. Instead:
+//
+//  1. The event is audit-logged (kind=semantic_rejected,
+//     reason=injection_suspect ...) plus a structured line in
+//     ~/.pakka/compress-errors.jsonl.
+//  2. The file falls back to deterministic strict compression — safe floor,
+//     zero LLM involvement.
+//  3. State records the fallback output as a pass so the orchestrator does
+//     not re-poke the LLM with the same (possibly seeded) source every
+//     session; a source edit or level change re-triggers as usual.
+func (o *Orchestrator) handleInjectionRejection(abs, level, sourceSHA string, origBytes []byte, inj *semantic.InjectionError, state *State, now func() time.Time) {
+	findings := inj.Violations()
+	o.logf("semantic-rejected: %s level=%s reason=injection_suspect findings=%d — falling back to deterministic strict",
+		abs, level, len(findings))
+	o.logInjection(abs, level, findings)
+	if o.SessionID != "" {
+		_ = audit.WriteNote(o.SessionID, "semantic_rejected",
+			fmt.Sprintf("injection_suspect file=%s findings=%d", abs, len(findings)))
 	}
+
+	res := compress.Run(string(origBytes), compress.ModeStrict)
+	if err := atomicWrite(abs, []byte(res.Output)); err != nil {
+		o.logf("write failed: %s (%v)", abs, err)
+		return
+	}
+	saved := int64(len(origBytes) - len(res.Output))
+	_ = meter.WriteSavings(o.SessionID, o.Repo, saved)
+	state.Record(abs, level, sourceSHA, sha256Hex([]byte(res.Output)), now().UTC().Format(time.RFC3339), true)
+	o.logf("compressed (deterministic fallback): %s level=%s bytes=%d→%d saved=%d",
+		abs, level, len(origBytes), len(res.Output), saved)
+}
+
+// logInjection emits a structured rejection line to
+// ~/.pakka/compress-errors.jsonl. Excerpts are included (they name the rule
+// and the matched span, ≤120 chars) — never full file content.
+func (o *Orchestrator) logInjection(absPath, level string, findings []semantic.Violation) {
+	excerpts := make([]string, 0, len(findings))
+	for _, v := range findings {
+		excerpts = append(excerpts, v.Excerpt)
+	}
+	o.writeErrorLine(map[string]interface{}{
+		"ts":       time.Now().UTC().Format(time.RFC3339),
+		"event":    "semantic_rejected=injection_suspect",
+		"file":     absPath,
+		"level":    level,
+		"findings": excerpts,
+		"sid":      o.SessionID,
+	})
+}
+
+// writeErrorLine appends one JSONL entry to ~/.pakka/compress-errors.jsonl.
+// Shared by logFailure and logInjection so the write mechanism exists once.
+func (o *Orchestrator) writeErrorLine(entry map[string]interface{}) {
 	path := filepath.Join(homeDir(), ".pakka", "compress-errors.jsonl")
 	f, err := openAppend(path)
 	if err != nil {
