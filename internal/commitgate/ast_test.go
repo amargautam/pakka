@@ -198,6 +198,128 @@ func TestEvaluate_InertGitCommitMentionsAllowed(t *testing.T) {
 	}
 }
 
+// TestEvaluate_AST_RejectPathsHonorSkipMarker pins issue #8: the AST reject
+// paths (shell parse error; blocker causes eval / dynamic command name /
+// bash -c / exec wrapper) advertise "[skip pakka] to bypass" in stderr, so
+// adding the marker must actually bypass on those paths.
+//
+// Each row pairs a marker-present and a marker-absent variant of the same
+// shape, so assertions prove the decision VARIES with marker presence
+// (per memory: feedback_measurement_first.md) — no constant-output checks.
+//
+// Marker-present rows assert:
+//   - Decision.Allow == true, IsCommit == true (a commit is plausibly present)
+//   - Decision.AuditNote == "review_skipped=skip_marker"
+//   - Decision.Stderr carries the existing skip notice
+//   - Decision.Command empty (no rewrite on a bypassed commit)
+//
+// Marker-absent rows assert the shape still blocks with its named cause.
+func TestEvaluate_AST_RejectPathsHonorSkipMarker(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CoAuthor = false
+	state := &State{} // no recent pass: the gate would block if it ran
+
+	const skipStderr = "[skip pakka] detected"
+	const skipAudit = "review_skipped=skip_marker"
+
+	tests := []struct {
+		name            string
+		withMarker      string // shape + marker
+		withoutMarker   string // same shape, no marker
+		wantCauseSubstr string // cause named in Stderr when blocked
+	}{
+		{
+			name:            "shell parse error",
+			withMarker:      `git commit -m "x [skip pakka]" && (`,
+			withoutMarker:   `git commit -m "x" && (`,
+			wantCauseSubstr: "shell parse error",
+		},
+		{
+			name:            "eval blocker",
+			withMarker:      `eval "git commit -m 'x [skip pakka]'"`,
+			withoutMarker:   `eval "git commit -m 'x'"`,
+			wantCauseSubstr: "eval",
+		},
+		{
+			name:            "dynamic command name blocker",
+			withMarker:      `$(echo git commit) -m "x [skip pakka]"`,
+			withoutMarker:   `$(echo git commit) -m "x"`,
+			wantCauseSubstr: "dynamic command name",
+		},
+		{
+			name:            "bash -c blocker",
+			withMarker:      `bash -c 'git commit -m "x [skip pakka]"'`,
+			withoutMarker:   `bash -c 'git commit -m "x"'`,
+			wantCauseSubstr: "bash -c",
+		},
+		{
+			name:            "exec wrapper blocker",
+			withMarker:      `echo x | xargs git commit -m "x [skip pakka]"`,
+			withoutMarker:   `echo x | xargs git commit -m "x"`,
+			wantCauseSubstr: "git commit via xargs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marker present → bypassed.
+			d := Evaluate(tt.withMarker, cfg, state)
+			if !d.Allow {
+				t.Fatalf("marker present but blocked\n  cmd=%q\n  stderr=%q", tt.withMarker, d.Stderr)
+			}
+			if !d.IsCommit {
+				t.Errorf("marker bypass not flagged IsCommit\n  cmd=%q", tt.withMarker)
+			}
+			if d.AuditNote != skipAudit {
+				t.Errorf("AuditNote = %q, want %q\n  cmd=%q", d.AuditNote, skipAudit, tt.withMarker)
+			}
+			if !strings.Contains(d.Stderr, skipStderr) {
+				t.Errorf("Stderr = %q, missing skip notice %q\n  cmd=%q", d.Stderr, skipStderr, tt.withMarker)
+			}
+			if d.Command != "" {
+				t.Errorf("bypassed commit rewritten: Command = %q\n  cmd=%q", d.Command, tt.withMarker)
+			}
+
+			// Same shape, marker absent → still blocked with named cause.
+			d = Evaluate(tt.withoutMarker, cfg, state)
+			if d.Allow {
+				t.Fatalf("marker absent but allowed\n  cmd=%q\n  cmdOut=%q", tt.withoutMarker, d.Command)
+			}
+			if !strings.Contains(d.Stderr, tt.wantCauseSubstr) {
+				t.Errorf("Stderr = %q, missing cause substring %q\n  cmd=%q",
+					d.Stderr, tt.wantCauseSubstr, tt.withoutMarker)
+			}
+		})
+	}
+}
+
+// TestEvaluate_AST_RecognizedShapesSkipSemanticsUnchanged guards the raw-text
+// scan against leaking into recognized shapes: positional markers (subject
+// start/end, standalone body line) still bypass via HasSkipMarker, while
+// mid-prose mentions in a recognized chained commit still get gated — the
+// whole-string scan applies only to reject paths where -m extraction fails.
+func TestEvaluate_AST_RecognizedShapesSkipSemanticsUnchanged(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CoAuthor = false
+	state := &State{} // no recent pass: gate blocks unless skipped
+
+	// Positional marker on a recognized chained shape → bypassed.
+	d := Evaluate(`git add -A && git commit -m "fix: x [skip pakka]"`, cfg, state)
+	if !d.Allow || d.AuditNote != "review_skipped=skip_marker" {
+		t.Errorf("positional marker on recognized shape not bypassed: Allow=%v AuditNote=%q stderr=%q",
+			d.Allow, d.AuditNote, d.Stderr)
+	}
+
+	// Mid-prose mention on a recognized chained shape → still gated (blocked).
+	d = Evaluate(`git add -A && git commit -m "docs: explain [skip pakka] marker usage"`, cfg, state)
+	if d.Allow {
+		t.Errorf("mid-prose mention on recognized shape bypassed the gate: cmdOut=%q", d.Command)
+	}
+	if !strings.Contains(d.Stderr, "review gate active") {
+		t.Errorf("expected gate block stderr, got %q", d.Stderr)
+	}
+}
+
 // TestEvaluate_ChainedCommitFlagsIsCommit proves chained/wrapped commits the
 // AST path recognises are tagged IsCommit, so the caller writes a verdict for
 // them (previously only IsGitCommit single-command shapes got verdicts).
