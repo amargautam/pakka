@@ -194,10 +194,10 @@ func resolveRepoKey(cwd string) string {
 
 // compute gathers all status-line metrics from disk.
 //
-// Default level is "ultra" — pakka's brand default. See
-// memory/DECISIONS.md "Default output level: ultra (decided 2026-04-29)".
-// Invalid levels also fall back to "ultra" so a stale config never silently
-// downgrades compression below the brand baseline.
+// Default level is "super-ultra" — pakka's brand default. See
+// memory/DECISIONS.md "Default output level: super-ultra".
+// Invalid levels also fall back to "super-ultra" so a stale config never
+// silently downgrades compression below the brand baseline.
 //
 // stale is the pre-computed orchestrator stale count, supplied by the caller
 // (main.go) to keep statusline free of compress/orchestrator coupling.
@@ -388,8 +388,8 @@ func resolveLevel(outputLevel string) string {
 // stale > 0 appends "· ! N stale" — same semantics as Summary().
 //
 // Bracket label is the output compression level (lite|strict|ultra|super-ultra).
-// "ultra" is the default tier — pakka's brand thesis is fewer tokens, and the
-// default reflects it. See memory/DECISIONS.md.
+// "super-ultra" is the default tier — pakka's brand thesis is fewer tokens, and
+// the default reflects it. See memory/DECISIONS.md.
 //
 // Purpose: Emit compact dollar-savings line for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.

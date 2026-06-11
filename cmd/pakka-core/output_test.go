@@ -37,7 +37,7 @@ func TestOutputRules(t *testing.T) {
 		{"legacy file, select lite", true, "", true, "lite", false, "level: lite"},
 		{"new file (level: ultra header), select strict", true, "PAKKA OUTPUT COMPRESSION ACTIVE — level: ultra\nTest rules.\n", true, "strict", false, "level: strict"},
 		{"new file, select ultra", true, "PAKKA OUTPUT COMPRESSION ACTIVE — level: ultra\nTest rules.\n", true, "ultra", false, "level: ultra"},
-		{"file missing, fallback emits ultra default", false, "", true, "ultra", false, "level: ultra"},
+		{"file missing, fallback emits super-ultra default", false, "", true, "super-ultra", false, "level: super-ultra"},
 		{"file missing, fallback honours explicit strict", false, "", true, "strict", false, "level: strict"},
 		{"output disabled", true, "", false, "strict", true, ""},
 	}
@@ -98,6 +98,26 @@ func simulateOutputRules(pluginDir string, enabled bool, level string) string {
 		out = strings.Replace(out, "level: strict", "level: "+level, 1)
 	}
 	return out
+}
+
+// TestFallbackRulesetSuperUltraDefault — the hardcoded fallback ruleset must
+// claim super-ultra as the default (matching resolveOutputLevel) and must
+// carry a super-ultra intensity row, or a fresh install with a missing
+// rules/output-compress.md emits an empty intensity table at the brand
+// default level after filterToLevel strips the others.
+func TestFallbackRulesetSuperUltraDefault(t *testing.T) {
+	// Mirror production: missing file → fallback, substitute level, filter.
+	out := filterToLevel(simulateOutputRules(t.TempDir(), true, "super-ultra"), "super-ultra")
+
+	if !strings.Contains(out, "Default: super-ultra.") {
+		t.Errorf("fallback must claim super-ultra default; got header lines:\n%s", out)
+	}
+	if strings.Contains(out, "Default: ultra.") {
+		t.Errorf("fallback still claims ultra default")
+	}
+	if !strings.Contains(out, "| super-ultra | Default.") {
+		t.Errorf("fallback intensity table missing super-ultra row marked Default")
+	}
 }
 
 // --- output-reinforce tests ---
@@ -346,8 +366,8 @@ func TestFilterToLevel(t *testing.T) {
 |-------|-------|
 | lite | No filler/hedging. Keep articles + full sentences. |
 | strict | Drop articles, fragments OK, short synonyms. |
-| ultra | Default. Abbreviate, strip conjunctions. |
-| super-ultra | Maximum density. One token where one suffices. |
+| ultra | Abbreviate, strip conjunctions. |
+| super-ultra | Default. Maximum density. One token where one suffices. |
 
 ## Examples
 
@@ -395,14 +415,14 @@ Code/commits unchanged.
 		},
 		{
 			level:        "ultra",
-			wantTableRow: "| ultra | Default. Abbreviate, strip conjunctions. |",
+			wantTableRow: "| ultra | Abbreviate, strip conjunctions. |",
 			wantExLine:   `- ultra: "Abbrev."`,
 			noTableRows:  []string{"| lite |", "| strict |", "| super-ultra |"},
 			noExLines:    []string{`- lite:`, `- strict:`, `- super-ultra:`},
 		},
 		{
 			level:        "super-ultra",
-			wantTableRow: "| super-ultra | Maximum density. One token where one suffices. |",
+			wantTableRow: "| super-ultra | Default. Maximum density. One token where one suffices. |",
 			wantExLine:   `- super-ultra: "Max density."`,
 			noTableRows:  []string{"| lite |", "| strict |", "| ultra |"},
 			noExLines:    []string{`- lite:`, `- strict:`, `- ultra:`},
