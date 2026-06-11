@@ -126,4 +126,88 @@ function getSemanticEnabled(level, explicitSetting) {
   return false;
 }
 
-module.exports = { VALID_LEVELS, getDefaultLevel, safeWriteFlag, readFlag, filterRuleset, getSemanticEnabled };
+// --- Skill-check intent-context filter (issue #11) ---
+// A word keyword only triggers in directive position (imperative verb
+// targeting implementation), not on bare presence inside reports, quoted
+// text, or pasted error messages. Deterministic, no LLM. Ambiguous → no
+// trigger (over-triggering is the reported bug).
+
+// Keywords that can act as imperative verbs. Noun/adjective keywords
+// (broken, error, architecture, feedback, ...) only trigger via a strong
+// lead-in ("please X", "let's X").
+const VERB_KEYWORDS = new Set([
+  'fix', 'debug', 'implement', 'add', 'refactor', 'test',
+  'design', 'spec', 'plan', 'probe', 'decompose', 'slice', 'challenge', 'structure',
+  'verify', 'review', 'approve', 'ship', 'receive', 'finalize',
+]);
+// Lead-ins that mark a directive regardless of verb-ness ("let's tdd this").
+const STRONG_LEADINS = new Set(['please', 'lets', 'kindly']);
+// Weak connectives — directive only when the keyword is verb-capable.
+const WEAK_LEADINS = new Set(['and', 'then', 'also', 'now', 'just', 'first', 'go']);
+// Next-word shapes that mark noun usage ("the fix is coming") — not a directive.
+const NOUN_FOLLOWERS = new Set([
+  'is', 'are', 'was', 'were', 'isn', 'aren', 'wasn', 'weren',
+  'seems', 'looks', 'appears', 'has', 'have', 'had',
+  'will', 'would', 'should', 'could', 'can', 'may', 'might', 'must', 'won',
+  'does', 'did', 'doesn', 'didn', 'broke', 'breaks', 'failed', 'fails', 'works', 'worked',
+]);
+
+// stripQuotedSegments removes fenced code blocks, backticked spans, and
+// double-quoted segments — keywords inside them are quoted material, never
+// directives.
+function stripQuotedSegments(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/"[^"\n]*"/g, ' ')
+    .replace(/“[^”\n]*”/g, ' ');
+}
+
+// isDirectiveUse returns true iff any occurrence of `keyword` in `text`
+// (lowercased, quoted segments already stripped) is in directive position:
+//   - preceded by a strong lead-in ("please", "let's", "can/could/would/will
+//     you", "you to") — no object word required; or
+//   - clause start (prompt start or after . ! ? ; : , newline, em/en dash)
+//     for verb-capable keywords, or after a weak connective ("and", "then"),
+//     with a following object word that is not a copula/aux.
+function isDirectiveUse(text, keyword) {
+  const re = new RegExp('\\b' + keyword + '\\b', 'g');
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    // Bounded context windows: only the immediately surrounding words matter,
+    // so never slice/scan the whole prefix per occurrence — keeps the scan
+    // linear on adversarially long prompts (hook runs on every prompt).
+    const windowStart = Math.max(0, m.index - 80);
+    const before = text.slice(windowStart, m.index);
+    const words = before.match(/[a-z'’]+/g) || [];
+    const prev = words.length ? words[words.length - 1].replace(/['’]/g, '') : null;
+    const prev2 = words.length > 1 ? words[words.length - 2].replace(/['’]/g, '') : null;
+
+    // Strong lead-ins are unambiguous directives even with no object word
+    // ("please fix", "can you review").
+    if (prev && STRONG_LEADINS.has(prev)) return true;
+    if (prev === 'you' && (prev2 === 'can' || prev2 === 'could' || prev2 === 'would' || prev2 === 'will')) return true;
+    if (prev === 'to' && prev2 === 'you') return true;
+
+    // Remaining paths require verb-object shape: a word must follow, and not
+    // a copula/aux ("the fix is coming").
+    const afterStart = m.index + keyword.length;
+    const after = text.slice(afterStart, afterStart + 40);
+    const nextMatch = /^\s*([a-z'’]+)/.exec(after);
+    if (!nextMatch) continue;
+    const next = nextMatch[1].replace(/['’]/g, '');
+    if (NOUN_FOLLOWERS.has(next)) continue;
+
+    // Clause start: prompt start, or boundary punctuation (incl. newline)
+    // followed only by whitespace. Tested on untrimmed text so newlines count.
+    // '^' only counts as prompt start when the window is not truncated.
+    const clauseStart = windowStart === 0
+      ? /(^|[.!?;:,\n—–])\s*$/.test(before)
+      : /[.!?;:,\n—–]\s*$/.test(before);
+    if (clauseStart && VERB_KEYWORDS.has(keyword)) return true;
+    if (prev && WEAK_LEADINS.has(prev) && VERB_KEYWORDS.has(keyword)) return true;
+  }
+  return false;
+}
+
+module.exports = { VALID_LEVELS, getDefaultLevel, safeWriteFlag, readFlag, filterRuleset, getSemanticEnabled, stripQuotedSegments, isDirectiveUse };

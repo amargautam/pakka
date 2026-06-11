@@ -9,7 +9,7 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 
 try {
-  const { VALID_LEVELS, safeWriteFlag, readFlag, getSemanticEnabled, filterRuleset } = require('./compress-config');
+  const { VALID_LEVELS, safeWriteFlag, readFlag, getSemanticEnabled, filterRuleset, stripQuotedSegments, isDirectiveUse } = require('./compress-config');
 
   // Parse hook event from stdin
   let raw = '';
@@ -196,17 +196,28 @@ try {
     },
   ];
 
+  // --- Intent-context filter (issue #11) ---
+  // A word keyword only triggers in directive position (imperative verb
+  // targeting implementation), not on bare presence inside reports, quoted
+  // text, or pasted error messages. stripQuotedSegments / isDirectiveUse live
+  // in compress-config.js (shared, directly unit-tested).
+
+  // Cap scan input — directives appear early; keeps the per-prompt scan
+  // bounded when huge logs/files are pasted (prefer not triggering past cap).
+  const MAX_SCAN_LEN = 32768;
+
   let skillMatch = null;
   if (!isSlashPakka) {
+    const scanText = stripQuotedSegments(promptLower.slice(0, MAX_SCAN_LEN));
     outer: for (const group of SKILL_KEYWORDS) {
       for (const w of group.words) {
-        if (new RegExp('\\b' + w + '\\b').test(promptLower)) {
+        if (isDirectiveUse(scanText, w)) {
           skillMatch = { skill: group.skill, keyword: w };
           break outer;
         }
       }
       for (const p of group.phrases) {
-        if (promptLower.includes(p)) {
+        if (scanText.includes(p)) {
           skillMatch = { skill: group.skill, keyword: p };
           break outer;
         }

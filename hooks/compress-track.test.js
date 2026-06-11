@@ -544,3 +544,169 @@ test('Cycle5: /pakka:compress ultra with NO CLAUDE_PLUGIN_ROOT — falls back to
     tmp.cleanup();
   }
 });
+
+// ===========================================================================
+// Issue #11 — skill-check intent-context filter
+//
+// Keyword-specific skill-check must require directive intent (imperative verb
+// targeting implementation), not bare keyword presence. Reports, quoted text,
+// and pasted error messages must NOT trigger; the generic skill-check line is
+// emitted instead. Table-driven: output must VARY with phrasing.
+// ===========================================================================
+
+// Helper: run a prompt with flag=ultra and classify the skill-check output.
+// Returns { specific: bool, generic: bool, ctx: string }
+function skillCheckFor(promptText, configDir) {
+  const { stdout } = spawnTracker(promptText, 'ultra', configDir);
+  assert.ok(stdout.length > 0, 'reinforcement should be emitted for: ' + promptText);
+  const parsed = JSON.parse(stdout);
+  const ctx = parsed.hookSpecificOutput.additionalContext;
+  return {
+    specific: ctx.includes('Your message contains'),
+    generic: ctx.includes('SKILL-CHECK: design/spec/plan/approach'),
+    ctx,
+  };
+}
+
+const DIRECTIVE_CASES = [
+  // [prompt, expected keyword, expected skill]
+  ['fix the gate so the meter resets', 'fix', '/pakka:build'],
+  ['add retry to the uploader', 'add', '/pakka:build'],
+  ['implement caching for the meter', 'implement', '/pakka:build'],
+  ['debug why the hook exits early', 'debug', '/pakka:build'],
+  ['please fix the flaky hook behaviour', 'fix', '/pakka:build'],
+  ['can you fix the status line', 'fix', '/pakka:build'],
+  ["let's design the recall schema", 'design', '/pakka:plan'],
+  ['review the diff before merge', 'review', '/pakka:review'],
+  // strong lead-in with keyword as final token
+  ['please fix', 'fix', '/pakka:build'],
+  // newline acts as clause boundary after pasted context
+  ['here is the context\nfix the gate now', 'fix', '/pakka:build'],
+];
+
+const REPORT_CASES = [
+  'the gate is broken when the flag is missing',
+  'I found a bug in the meter output',
+  "there's an error message saying ENOENT",
+  "I'm seeing: Error: ENOENT: no such file or directory",
+  'the fix is coming in the next release',
+  'did you fix the parser yesterday',
+];
+
+for (const [promptText, keyword, skill] of DIRECTIVE_CASES) {
+  test('Issue11: directive "' + promptText + '" → specific skill-check for ' + skill, () => {
+    const tmp = makeTmpDir();
+    try {
+      const r = skillCheckFor(promptText, tmp.dir);
+      assert.ok(r.specific, 'directive phrasing should trigger keyword-specific skill-check: ' + r.ctx);
+      assert.ok(r.ctx.includes("'" + keyword + "'"), 'should name the matched keyword ' + keyword + ': ' + r.ctx);
+      assert.ok(r.ctx.includes(skill), 'should point at ' + skill + ': ' + r.ctx);
+    } finally {
+      tmp.cleanup();
+    }
+  });
+}
+
+for (const promptText of REPORT_CASES) {
+  test('Issue11: report "' + promptText + '" → generic skill-check only, no keyword trigger', () => {
+    const tmp = makeTmpDir();
+    try {
+      const r = skillCheckFor(promptText, tmp.dir);
+      assert.ok(!r.specific, 'report phrasing must NOT trigger keyword-specific skill-check: ' + r.ctx);
+      assert.ok(r.generic, 'generic skill-check line should still be present: ' + r.ctx);
+    } finally {
+      tmp.cleanup();
+    }
+  });
+}
+
+test('Issue11: keyword inside double quotes does not trigger', () => {
+  const tmp = makeTmpDir();
+  try {
+    const r = skillCheckFor('the docs say "fix the gate" but I disagree', tmp.dir);
+    assert.ok(!r.specific, 'quoted keyword must not trigger: ' + r.ctx);
+    assert.ok(r.generic, 'generic skill-check should remain: ' + r.ctx);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: keyword inside backticks does not trigger', () => {
+  const tmp = makeTmpDir();
+  try {
+    const r = skillCheckFor('`fix the gate` appeared in the session log', tmp.dir);
+    assert.ok(!r.specific, 'backticked keyword must not trigger: ' + r.ctx);
+    assert.ok(r.generic, 'generic skill-check should remain: ' + r.ctx);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: keyword inside fenced code block does not trigger', () => {
+  const tmp = makeTmpDir();
+  try {
+    const r = skillCheckFor('here is the log\n```\nerror: fix required\n```\nthoughts?', tmp.dir);
+    assert.ok(!r.specific, 'fenced-block keyword must not trigger: ' + r.ctx);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: same keyword, phrasing flips outcome (output varies with input)', () => {
+  const tmp = makeTmpDir();
+  try {
+    const report = skillCheckFor('the gate is broken when the flag is missing', tmp.dir);
+    const directive = skillCheckFor('fix the gate so the flag is written', tmp.dir);
+    assert.notEqual(report.specific, directive.specific, 'report vs directive must differ');
+    assert.ok(directive.specific && !report.specific, 'directive triggers, report does not');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: regression — phrase trigger still fires ("not working")', () => {
+  const tmp = makeTmpDir();
+  try {
+    const r = skillCheckFor('the deploy script is not working', tmp.dir);
+    assert.ok(r.specific, 'phrase table entry should still trigger: ' + r.ctx);
+    assert.ok(r.ctx.includes('/pakka:build'), 'phrase should point at /pakka:build: ' + r.ctx);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: regression — /pakka: prompts still skip the keyword scan', () => {
+  const tmp = makeTmpDir();
+  try {
+    const { stdout } = spawnTracker('/pakka:recall fix the gate', 'ultra', tmp.dir);
+    const parsed = JSON.parse(stdout);
+    const ctx = parsed.hookSpecificOutput.additionalContext;
+    assert.ok(!ctx.includes('Your message contains'), '/pakka: prompt must not get keyword-specific skill-check');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: huge pasted-log prompt completes within hook timeout, no keyword trigger', () => {
+  const tmp = makeTmpDir();
+  try {
+    // ~500KB of repeated error-report text — must not stall the per-prompt
+    // hook (spawnTracker enforces a 5s timeout) and must not trigger.
+    const huge = 'the gate is broken, error: enoent at line 42\n'.repeat(11000);
+    const r = skillCheckFor(huge, tmp.dir);
+    assert.ok(!r.specific, 'pasted log must not trigger keyword-specific skill-check');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Issue11: regression — neutral prompt gets generic skill-check, no keyword trigger', () => {
+  const tmp = makeTmpDir();
+  try {
+    const r = skillCheckFor('what is a connection pool?', tmp.dir);
+    assert.ok(!r.specific, 'neutral prompt must not trigger keyword-specific skill-check');
+    assert.ok(r.generic, 'neutral prompt should get generic skill-check line');
+  } finally {
+    tmp.cleanup();
+  }
+});
