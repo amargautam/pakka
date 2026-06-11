@@ -5,6 +5,10 @@
 // Separation ensures the model sees the skill-check directive before the
 // 200+ line compression ruleset, not buried after it.
 
+// Kill-switch (issue #13): PAKKA_DISABLED=1 disables this hook entirely —
+// exit 0, emit nothing. Used by the bench raw arm for zero pakka injection.
+if (process.env.PAKKA_DISABLED === '1') process.exit(0);
+
 const fs = require('fs');
 const path = require('path');
 

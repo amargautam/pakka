@@ -1,0 +1,541 @@
+diff --git a/pydantic-core/src/url.rs b/pydantic-core/src/url.rs
+index 34756e6326c..e73100aae3a 100644
+--- a/pydantic-core/src/url.rs
++++ b/pydantic-core/src/url.rs
+@@ -92,7 +92,6 @@ impl PyUrl {
+                         None,
+                         None,
+                         None,
+-                        None,
+                         InputType::Python,
+                         StringCacheMode::None,
+                         None,
+@@ -101,6 +100,7 @@ impl PyUrl {
+                     &mut RecursionState::default(),
+                     PartialMode::Off,
+                     None,
++                    None,
+                 ),
+             )
+             .map_err(|e| {
+@@ -328,7 +328,6 @@ impl PyMultiHostUrl {
+                         None,
+                         None,
+                         None,
+-                        None,
+                         InputType::Python,
+                         StringCacheMode::None,
+                         None,
+@@ -337,6 +336,7 @@ impl PyMultiHostUrl {
+                     &mut RecursionState::default(),
+                     PartialMode::Off,
+                     None,
++                    None,
+                 ),
+             )
+             .map_err(|e| {
+diff --git a/pydantic-core/src/validators/dataclass.rs b/pydantic-core/src/validators/dataclass.rs
+index d3c208c7109..c371c89d008 100644
+--- a/pydantic-core/src/validators/dataclass.rs
++++ b/pydantic-core/src/validators/dataclass.rs
+@@ -156,8 +156,8 @@ impl Validator for DataclassArgsValidator {
+         let mut errors: Vec<ValLineError> = Vec::new();
+         let mut used_keys: AHashSet<&str> = AHashSet::with_capacity(self.fields.len());
+ 
+-        let state = &mut state.rebind_extra(|extra| extra.data = Some(output_dict.clone()));
+-        let state = &mut state.scoped_set(|state| &mut state.has_field_error, false);
++        let state = &mut state.scoped_set_data(Some(output_dict.clone()));
++        let state = &mut state.scoped_clear_field_error();
+ 
+         let extra_behavior = state.extra_behavior_or(self.extra_behavior);
+ 
+@@ -407,9 +407,7 @@ impl Validator for DataclassArgsValidator {
+                 }
+             }
+ 
+-            let state = &mut state.rebind_extra(|extra| {
+-                extra.data = Some(data_dict.clone());
+-            });
++            let state = &mut state.scoped_set_data(Some(data_dict.clone()));
+             let state = &mut state.scoped_set_field_name(Some(field.name.as_py_str().bind(py).clone()));
+ 
+             match field.validator.validate(py, field_value, state) {
+@@ -527,7 +525,7 @@ impl Validator for DataclassValidator {
+         input: &(impl Input<'py> + ?Sized),
+         state: &mut ValidationState<'_, 'py>,
+     ) -> ValResult<Py<PyAny>> {
+-        if let Some(self_instance) = state.extra().self_instance {
++        if let Some(self_instance) = state.self_instance {
+             // in the case that self_instance is Some, we're calling validation from within `BaseModel.__init__`
+             return self.validate_init(py, self_instance, input, state);
+         }
+@@ -631,7 +629,7 @@ impl DataclassValidator {
+     ) -> ValResult<Py<PyAny>> {
+         // we need to set `self_instance` to None for nested validators as we don't want to operate on the self_instance
+         // instance anymore
+-        let state = &mut state.rebind_extra(|extra| extra.self_instance = None);
++        let state = &mut state.scoped_clear_self_instance();
+         let val_output = self.validator.validate(py, input, state)?;
+ 
+         self.set_dict_call(py, self_instance, val_output, input)?;
+diff --git a/pydantic-core/src/validators/function.rs b/pydantic-core/src/validators/function.rs
+index c047a151ab3..415158cdd73 100644
+--- a/pydantic-core/src/validators/function.rs
++++ b/pydantic-core/src/validators/function.rs
+@@ -17,8 +17,7 @@ use crate::tools::{SchemaDict, function_name, safe_repr};
+ 
+ use super::generator::InternalValidator;
+ use super::{
+-    BuildValidator, CombinedValidator, DefinitionsBuilder, Extra, InputType, ValidationState, Validator,
+-    build_validator,
++    BuildValidator, CombinedValidator, DefinitionsBuilder, InputType, ValidationState, Validator, build_validator,
+ };
+ 
+ struct FunctionInfo {
+@@ -108,7 +107,7 @@ impl FunctionBeforeValidator {
+                 .cloned()
+                 .map(Bound::unbind)
+                 .or_else(|| self.field_name.clone());
+-            let info = ValidationInfo::new(py, state.extra(), &self.config, field_name);
++            let info = ValidationInfo::new(py, state, &self.config, field_name);
+             self.func.call1(py, (input.to_object(py)?, info))
+         } else {
+             self.func.call1(py, (input.to_object(py)?,))
+@@ -182,7 +181,7 @@ impl FunctionAfterValidator {
+                 .cloned()
+                 .map(Bound::unbind)
+                 .or_else(|| self.field_name.clone());
+-            let info = ValidationInfo::new(py, state.extra(), &self.config, field_name);
++            let info = ValidationInfo::new(py, state, &self.config, field_name);
+             self.func.call1(py, (v, info))
+         } else {
+             self.func.call1(py, (v,))
+@@ -276,7 +275,7 @@ impl Validator for FunctionPlainValidator {
+                 .cloned()
+                 .map(Bound::unbind)
+                 .or_else(|| self.field_name.clone());
+-            let info = ValidationInfo::new(py, state.extra(), &self.config, field_name);
++            let info = ValidationInfo::new(py, state, &self.config, field_name);
+             self.func.call1(py, (input.to_object(py)?, info))
+         } else {
+             self.func.call1(py, (input.to_object(py)?,))
+@@ -345,7 +344,7 @@ impl FunctionWrapValidator {
+                 .cloned()
+                 .map(Bound::unbind)
+                 .or_else(|| self.field_name.clone());
+-            let info = ValidationInfo::new(py, state.extra(), &self.config, field_name);
++            let info = ValidationInfo::new(py, state, &self.config, field_name);
+             self.func.call1(py, (input.to_object(py)?, handler, info))
+         } else {
+             self.func.call1(py, (input.to_object(py)?, handler))
+@@ -541,12 +540,13 @@ impl_py_gc_traverse!(ValidationInfo {
+ });
+ 
+ impl ValidationInfo {
+-    fn new(py: Python, extra: &Extra<'_, '_>, config: &Py<PyAny>, field_name: Option<Py<PyString>>) -> Self {
++    fn new(py: Python, state: &ValidationState<'_, '_>, config: &Py<PyAny>, field_name: Option<Py<PyString>>) -> Self {
++        let extra = state.extra();
+         Self {
+             config: config.clone_ref(py),
+             context: extra.context.map(|ctx| ctx.clone().into()),
+             field_name,
+-            data: extra.data.as_ref().map(|data| data.clone().into()),
++            data: state.data.as_ref().map(|data| data.clone().into()),
+             mode: extra.input_type,
+         }
+     }
+diff --git a/pydantic-core/src/validators/generator.rs b/pydantic-core/src/validators/generator.rs
+index 943d1363faf..d7cd6aeaac3 100644
+--- a/pydantic-core/src/validators/generator.rs
++++ b/pydantic-core/src/validators/generator.rs
+@@ -254,13 +254,13 @@ impl InternalValidator {
+         Self {
+             name: name.to_string(),
+             validator,
+-            data: extra.data.as_ref().map(|d| d.clone().into()),
++            data: state.data.as_ref().map(|d| d.clone().into()),
+             strict: extra.strict,
+             extra_behavior: extra.extra_behavior,
+             from_attributes: extra.from_attributes,
+             context: extra.context.map(|d| d.clone().unbind()),
+             field_name: state.field_name().map(|d| d.clone().unbind()),
+-            self_instance: extra.self_instance.map(|d| d.clone().unbind()),
++            self_instance: state.self_instance.map(|d| d.clone().unbind()),
+             recursion_guard: state.recursion_guard.clone(),
+             exactness: state.exactness,
+             fields_set_count: state.fields_set_count,
+@@ -281,12 +281,10 @@ impl InternalValidator {
+     ) -> PyResult<Py<PyAny>> {
+         let extra = Extra {
+             input_type: self.validation_mode,
+-            data: self.data.as_ref().map(|data| data.bind(py).clone()),
+             strict: self.strict,
+             extra_behavior: self.extra_behavior,
+             from_attributes: self.from_attributes,
+             context: self.context.as_ref().map(|data| data.bind(py)),
+-            self_instance: self.self_instance.as_ref().map(|data| data.bind(py)),
+             cache_str: self.cache_str,
+             by_alias: None,
+             by_name: None,
+@@ -296,7 +294,9 @@ impl InternalValidator {
+             &mut self.recursion_guard,
+             false.into(),
+             Some(field_name.as_py_str().bind(py).clone()),
++            self.self_instance.as_ref().map(|data| data.bind(py)),
+         );
++        state.data = self.data.as_ref().map(|data| data.bind(py).clone());
+         state.exactness = self.exactness;
+         let result = self
+             .validator
+@@ -324,12 +324,10 @@ impl InternalValidator {
+     ) -> PyResult<Py<PyAny>> {
+         let extra = Extra {
+             input_type: self.validation_mode,
+-            data: self.data.as_ref().map(|data| data.bind(py).clone()),
+             strict: self.strict,
+             extra_behavior: self.extra_behavior,
+             from_attributes: self.from_attributes,
+             context: self.context.as_ref().map(|data| data.bind(py)),
+-            self_instance: self.self_instance.as_ref().map(|data| data.bind(py)),
+             cache_str: self.cache_str,
+             by_alias: None,
+             by_name: None,
+@@ -339,7 +337,9 @@ impl InternalValidator {
+             &mut self.recursion_guard,
+             false.into(),
+             self.field_name.as_ref().map(|name| name.bind(py).clone()),
++            self.self_instance.as_ref().map(|data| data.bind(py)),
+         );
++        state.data = self.data.as_ref().map(|data| data.bind(py).clone());
+         state.exactness = self.exactness;
+         state.fields_set_count = self.fields_set_count;
+         let result = self.validator.validate(py, input, &mut state).map_err(|e| {
+diff --git a/pydantic-core/src/validators/mod.rs b/pydantic-core/src/validators/mod.rs
+index 27cd6d2b5cd..6accbae455c 100644
+--- a/pydantic-core/src/validators/mod.rs
++++ b/pydantic-core/src/validators/mod.rs
+@@ -348,12 +348,10 @@ impl SchemaValidator {
+ 
+         let extra = Extra {
+             input_type: InputType::Python,
+-            data: None,
+             strict,
+             extra_behavior,
+             from_attributes,
+             context,
+-            self_instance: None,
+             cache_str: self.cache_str,
+             by_alias,
+             by_name,
+@@ -365,6 +363,7 @@ impl SchemaValidator {
+             guard,
+             false.into(),
+             Some(field_name.as_py_str().bind(py).clone()),
++            None,
+         );
+         self.validator
+             .validate_assignment(py, &obj, &field_name, &field_value, &mut state)
+@@ -380,18 +379,16 @@ impl SchemaValidator {
+     ) -> PyResult<Py<PyAny>> {
+         let extra = Extra {
+             input_type: InputType::Python,
+-            data: None,
+             strict,
+             extra_behavior: None,
+             from_attributes: None,
+             context,
+-            self_instance: None,
+             cache_str: self.cache_str,
+             by_alias: None,
+             by_name: None,
+         };
+         let recursion_guard = &mut RecursionState::default();
+-        let mut state = ValidationState::new(extra, recursion_guard, false.into(), None);
++        let mut state = ValidationState::new(extra, recursion_guard, false.into(), None, None);
+         let r = self.validator.default_value(py, None::<i64>, &mut state);
+         match r {
+             Ok(maybe_default) => match maybe_default {
+@@ -450,7 +447,6 @@ impl SchemaValidator {
+                 extra_behavior,
+                 from_attributes,
+                 context,
+-                self_instance,
+                 input_type,
+                 self.cache_str,
+                 by_alias,
+@@ -459,6 +455,7 @@ impl SchemaValidator {
+             &mut recursion_guard,
+             allow_partial,
+             None,
++            self_instance,
+         );
+         self.validator.validate(py, input, &mut state)
+     }
+@@ -676,14 +673,11 @@ fn unknown_schema_type(val_type: &str) -> PyErr {
+     py_schema_error_type!("Unknown schema type: \"{val_type}\"")
+ }
+ 
+-/// More (mostly immutable) data to pass between validators, should probably be class `Context`,
+-/// but that would confuse it with context as per pydantic/pydantic#1549
++/// Constants for a validation process
+ #[derive(Debug, Clone)]
+ pub struct Extra<'a, 'py> {
+     /// Validation mode
+     pub input_type: InputType,
+-    /// This is used as the `data` kwargs to validator functions and default factories (if they accept the argument)
+-    pub data: Option<Bound<'py, PyDict>>,
+     /// whether we're in strict or lax mode
+     pub strict: Option<bool>,
+     /// Whether to ignore, allow, or forbid extra data during model validation
+@@ -693,8 +687,6 @@ pub struct Extra<'a, 'py> {
+     pub from_attributes: Option<bool>,
+     /// context used in validator functions
+     pub context: Option<&'a Bound<'py, PyAny>>,
+-    /// This is an instance of the model or dataclass being validated, when validation is performed from `__init__`
+-    self_instance: Option<&'a Bound<'py, PyAny>>,
+     /// Whether to use a cache of short strings to accelerate python string construction
+     cache_str: StringCacheMode,
+     /// Whether to use the field's alias to match the input data to an attribute.
+@@ -710,7 +702,6 @@ impl<'a, 'py> Extra<'a, 'py> {
+         extra_behavior: Option<ExtraBehavior>,
+         from_attributes: Option<bool>,
+         context: Option<&'a Bound<'py, PyAny>>,
+-        self_instance: Option<&'a Bound<'py, PyAny>>,
+         input_type: InputType,
+         cache_str: StringCacheMode,
+         by_alias: Option<bool>,
+@@ -718,12 +709,10 @@ impl<'a, 'py> Extra<'a, 'py> {
+     ) -> Self {
+         Extra {
+             input_type,
+-            data: None,
+             strict,
+             extra_behavior,
+             from_attributes,
+             context,
+-            self_instance,
+             cache_str,
+             by_alias,
+             by_name,
+@@ -731,23 +720,6 @@ impl<'a, 'py> Extra<'a, 'py> {
+     }
+ }
+ 
+-impl Extra<'_, '_> {
+-    pub fn as_strict(&self) -> Self {
+-        Self {
+-            input_type: self.input_type,
+-            data: self.data.clone(),
+-            strict: Some(true),
+-            extra_behavior: self.extra_behavior,
+-            from_attributes: self.from_attributes,
+-            context: self.context,
+-            self_instance: self.self_instance,
+-            cache_str: self.cache_str,
+-            by_alias: self.by_alias,
+-            by_name: self.by_name,
+-        }
+-    }
+-}
+-
+ #[derive(Debug)]
+ #[enum_dispatch(PyGcTraverse)]
+ pub enum CombinedValidator {
+diff --git a/pydantic-core/src/validators/model.rs b/pydantic-core/src/validators/model.rs
+index a3fdcb62d9b..9703e9c048a 100644
+--- a/pydantic-core/src/validators/model.rs
++++ b/pydantic-core/src/validators/model.rs
+@@ -121,7 +121,7 @@ impl Validator for ModelValidator {
+         input: &(impl Input<'py> + ?Sized),
+         state: &mut ValidationState<'_, 'py>,
+     ) -> ValResult<Py<PyAny>> {
+-        if let Some(self_instance) = state.extra().self_instance {
++        if let Some(self_instance) = state.self_instance {
+             // in the case that self_instance is Some, we're calling validation from within `BaseModel.__init__`
+             return self.validate_init(py, self_instance, input, state);
+         }
+@@ -255,7 +255,7 @@ impl ModelValidator {
+     ) -> ValResult<Py<PyAny>> {
+         // we need to set `self_instance` to None for nested validators as we don't want to operate on self_instance
+         // anymore
+-        let state = &mut state.rebind_extra(|extra| extra.self_instance = None);
++        let state = &mut state.scoped_clear_self_instance();
+ 
+         if self.root_model {
+             let root_field = root_field_py_str(py);
+diff --git a/pydantic-core/src/validators/model_fields.rs b/pydantic-core/src/validators/model_fields.rs
+index 1192336b5de..cf08dabcbaf 100644
+--- a/pydantic-core/src/validators/model_fields.rs
++++ b/pydantic-core/src/validators/model_fields.rs
+@@ -228,7 +228,7 @@ impl Validator for ModelFieldsValidator {
+         }
+ 
+         let new_data = {
+-            let state = &mut state.rebind_extra(move |extra| extra.data = Some(data_dict));
++            let state = &mut state.scoped_set_data(Some(data_dict));
+ 
+             if let Some(field) = self.fields.iter().find(|f| &*f.name == field_name) {
+                 if field.frozen {
+@@ -328,8 +328,8 @@ impl ModelFieldsValidator {
+         };
+ 
+         {
+-            let state = &mut state.rebind_extra(|extra| extra.data = Some(model_dict.clone()));
+-            let state = &mut state.scoped_set(|state| &mut state.has_field_error, false);
++            let state = &mut state.scoped_set_data(Some(model_dict.clone()));
++            let state = &mut state.scoped_clear_field_error();
+ 
+             for field in &self.fields {
+                 let state = &mut state.scoped_set_field_name(Some(field.name.as_py_str().bind(py).clone()));
+@@ -560,8 +560,8 @@ impl ModelFieldsValidator {
+         let mut errors: Vec<ValLineError> = Vec::new();
+         let fields_set = PySet::empty(py)?;
+ 
+-        let state = &mut state.rebind_extra(|extra| extra.data = Some(model_dict.clone()));
+-        let state = &mut state.scoped_set(|state| &mut state.has_field_error, false);
++        let state = &mut state.scoped_set_data(Some(model_dict.clone()));
++        let state = &mut state.scoped_clear_field_error();
+ 
+         let model_extra_dict = PyDict::new(py);
+         for (key, value) in &**json_object {
+diff --git a/pydantic-core/src/validators/typed_dict.rs b/pydantic-core/src/validators/typed_dict.rs
+index c0299907bb4..40161584239 100644
+--- a/pydantic-core/src/validators/typed_dict.rs
++++ b/pydantic-core/src/validators/typed_dict.rs
+@@ -176,8 +176,8 @@ impl Validator for TypedDictValidator {
+         };
+ 
+         {
+-            let state = &mut state.rebind_extra(|extra| extra.data = Some(output_dict.clone()));
+-            let state = &mut state.scoped_set(|state| &mut state.has_field_error, false);
++            let state = &mut state.scoped_set_data(Some(output_dict.clone()));
++            let state = &mut state.scoped_clear_field_error();
+ 
+             let mut fields_set_count: usize = 0;
+ 
+diff --git a/pydantic-core/src/validators/validation_state.rs b/pydantic-core/src/validators/validation_state.rs
+index f86dca9654f..4c56f5ed645 100644
+--- a/pydantic-core/src/validators/validation_state.rs
++++ b/pydantic-core/src/validators/validation_state.rs
+@@ -1,7 +1,7 @@
+ use std::ops::{Deref, DerefMut};
+ 
+ use pyo3::prelude::*;
+-use pyo3::types::PyString;
++use pyo3::types::{PyDict, PyString};
+ 
+ use jiter::{PartialMode, StringCacheMode};
+ 
+@@ -37,6 +37,10 @@ pub struct ValidationState<'a, 'py> {
+     pub has_field_error: bool,
+     /// The name of the field being validated, if applicable
+     field_name: Option<Bound<'py, PyString>>,
++    /// This is used as the `data` kwargs to validator functions and default factories (if they accept the argument)
++    pub data: Option<Bound<'py, PyDict>>,
++    /// This is an instance of the model or dataclass being validated, when validation is performed from `__init__`
++    pub self_instance: Option<&'a Bound<'py, PyAny>>,
+     // deliberately make Extra readonly
+     extra: Extra<'a, 'py>,
+ }
+@@ -47,6 +51,7 @@ impl<'a, 'py> ValidationState<'a, 'py> {
+         recursion_guard: &'a mut RecursionState,
+         allow_partial: PartialMode,
+         field_name: Option<Bound<'py, PyString>>,
++        self_instance: Option<&'a Bound<'py, PyAny>>,
+     ) -> Self {
+         Self {
+             recursion_guard, // Don't care about exactness unless doing union validation
+@@ -56,6 +61,8 @@ impl<'a, 'py> ValidationState<'a, 'py> {
+             has_field_error: false,
+             field_name,
+             extra,
++            data: None,
++            self_instance,
+         }
+     }
+ 
+@@ -75,11 +82,7 @@ impl<'a, 'py> ValidationState<'a, 'py> {
+     /// and setting that field to `value`.
+     ///
+     /// When `ScopedSetState` drops, the field is restored to its original value.
+-    pub fn scoped_set<'state, P, T>(
+-        &'state mut self,
+-        projector: P,
+-        new_value: T,
+-    ) -> ScopedSetState<'state, 'a, 'py, P, T>
++    fn scoped_set<'state, P, T>(&'state mut self, projector: P, new_value: T) -> ScopedSetState<'state, 'a, 'py, P, T>
+     where
+         P: for<'p> Fn(&'p mut ValidationState<'a, 'py>) -> &'p mut T,
+     {
+@@ -99,6 +102,21 @@ impl<'a, 'py> ValidationState<'a, 'py> {
+         self.scoped_set(Self::field_name_mut, new_value)
+     }
+ 
++    /// Set the data within state for the given scope.
++    pub fn scoped_set_data(&mut self, new_value: Option<Bound<'py, PyDict>>) -> ScopedDataState<'_, 'a, 'py> {
++        self.scoped_set(Self::data_mut, new_value)
++    }
++
++    /// Set has_field_error to `false`, reset on exit of the scope.
++    pub fn scoped_clear_field_error(&mut self) -> ScopedHasFieldErrorState<'_, 'a, 'py> {
++        self.scoped_set(Self::has_field_error_mut, false)
++    }
++
++    /// Set `self_instance` to `None`, reset on exit of the scope.
++    pub fn scoped_clear_self_instance(&mut self) -> ScopedSelfInstanceState<'_, 'a, 'py> {
++        self.scoped_set(Self::self_instance_mut, None)
++    }
++
+     pub fn field_name(&self) -> Option<&Bound<'py, PyString>> {
+         self.field_name.as_ref()
+     }
+@@ -159,6 +177,18 @@ impl<'a, 'py> ValidationState<'a, 'py> {
+     fn field_name_mut(&mut self) -> &mut Option<Bound<'py, PyString>> {
+         &mut self.field_name
+     }
++
++    fn data_mut(&mut self) -> &mut Option<Bound<'py, PyDict>> {
++        &mut self.data
++    }
++
++    fn has_field_error_mut(&mut self) -> &mut bool {
++        &mut self.has_field_error
++    }
++
++    fn self_instance_mut(&mut self) -> &mut Option<&'a Bound<'py, PyAny>> {
++        &mut self.self_instance
++    }
+ }
+ 
+ impl ContainsRecursionState for ValidationState<'_, '_> {
+@@ -267,10 +297,10 @@ where
+     }
+ }
+ 
+-type ScopedFieldNameState<'scope, 'a, 'py> = ScopedSetState<
+-    'scope,
+-    'a,
+-    'py,
+-    for<'s> fn(&'s mut ValidationState<'a, 'py>) -> &'s mut Option<Bound<'py, PyString>>,
+-    Option<Bound<'py, PyString>>,
+->;
++type ScopedSetStateT<'scope, 'a, 'py, T> =
++    ScopedSetState<'scope, 'a, 'py, for<'s> fn(&'s mut ValidationState<'a, 'py>) -> &'s mut T, T>;
++
++type ScopedFieldNameState<'scope, 'a, 'py> = ScopedSetStateT<'scope, 'a, 'py, Option<Bound<'py, PyString>>>;
++type ScopedDataState<'scope, 'a, 'py> = ScopedSetStateT<'scope, 'a, 'py, Option<Bound<'py, PyDict>>>;
++type ScopedHasFieldErrorState<'scope, 'a, 'py> = ScopedSetStateT<'scope, 'a, 'py, bool>;
++type ScopedSelfInstanceState<'scope, 'a, 'py> = ScopedSetStateT<'scope, 'a, 'py, Option<&'a Bound<'py, PyAny>>>;
+diff --git a/pydantic-core/src/validators/with_default.rs b/pydantic-core/src/validators/with_default.rs
+index dfd7c2b2dcb..31914d50681 100644
+--- a/pydantic-core/src/validators/with_default.rs
++++ b/pydantic-core/src/validators/with_default.rs
+@@ -193,7 +193,7 @@ impl Validator for WithDefaultValidator {
+             }
+             return Err(err);
+         }
+-        match self.default.default_value(py, state.extra().data.as_ref())? {
++        match self.default.default_value(py, state.data.as_ref())? {
+             Some(stored_dft) => {
+                 let dft: Py<PyAny> = if self.copy_default {
+                     let deepcopy_func = COPY_DEEPCOPY.get_or_init(py, || get_deepcopy(py).unwrap());

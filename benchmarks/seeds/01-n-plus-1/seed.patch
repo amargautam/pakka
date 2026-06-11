@@ -1,0 +1,36 @@
+--- /dev/null
++++ b/handlers/users.go
+@@ -0,0 +1,32 @@
++package handlers
++
++import (
++	"database/sql"
++	"encoding/json"
++	"net/http"
++)
++
++type User struct {
++	ID    int    `json:"id"`
++	Name  string `json:"name"`
++	Email string `json:"email"`
++	Role  string `json:"role"`
++}
++
++func ListUsersWithRoles(db *sql.DB, w http.ResponseWriter, r *http.Request) {
++	rows, err := db.Query("SELECT id, name, email FROM users")
++	if err != nil {
++		http.Error(w, err.Error(), 500)
++		return
++	}
++	defer rows.Close()
++
++	var users []User
++	for rows.Next() {
++		var u User
++		rows.Scan(&u.ID, &u.Name, &u.Email)
++		// BUG: N+1 query — one SELECT per user inside the loop
++		db.QueryRow("SELECT role FROM roles WHERE user_id = ?", u.ID).Scan(&u.Role)
++		users = append(users, u)
++	}
++	json.NewEncoder(w).Encode(users)
++}

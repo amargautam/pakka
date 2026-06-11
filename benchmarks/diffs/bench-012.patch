@@ -1,0 +1,491 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index fc3871017304..cfcf685ffd7d 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -9900,9 +9900,7 @@ dependencies = [
+  "futures",
+  "indexmap 2.13.0",
+  "inventory",
+- "once_cell",
+  "parking_lot",
+- "phf",
+  "pin-project-lite",
+  "rayon",
+  "regex",
+@@ -9942,7 +9940,6 @@ dependencies = [
+  "indexmap 2.13.0",
+  "indoc",
+  "lzzzz",
+- "once_cell",
+  "parking_lot",
+  "rand 0.10.0",
+  "regex",
+@@ -9975,7 +9972,6 @@ dependencies = [
+  "arbitrary",
+  "bincode 2.0.1",
+  "libfuzzer-sys",
+- "once_cell",
+  "serde",
+  "tokio",
+  "turbo-tasks",
+diff --git a/turbopack/crates/turbo-tasks-backend/Cargo.toml b/turbopack/crates/turbo-tasks-backend/Cargo.toml
+index f4c9ddc88e13..b588ac6711cf 100644
+--- a/turbopack/crates/turbo-tasks-backend/Cargo.toml
++++ b/turbopack/crates/turbo-tasks-backend/Cargo.toml
+@@ -44,7 +44,6 @@ either = { workspace = true }
+ hashbrown = { workspace = true, features = ["raw"] }
+ indexmap = { workspace = true }
+ lzzzz = { workspace = true, optional = true }
+-once_cell = { workspace = true }
+ parking_lot = { workspace = true }
+ rand = { workspace = true }
+ ringmap = { workspace = true, features = ["serde"] }
+diff --git a/turbopack/crates/turbo-tasks-backend/fuzz/Cargo.toml b/turbopack/crates/turbo-tasks-backend/fuzz/Cargo.toml
+index dc5453de1cf0..ee025c6be3ed 100644
+--- a/turbopack/crates/turbo-tasks-backend/fuzz/Cargo.toml
++++ b/turbopack/crates/turbo-tasks-backend/fuzz/Cargo.toml
+@@ -13,7 +13,6 @@ anyhow = { workspace = true }
+ arbitrary = { version = "1.4.1", features = ["derive"] }
+ bincode = { workspace = true }
+ libfuzzer-sys = "0.4.9"
+-once_cell = { workspace = true }
+ serde = { workspace = true }
+ tokio = { workspace = true, features = ["full"] }
+ turbo-tasks = { workspace = true, features = ["non_operation_vc_strongly_consistent"] }
+diff --git a/turbopack/crates/turbo-tasks-backend/fuzz/src/graph.rs b/turbopack/crates/turbo-tasks-backend/fuzz/src/graph.rs
+index 2cd238eb3104..518b4b11b10e 100644
+--- a/turbopack/crates/turbo-tasks-backend/fuzz/src/graph.rs
++++ b/turbopack/crates/turbo-tasks-backend/fuzz/src/graph.rs
+@@ -1,9 +1,8 @@
+-use std::sync::Arc;
++use std::sync::{Arc, LazyLock};
+ 
+ use anyhow::Result;
+ use arbitrary::Arbitrary;
+ use bincode::{Decode, Encode};
+-use once_cell::sync::Lazy;
+ use turbo_tasks::{self, NonLocalValue, State, TaskInput, TurboTasks, Vc, trace::TraceRawVcs};
+ use turbo_tasks_malloc::TurboMalloc;
+ 
+@@ -81,7 +80,7 @@ impl<'a> Iterator for Iter<'a> {
+     }
+ }
+ 
+-static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
++static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+     tokio::runtime::Builder::new_multi_thread()
+         .enable_all()
+         .on_thread_stop(|| {
+diff --git a/turbopack/crates/turbo-tasks-backend/src/backend/operation/update_cell.rs b/turbopack/crates/turbo-tasks-backend/src/backend/operation/update_cell.rs
+index d14e089c9e47..99bee14a7b7a 100644
+--- a/turbopack/crates/turbo-tasks-backend/src/backend/operation/update_cell.rs
++++ b/turbopack/crates/turbo-tasks-backend/src/backend/operation/update_cell.rs
+@@ -1,7 +1,6 @@
+-use std::mem::take;
++use std::{cell::LazyCell, mem::take};
+ 
+ use bincode::{Decode, Encode};
+-use once_cell::unsync::Lazy;
+ use rustc_hash::FxHashSet;
+ use smallvec::SmallVec;
+ use turbo_tasks::{
+@@ -131,7 +130,7 @@ impl UpdateCellOperation {
+             #[cfg(feature = "trace_task_dirty")]
+             let has_updated_key_hashes = updated_key_hashes.is_some();
+             let updated_key_hashes_set = updated_key_hashes.map(|updated_key_hashes| {
+-                Lazy::new(|| updated_key_hashes.into_iter().collect::<FxHashSet<u64>>())
++                LazyCell::new(|| updated_key_hashes.into_iter().collect::<FxHashSet<u64>>())
+             });
+ 
+             // Collect dependent tasks only when not skipping invalidation.
+diff --git a/turbopack/crates/turbo-tasks-macros/src/func.rs b/turbopack/crates/turbo-tasks-macros/src/func.rs
+index 033777de4c0e..f5bce5e2e39c 100644
+--- a/turbopack/crates/turbo-tasks-macros/src/func.rs
++++ b/turbopack/crates/turbo-tasks-macros/src/func.rs
+@@ -559,11 +559,14 @@ impl TurboFn<'_> {
+                 let this = #converted_this;
+                 let persistence = #persistence;
+                 let mut arg = turbo_tasks::StackDynTaskInputsSlot::new(inputs);
+-                static TRAIT_METHOD: turbo_tasks::macro_helpers::Lazy<&'static turbo_tasks::TraitMethod> =
+-                        turbo_tasks::macro_helpers::Lazy::new(|| #trait_type_ident.get(stringify!(#ident)));
++                static TRAIT_METHOD: &'static turbo_tasks::TraitMethod = &#trait_type_ident
++                    .methods[turbo_tasks::macro_helpers::index_of_method_name(
++                        #trait_type_ident.methods,
++                        stringify!(#ident),
++                    )];
+                 <#output as turbo_tasks::task::TaskOutput>::try_from_raw_vc(
+                     turbo_tasks::trait_call(
+-                        *TRAIT_METHOD,
++                        TRAIT_METHOD,
+                         this,
+                         &mut arg,
+                         persistence,
+diff --git a/turbopack/crates/turbo-tasks-macros/src/value_trait_macro.rs b/turbopack/crates/turbo-tasks-macros/src/value_trait_macro.rs
+index 95a82d603bfc..b9887cf39ec1 100644
+--- a/turbopack/crates/turbo-tasks-macros/src/value_trait_macro.rs
++++ b/turbopack/crates/turbo-tasks-macros/src/value_trait_macro.rs
+@@ -69,7 +69,6 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+     let trait_type_ident = get_trait_type_ident(trait_ident);
+     let mut dynamic_trait_fns = Vec::new();
+     let mut trait_methods: Vec<TokenStream2> = Vec::new();
+-    let mut method_names: Vec<TokenStream2> = Vec::new();
+     let mut default_methods: Vec<TokenStream2> = Vec::new();
+     let mut native_functions = Vec::new();
+     let mut items: Vec<TokenStream2> = Vec::with_capacity(raw_items.len());
+@@ -223,7 +222,7 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+             let method_name_str = syn::LitStr::new(&ident.to_string(), ident.span());
+             let index = trait_methods.len() as u8;
+             trait_methods.push(quote! {
+-                #method_name_str => turbo_tasks::TraitMethod {
++                turbo_tasks::TraitMethod {
+                     trait_type: &#trait_type_ident,
+                     trait_name: stringify!(#trait_ident),
+                     method_name: #method_name_str,
+@@ -231,7 +230,6 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+                     index: #index,
+                 },
+             });
+-            method_names.push(quote! { #method_name_str });
+             default_methods.push(quote! { Some(&#native_function_ident) });
+ 
+             native_functions.push(quote! {
+@@ -261,7 +259,7 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+             let method_name_str = syn::LitStr::new(&ident.to_string(), ident.span());
+             let index = trait_methods.len() as u8;
+             trait_methods.push(quote! {
+-                #method_name_str => turbo_tasks::TraitMethod {
++                turbo_tasks::TraitMethod {
+                     trait_type: &#trait_type_ident,
+                     trait_name: stringify!(#trait_ident),
+                     method_name: #method_name_str,
+@@ -269,7 +267,6 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+                     index: #index,
+                 },
+             });
+-            method_names.push(quote! { #method_name_str });
+             default_methods.push(quote! { None });
+             quote! { ; }
+         };
+@@ -311,7 +308,7 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+         extended_supertraits.push(quote!(turbo_tasks::debug::ValueDebug));
+     }
+ 
+-    let num_methods = method_names.len();
++    let num_methods = default_methods.len();
+     let trait_name = global_name_for_type(quote! { dyn #trait_ident });
+     let expanded = quote! {
+         #[must_use]
+@@ -324,23 +321,17 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+         #(#native_functions)*
+ 
+         turbo_tasks::macro_helpers::turbo_register!(
+-            Box<dyn #trait_ident> => #trait_type_ident: turbo_tasks::TraitType = {
+-                use turbo_tasks::macro_helpers::{phf, phf::phf_map};
++            Box<dyn #trait_ident> => #trait_type_ident: turbo_tasks::TraitType =
+                 turbo_tasks::TraitType::new::<&'static dyn #trait_ident>(
+                     stringify!(#trait_ident),
+                     #trait_name,
+-                    phf_map! {
+-                        #(#trait_methods)*
+-                    },
+-                    &[#(#method_names),*],
++                    &[#(#trait_methods)*],
+                     &[#(#default_methods),*]
+                 )
+-            }
+         );
+ 
+         impl turbo_tasks::macro_helpers::TraitVtablePrototype for Box<dyn #trait_ident> {
+             const LEN: usize = #num_methods;
+-            const NAMES: &[&str] = &[#(#method_names),*];
+             const DEFAULTS: &[Option<&turbo_tasks::macro_helpers::NativeFunction>] = &[#(#default_methods),*];
+         }
+ 
+@@ -354,8 +345,8 @@ pub fn value_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+ 
+             // TODO: Remove this Lazy VTableRegistry once trait resolution is fully migrated
+             fn get_impl_vtables() -> &'static turbo_tasks::macro_helpers::VTableRegistry<Self::ValueTrait> {
+-                static registry: turbo_tasks::macro_helpers::Lazy<turbo_tasks::macro_helpers::VTableRegistry<dyn # trait_ident>> =
+-                    turbo_tasks::macro_helpers::Lazy::new(|| turbo_tasks::macro_helpers::VTableRegistry::new(turbo_tasks::registry::get_trait_type_id(&#trait_type_ident)));
++                static registry: ::std::sync::LazyLock<turbo_tasks::macro_helpers::VTableRegistry<dyn # trait_ident>> =
++                    ::std::sync::LazyLock::new(|| turbo_tasks::macro_helpers::VTableRegistry::new(turbo_tasks::registry::get_trait_type_id(&#trait_type_ident)));
+ 
+                 &*registry
+             }
+diff --git a/turbopack/crates/turbo-tasks/Cargo.toml b/turbopack/crates/turbo-tasks/Cargo.toml
+index 11d59f22483f..77c50eac1e77 100644
+--- a/turbopack/crates/turbo-tasks/Cargo.toml
++++ b/turbopack/crates/turbo-tasks/Cargo.toml
+@@ -35,9 +35,7 @@ event-listener = "5.4.0"
+ futures = { workspace = true }
+ indexmap = { workspace = true, features = ["serde"] }
+ inventory = { workspace = true }
+-once_cell = { workspace = true }
+ parking_lot = { workspace = true, features = ["serde"]}
+-phf = { workspace = true }
+ pin-project-lite = { workspace = true }
+ rayon = { workspace = true }
+ regex = { workspace = true }
+diff --git a/turbopack/crates/turbo-tasks/src/macro_helpers.rs b/turbopack/crates/turbo-tasks/src/macro_helpers.rs
+index cb6de5c1e308..ade287f15ba1 100644
+--- a/turbopack/crates/turbo-tasks/src/macro_helpers.rs
++++ b/turbopack/crates/turbo-tasks/src/macro_helpers.rs
+@@ -1,10 +1,10 @@
+ //! Runtime helpers for [turbo-tasks-macro].
+ 
++use std::sync::LazyLock;
++
+ pub use async_trait::async_trait;
+ pub use bincode;
+ pub use inventory;
+-pub use once_cell::sync::{Lazy, OnceCell};
+-pub use phf;
+ use rustc_hash::FxHashMap;
+ pub use shrink_to_fit;
+ pub use tracing;
+@@ -27,7 +27,7 @@ pub use crate::{
+     registry::RegistryDef,
+     task::function::{into_task_fn, into_task_fn_with_this},
+     turbo_register,
+-    value_type::{TraitVtablePrototype, build_trait_vtable},
++    value_type::{TraitVtablePrototype, build_trait_vtable, index_of_method_name},
+ };
+ 
+ #[cfg(debug_assertions)]
+@@ -209,18 +209,19 @@ unsafe impl Sync for RawPtr {}
+ unsafe impl Send for RawPtr {}
+ 
+ // Accumulate all trait impls by trait id
+-static TRAIT_CAST_FNS: Lazy<FxDashMap<TraitTypeId, Vec<(ValueTypeId, RawPtr)>>> = Lazy::new(|| {
+-    let map: FxDashMap<TraitTypeId, Vec<(ValueTypeId, RawPtr)>> = FxDashMap::default();
+-    for CollectableTraitCastFunctions(trait_id_fn, value_id_fn, cast_fn) in
+-        inventory::iter::<CollectableTraitCastFunctions>
+-    {
+-        map.entry(trait_id_fn())
+-            .or_default()
+-            .value_mut()
+-            .push((value_id_fn(), RawPtr(*cast_fn)));
+-    }
+-    map
+-});
++static TRAIT_CAST_FNS: LazyLock<FxDashMap<TraitTypeId, Vec<(ValueTypeId, RawPtr)>>> =
++    LazyLock::new(|| {
++        let map: FxDashMap<TraitTypeId, Vec<(ValueTypeId, RawPtr)>> = FxDashMap::default();
++        for CollectableTraitCastFunctions(trait_id_fn, value_id_fn, cast_fn) in
++            inventory::iter::<CollectableTraitCastFunctions>
++        {
++            map.entry(trait_id_fn())
++                .or_default()
++                .value_mut()
++                .push((value_id_fn(), RawPtr(*cast_fn)));
++        }
++        map
++    });
+ 
+ // Holds a raw pointer to a function that can perform a fat pointer cast
+ pub struct CollectableTraitCastFunctions(
+diff --git a/turbopack/crates/turbo-tasks/src/registry/mod.rs b/turbopack/crates/turbo-tasks/src/registry/mod.rs
+index 03c379b4a296..b5957bd7e497 100644
+--- a/turbopack/crates/turbo-tasks/src/registry/mod.rs
++++ b/turbopack/crates/turbo-tasks/src/registry/mod.rs
+@@ -1,7 +1,6 @@
+-use std::{cell::SyncUnsafeCell, num::NonZeroU16};
++use std::{cell::SyncUnsafeCell, num::NonZeroU16, sync::LazyLock};
+ 
+ use anyhow::Error;
+-use once_cell::sync::Lazy;
+ 
+ use crate::{
+     TraitType, ValueType,
+@@ -134,16 +133,16 @@ fn init_registry<T: Registerable>(mut items: Vec<&'static T>) -> Box<[&'static T
+ 
+ /// Get an item by its ID from a registry slice
+ #[inline]
+-fn get_item<T: Registerable>(registry: &Lazy<Box<[&'static T]>>, id: T::Id) -> &'static T {
++fn get_item<T: Registerable>(registry: &LazyLock<Box<[&'static T]>>, id: T::Id) -> &'static T {
+     registry[*id as usize - 1]
+ }
+ 
+ /// Get the ID for a registered item. Forces registry init if needed, which
+ /// assigns IDs to all items as a side effect.
+ #[inline]
+-fn get_id<T: Registerable>(registry: &Lazy<Box<[&'static T]>>, item: &'static T) -> T::Id {
+-    Lazy::force(registry);
+-    // SAFETY: The ID write happens-before this read thanks to the fence inside of Lazy
++fn get_id<T: Registerable>(registry: &LazyLock<Box<[&'static T]>>, item: &'static T) -> T::Id {
++    LazyLock::force(registry);
++    // SAFETY: The ID write happens-before this read thanks to the fence inside of LazyLock
+     let n = unsafe { std::ptr::read(item.ty().id.get()) };
+     let Some(id) = NonZeroU16::new(n) else {
+         panic!(
+@@ -156,7 +155,10 @@ fn get_id<T: Registerable>(registry: &Lazy<Box<[&'static T]>>, item: &'static T)
+ }
+ 
+ /// Validate that an ID is within the valid range
+-fn validate_id<T: Registerable>(registry: &Lazy<Box<[&'static T]>>, id: T::Id) -> Option<Error> {
++fn validate_id<T: Registerable>(
++    registry: &LazyLock<Box<[&'static T]>>,
++    id: T::Id,
++) -> Option<Error> {
+     let len = registry.len();
+     if *id as usize <= len {
+         None
+@@ -168,7 +170,7 @@ fn validate_id<T: Registerable>(registry: &Lazy<Box<[&'static T]>>, id: T::Id) -
+     }
+ }
+ 
+-static FUNCTIONS: Lazy<Box<[&'static NativeFunction]>> = Lazy::new(|| {
++static FUNCTIONS: LazyLock<Box<[&'static NativeFunction]>> = LazyLock::new(|| {
+     init_registry(
+         inventory::iter::<&'static NativeFunction>
+             .into_iter()
+@@ -191,7 +193,7 @@ pub fn validate_function_id(id: FunctionId) -> Option<Error> {
+     validate_id(&FUNCTIONS, id)
+ }
+ 
+-pub(crate) static VALUES: Lazy<Box<[&'static ValueType]>> = Lazy::new(|| {
++pub(crate) static VALUES: LazyLock<Box<[&'static ValueType]>> = LazyLock::new(|| {
+     let items = init_registry(
+         inventory::iter::<&'static ValueType>
+             .into_iter()
+@@ -222,7 +224,7 @@ pub(crate) fn trait_type_count() -> usize {
+     TRAITS.len()
+ }
+ 
+-static TRAITS: Lazy<Box<[&'static TraitType]>> = Lazy::new(|| {
++static TRAITS: LazyLock<Box<[&'static TraitType]>> = LazyLock::new(|| {
+     init_registry(
+         inventory::iter::<&'static TraitType>
+             .into_iter()
+diff --git a/turbopack/crates/turbo-tasks/src/scope.rs b/turbopack/crates/turbo-tasks/src/scope.rs
+index 9ff99a36caee..6fe7efc46120 100644
+--- a/turbopack/crates/turbo-tasks/src/scope.rs
++++ b/turbopack/crates/turbo-tasks/src/scope.rs
+@@ -6,14 +6,13 @@ use std::{
+     marker::PhantomData,
+     panic::{self, AssertUnwindSafe, catch_unwind},
+     sync::{
+-        Arc,
++        Arc, LazyLock,
+         atomic::{AtomicUsize, Ordering},
+     },
+     thread::{self, Thread, available_parallelism},
+     time::{Duration, Instant},
+ };
+ 
+-use once_cell::sync::Lazy;
+ use parking_lot::{Condvar, Mutex};
+ use tokio::{runtime::Handle, task::block_in_place};
+ use tracing::{Span, info_span};
+@@ -22,7 +21,8 @@ use crate::{TurboTasksApi, manager::try_turbo_tasks, turbo_tasks_scope};
+ 
+ /// Number of worker tasks to spawn that process jobs. It's 1 less than the number of cpus as we
+ /// also use the current task as worker.
+-static WORKER_TASKS: Lazy<usize> = Lazy::new(|| available_parallelism().map_or(0, |n| n.get() - 1));
++static WORKER_TASKS: LazyLock<usize> =
++    LazyLock::new(|| available_parallelism().map_or(0, |n| n.get() - 1));
+ 
+ enum WorkQueueJob {
+     Job(usize, Box<dyn FnOnce() + Send + 'static>),
+diff --git a/turbopack/crates/turbo-tasks/src/value_type.rs b/turbopack/crates/turbo-tasks/src/value_type.rs
+index 396fc89a8e50..c44c19e7f22f 100644
+--- a/turbopack/crates/turbo-tasks/src/value_type.rs
++++ b/turbopack/crates/turbo-tasks/src/value_type.rs
+@@ -255,8 +255,7 @@ impl TraitMethod {
+ 
+ pub struct TraitType {
+     pub ty: RegistryType,
+-    pub methods: phf::Map<&'static str, TraitMethod>,
+-    pub method_names: &'static [&'static str],
++    pub methods: &'static [TraitMethod],
+     pub default_methods: &'static [Option<&'static NativeFunction>],
+ }
+ 
+@@ -264,8 +263,8 @@ impl Debug for TraitType {
+     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+         let mut d = f.debug_struct("TraitType");
+         d.field("name", &self.ty.name);
+-        for (name, method) in self.methods.entries() {
+-            d.field(name, method);
++        for method in self.methods.iter() {
++            d.field(method.method_name, method);
+         }
+         d.finish()
+     }
+@@ -281,20 +280,22 @@ impl TraitType {
+     pub const fn new<T: 'static>(
+         name: &'static str,
+         global_name: &'static str,
+-        methods: phf::Map<&'static str, TraitMethod>,
+-        method_names: &'static [&'static str],
++        methods: &'static [TraitMethod],
+         default_methods: &'static [Option<&'static NativeFunction>],
+     ) -> Self {
+         Self {
+             ty: RegistryType::new::<T>(name, global_name),
+             methods,
+-            method_names,
+             default_methods,
+         }
+     }
+ 
++    #[cfg(test)]
+     pub fn get(&self, name: &str) -> &TraitMethod {
+-        self.methods.get(name).unwrap()
++        self.methods
++            .iter()
++            .find(|method| method.method_name == name)
++            .expect("Method not found!")
+     }
+ }
+ 
+@@ -302,17 +303,20 @@ turbo_registry!("Trait", TraitType);
+ 
+ pub trait TraitVtablePrototype {
+     const LEN: usize;
+-    const NAMES: &'static [&'static str];
+     const DEFAULTS: &'static [Option<&'static NativeFunction>];
+ }
+ 
+-pub(crate) const fn index_of_name(array: &'static [&'static str], name: &'static str) -> usize {
++/// Linear-scan lookup of a [`TraitMethod`] by `method_name` in a `&'static [TraitMethod]`. Const
++/// so the `value_trait` macro's per-method dispatch site can resolve to an array index at
++/// compile time.
++pub const fn index_of_method_name(methods: &'static [TraitMethod], name: &'static str) -> usize {
+     let mut i = 0;
+-    'outer: while i < array.len() {
+-        if array[i].len() == name.len() {
++    'outer: while i < methods.len() {
++        let entry = methods[i].method_name;
++        if entry.len() == name.len() {
+             let mut j = 0;
+             while j < name.len() {
+-                if array[i].as_bytes()[j] != name.as_bytes()[j] {
++                if entry.as_bytes()[j] != name.as_bytes()[j] {
+                     i += 1;
+                     continue 'outer;
+                 }
+@@ -325,7 +329,10 @@ pub(crate) const fn index_of_name(array: &'static [&'static str], name: &'static
+     panic!("Method not found!")
+ }
+ 
+-pub const fn build_trait_vtable<B: TraitVtablePrototype, const LEN: usize>(
++pub const fn build_trait_vtable<
++    B: TraitVtablePrototype + crate::registry::RegistryDef<TraitType>,
++    const LEN: usize,
++>(
+     overrides: &[(&'static str, &'static NativeFunction)],
+ ) -> [&'static NativeFunction; LEN] {
+     let mut methods = [&crate::native_function::VTABLE_DEFAULT; LEN];
+@@ -340,7 +347,10 @@ pub const fn build_trait_vtable<B: TraitVtablePrototype, const LEN: usize>(
+     let mut i = 0;
+     while i < overrides.len() {
+         let (name, f) = overrides[i];
+-        methods[index_of_name(B::NAMES, name)] = f;
++        methods[index_of_method_name(
++            <B as crate::registry::RegistryDef<TraitType>>::DEF.methods,
++            name,
++        )] = f;
+         i += 1;
+     }
+     methods

@@ -3,6 +3,10 @@
 // UserPromptSubmit hook — per-turn compression reinforcement.
 // Also handles /pakka:compress <level>, /pakka:compress status, and /pakka:help commands.
 
+// Kill-switch (issue #13): PAKKA_DISABLED=1 disables this hook entirely —
+// exit 0, emit nothing. Used by the bench raw arm for zero pakka injection.
+if (process.env.PAKKA_DISABLED === '1') process.exit(0);
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
