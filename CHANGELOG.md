@@ -2,6 +2,24 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.11.0] — 2026-06-11
+
+### Added
+- **review**: performance reviewer agent — fourth parallel lens (`kind="performance"`) plus 3 performance eval seeds (#16, #20)
+- **bench**: claude-code OAuth A/B harness — `make bench` runs pakka-vs-raw via `claude -p` on the existing session; `PAKKA_DISABLED` kill-switch in `bin/run` and all JS hooks isolates the raw arm; zero API-key dependency (#13, #23)
+- **guard**: learned per-repo allowlist at `.pakka/guard-allowlist.json` — repeated user overrides teach guard, with override-count decay; secret categories are never allowlistable (#12, #24)
+- **compress**: semantic rewriter injection gate — delta-based instruction-shape detection on rewritten output; strict fallback plus audit entry on rejection (#15, #21)
+
+### Changed
+- **RECEIPTS disclosure**: output-tokens figure re-based. The previously published 5,939,566 summed per-session repo-wide snapshots, triangular-overcounting the true cumulative. v0.11.0's canonical `repo_root` attribution (symlink-resolved git toplevel, workspace-root aware) plus max-snapshot semantics yields ~1,019,833 cumulative output tokens. Not a regression — corrected measurement; ratchet test re-based to the new floor. See `memory/DECISIONS.md` "v0.11.0 decisions" (#10, #22)
+- **guard**: hook matcher widened `Read|Bash` → `Read|Write|Edit|MultiEdit|Bash` — guard's secret-WRITE protection is now active (#24)
+
+### Fixed
+- **commitgate**: `[skip pakka]` honored on AST reject paths — was only respected on the legacy path (#8, #18)
+- **skill-check**: directive-intent filter — bare keyword mentions no longer trigger alerts; scan bounded to ~1ms on adversarial input (#11, #19)
+- **meter**: canonical `repo_root` attribution via `EvalSymlinks` and workspace-root resolution; `backfill-output-tokens` retags historical entries from transcript cwd (#10, #22)
+- **pricing**: `claude-fable-5` / `claude-mythos-5` / `claude-opus-4-8` entries; dated-ID prefix fallback for unknown model IDs (#25)
+
 ## [v0.10.0] — 2026-06-11
 
 ### Fixed
