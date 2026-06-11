@@ -1,0 +1,1 @@
+{"kind":"performance","severity":"error","file":"handlers/orders.go","line_approx":29,"bug_class":"n-plus-1-query","description":"SQL query inside loop issues one SELECT per order — at 10K orders this is 10K+1 queries instead of one JOIN"}

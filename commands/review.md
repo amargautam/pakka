@@ -36,7 +36,9 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
 1. **Get the diff.** If `--base=<ref>` provided: `git diff <ref>...HEAD`. Otherwise: `git diff --cached`. Empty diff → say so and exit.
 
-2. **Compute changed-line set.** Run `git diff --cached --unified=0` (or with base ref), parse hunk headers to build `(file, line)` pairs added or modified. This is the review scope. Findings outside scope are dropped (except `spec-divergence` — see step 7).
+2. **Compute changed-line set.** Run `git diff --cached --unified=0` (or with base ref),
+   parse hunk headers to build `(file, line)` pairs added or modified. This is the review
+   scope. Findings outside scope are dropped (except `spec-divergence` — see step 7).
 
 2a. **Discover spec.** If `--spec <file>` was passed, use it directly as SPEC_FILE. Otherwise:
    - If `--base=<ref>` provided: `CHANGED=$(git diff <ref>...HEAD --name-only | paste -sd, -)` else `CHANGED=$(git diff --cached --name-only | paste -sd, -)`
@@ -58,16 +60,19 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
      - Add this finding to the findings list (before step 4 collect).
    - If MERGE_BASE is empty or SPEC_DRIFT_LOG is empty: skip silently.
 
-3. **Launch all three agents in parallel.** Pass diff as context. If SPEC_CONTENT is set, append it as a `## Spec context` block in each agent's prompt.
+3. **Launch all four agents in parallel.** Pass diff as context. If SPEC_CONTENT is set, append it as a `## Spec context` block in each agent's prompt.
    - Agent `reviewer` — no whole-file reads.
    - Agent `security` — no whole-file reads.
+   - Agent `performance` — no whole-file reads.
    - Agent `architect` — may Read files the diff touches for coupling context only.
 
-4. **Collect findings.** Parse JSON lines from all three agents into one list.
+4. **Collect findings.** Parse JSON lines from all four agents into one list.
 
 5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed.
 
-6. **Filter by confidence.** Drop findings where `confidence < 80` (or `pakka.review.confidenceThreshold`). Drop findings missing `line` field. Exception: `kind=spec-divergence` and `kind=spec-drift` findings are never dropped by confidence filter.
+6. **Filter by confidence.** Drop findings where `confidence < 80` (or
+   `pakka.review.confidenceThreshold`). Drop findings missing `line` field. Exception:
+   `kind=spec-divergence` and `kind=spec-drift` findings are never dropped by confidence filter.
 
 7. **Filter by scope.** Drop findings whose `(file, line)` is not in the changed-line set. Exception: `kind=spec-divergence` and `kind=spec-drift` findings are exempt from scope filtering.
 
@@ -79,7 +84,7 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
    For `kind=spec-drift` findings: print the diff field as an indented block after the fix line.
    ```
-   [warning] <spec-file>:1 — Spec modified in N commit(s) during build — review before approving (confidence: 100%)
+   [warning] <spec-file>:1 — Spec modified in N commit(s) during build — review before approving (confidence: 100)
      fix: Review spec diff above before approving
      diff:
      <SPEC_DRIFT_DIFF>
@@ -88,7 +93,9 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 9. **Verdict.**
    - If ADVISORY=true → append: `note: no matching spec found in docs/specs/ — review ran without spec context. Run /pakka:plan to write one.`
    - Any `severity=error` → `VERDICT: FAIL — N error(s) above threshold`. Exit 2.
-   - Otherwise → `VERDICT: PASS`. Write unix epoch timestamp to `.pakka/reviews/last-pass-ts` via `date +%s` (e.g. `echo $(date +%s) > .pakka/reviews/last-pass-ts`). Path is relative to the repo root being reviewed, not the session CWD.
+   - Otherwise → `VERDICT: PASS`. Write unix epoch timestamp to `.pakka/reviews/last-pass-ts`
+     via `date +%s` (e.g. `echo $(date +%s) > .pakka/reviews/last-pass-ts`). Path is
+     relative to the repo root being reviewed, not the session CWD.
 
 ---
 

@@ -1,0 +1,30 @@
+--- /dev/null
++++ b/report/dedupe.go
+@@ -0,0 +1,27 @@
++package report
++
++// Event is one audit event row.
++type Event struct {
++	ID   string
++	Kind string
++}
++
++// DedupeEvents removes duplicate events by ID. Input is the full audit
++// trail for a session — unbounded, often 10K+ events.
++func DedupeEvents(events []Event) []Event {
++	var out []Event
++	for _, e := range events {
++		seen := false
++		// BUG: O(n^2) — linear scan of out for every event
++		for _, o := range out {
++			if o.ID == e.ID {
++				seen = true
++				break
++			}
++		}
++		if !seen {
++			out = append(out, e)
++		}
++	}
++	return out
++}

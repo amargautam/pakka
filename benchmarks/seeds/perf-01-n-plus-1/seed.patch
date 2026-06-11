@@ -1,0 +1,36 @@
+--- /dev/null
++++ b/handlers/orders.go
+@@ -0,0 +1,33 @@
++package handlers
++
++import (
++	"database/sql"
++	"encoding/json"
++	"net/http"
++)
++
++type Order struct {
++	ID       int     `json:"id"`
++	UserID   int     `json:"user_id"`
++	Total    float64 `json:"total"`
++	Shipping string  `json:"shipping"`
++}
++
++func ListOrders(db *sql.DB, w http.ResponseWriter, r *http.Request) {
++	rows, err := db.Query("SELECT id, user_id, total FROM orders")
++	if err != nil {
++		http.Error(w, err.Error(), 500)
++		return
++	}
++	defer rows.Close()
++
++	var orders []Order
++	for rows.Next() {
++		var o Order
++		rows.Scan(&o.ID, &o.UserID, &o.Total)
++		// BUG: N+1 query — one shipping lookup per order inside the loop
++		db.QueryRow("SELECT method FROM shipping WHERE order_id = ?", o.ID).Scan(&o.Shipping)
++		orders = append(orders, o)
++	}
++	json.NewEncoder(w).Encode(orders)
++}
