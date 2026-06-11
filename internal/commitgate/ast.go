@@ -360,6 +360,31 @@ func formatAstRejectStderr(cause string) string {
 	return fmt.Sprintf("pakka: commit gate cannot rewrite this shape — %s is not supported. Run the commit on its own (no chained shell substitution) or add [skip pakka] to bypass.", cause)
 }
 
+// hasRawSkipMarker reports whether the literal [skip pakka] marker appears
+// anywhere in the raw command text. Used only on AST reject paths (shell
+// parse errors and blocked shapes like eval / bash -c / dynamic command
+// heads) where -m message extraction fails, so HasSkipMarker's positional
+// rules cannot run. The reject stderr advertises the marker as a bypass, so
+// it must work on exactly these paths; a whole-string scan is the simplest
+// way to honor an explicit user opt-out we cannot parse. Recognized shapes
+// keep HasSkipMarker's stricter positional semantics.
+func hasRawSkipMarker(cmd string) bool {
+	return strings.Contains(cmd, "[skip pakka]")
+}
+
+// skipMarkerDecision is the allow decision for an explicit [skip pakka]
+// opt-out: gate, trailers, and audit all bypassed, with the skip surfaced on
+// stderr and recorded in the audit note. Shared by the recognized-shape path
+// and the reject paths so the bypass behaves identically everywhere.
+func skipMarkerDecision() *Decision {
+	return &Decision{
+		Allow:     true,
+		IsCommit:  true,
+		AuditNote: "review_skipped=skip_marker",
+		Stderr:    "pakka: [skip pakka] detected — gate, trailers, and audit bypassed for this commit",
+	}
+}
+
 // evaluateViaAST is the AST-based decision path. Invoked from Evaluate when
 // the fast-path string matcher misses but the raw command mentions
 // `git commit` anywhere (real token, quoted string, substitution). Parses
@@ -379,8 +404,16 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 	parser := syntax.NewParser(syntax.KeepComments(true))
 	file, parseErr := parser.Parse(r, "")
 	if parseErr != nil {
-		// Couldn't even parse. Conservative block — name the cause so the
-		// model can rewrite the command.
+		// Couldn't even parse. The reject stderr advertises [skip pakka] as
+		// a bypass, so honor it before blocking (issue #8): with no parseable
+		// message for HasSkipMarker's positional rules, fall back to the raw
+		// text scan. A commit is plausibly present — this path only routes on
+		// a `git commit` mention — so the skip decision flags IsCommit.
+		if hasRawSkipMarker(cmd) {
+			return skipMarkerDecision()
+		}
+		// Conservative block — name the cause so the model can rewrite the
+		// command.
 		return &Decision{Allow: false, Stderr: formatAstRejectStderr("shell parse error")}
 	}
 
@@ -388,7 +421,13 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 	if blockerCause != "" {
 		// eval / dynamic command name / bash -c with shell string — any of
 		// these wrap a potential commit in a way that we cannot statically
-		// inject trailers into. Block with the cause spelled out.
+		// inject trailers into. Honor an explicit [skip pakka] first (issue
+		// #8): -m extraction rarely works on these shapes (the message hides
+		// inside a quoted shell string), so the raw text scan stands in for
+		// HasSkipMarker here. Otherwise block with the cause spelled out.
+		if hasRawSkipMarker(cmd) {
+			return skipMarkerDecision()
+		}
 		return &Decision{Allow: false, Stderr: formatAstRejectStderr(blockerCause)}
 	}
 	if len(commitNodes) == 0 {
@@ -406,12 +445,7 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 	}
 
 	if HasSkipMarker(cmd) {
-		return &Decision{
-			Allow:     true,
-			IsCommit:  true,
-			AuditNote: "review_skipped=skip_marker",
-			Stderr:    "pakka: [skip pakka] detected — gate, trailers, and audit bypassed for this commit",
-		}
+		return skipMarkerDecision()
 	}
 
 	wantA := cfg.Signature
