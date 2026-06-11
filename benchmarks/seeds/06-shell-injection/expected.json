@@ -1,0 +1,1 @@
+{"kind":"security","severity":"error","file":"lint/runner.ts","line_approx":4,"bug_class":"shell-injection","description":"Shell injection via unescaped filename in exec()"}

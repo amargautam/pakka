@@ -1,0 +1,44 @@
+--- /dev/null
++++ b/store/user.go
+@@ -0,0 +1,38 @@
++package store
++
++import (
++	"database/sql"
++	"errors"
++	"fmt"
++)
++
++var ErrNotFound = errors.New("not found")
++
++type User struct {
++	ID    int
++	Name  string
++	Email string
++}
++
++func GetUser(db *sql.DB, id int) (*User, error) {
++	var u User
++	err := db.QueryRow(
++		"SELECT id, name, email FROM users WHERE id = ?", id,
++	).Scan(&u.ID, &u.Name, &u.Email)
++
++	if errors.Is(err, sql.ErrNoRows) {
++		return nil, fmt.Errorf("user %d: %w", id, ErrNotFound)
++	}
++	if err != nil {
++		return nil, fmt.Errorf("query user %d: %w", id, err)
++	}
++	return &u, nil
++}
++
++func UpdateEmail(db *sql.DB, id int, email string) error {
++	res, err := db.Exec("UPDATE users SET email = ? WHERE id = ?", email, id)
++	if err != nil {
++		return fmt.Errorf("update email for user %d: %w", id, err)
++	}
++	if n, _ := res.RowsAffected(); n == 0 {
++		return fmt.Errorf("user %d: %w", id, ErrNotFound)
++	}
++	return nil
++}

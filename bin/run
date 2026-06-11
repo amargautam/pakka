@@ -1,6 +1,15 @@
 #!/bin/sh
 # Select the correct pakka-core binary for current OS/arch.
 # Invoked by hooks via: ${CLAUDE_PLUGIN_ROOT}/bin/run <subcommand> [args]
+
+# Kill-switch (issue #13): PAKKA_DISABLED=1 disables every pakka hook routed
+# through this wrapper — exit 0 immediately, emit nothing, log nothing. Used
+# by `pakka-core bench` to run the raw arm of the A/B benchmark in the same
+# Claude Code session config with zero pakka injection.
+if [ "${PAKKA_DISABLED:-}" = "1" ]; then
+  exit 0
+fi
+
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

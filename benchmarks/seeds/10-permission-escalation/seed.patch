@@ -1,0 +1,33 @@
+--- /dev/null
++++ b/setup/dirs.py
+@@ -0,0 +1,30 @@
++import os
++import logging
++
++logger = logging.getLogger(__name__)
++
++DATA_DIR = "/var/app/data"
++LOG_DIR = "/var/app/logs"
++CACHE_DIR = "/var/app/cache"
++
++
++def ensure_directories() -> None:
++    """Create required application directories if they don't exist."""
++    dirs = [DATA_DIR, LOG_DIR, CACHE_DIR]
++
++    for d in dirs:
++        os.makedirs(d, exist_ok=True)
++        # BUG: chmod 777 grants read/write/execute to all users
++        # Data directory should use restrictive permissions (e.g., 0o750)
++        os.chmod(d, 0o777)
++        logger.info("Ensured directory %s with permissions 777", d)
++
++
++def cleanup_cache() -> None:
++    """Remove stale cache files older than 24 hours."""
++    import time
++    now = time.time()
++    for entry in os.scandir(CACHE_DIR):
++        if entry.is_file() and (now - entry.stat().st_mtime) > 86400:
++            os.remove(entry.path)
++            logger.info("Removed stale cache file: %s", entry.path)

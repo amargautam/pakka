@@ -3,6 +3,10 @@
 // SessionStart hook — injects output-compression rules into context.
 // Writes the active level flag file, then emits filtered ruleset to stdout.
 
+// Kill-switch (issue #13): PAKKA_DISABLED=1 disables this hook entirely —
+// exit 0, emit nothing. Used by the bench raw arm for zero pakka injection.
+if (process.env.PAKKA_DISABLED === '1') process.exit(0);
+
 const fs = require('fs');
 const path = require('path');
 

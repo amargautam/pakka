@@ -95,10 +95,13 @@ test('Cycle1: stdout contains the full verification rule text', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cycle 2 — Skill-check discipline injected
+// Cycle 2 — Skill-check discipline lives in skill-check-start.js, NOT here.
+// compress-start.js emits compression rules + Verification discipline only;
+// the skill-check directive is a separate SessionStart hook so the model
+// sees it before the long ruleset (see skill-check-start.js header).
 // ---------------------------------------------------------------------------
 
-test('Cycle2: stdout contains "Skill-check discipline" when level is active', () => {
+test('Cycle2: compress-start does NOT inject skill-check (moved to skill-check-start.js)', () => {
   const tmp = makeTmpDir();
   try {
     const rulesDir = path.join(tmp.dir, 'rules');
@@ -110,31 +113,30 @@ test('Cycle2: stdout contains "Skill-check discipline" when level is active', ()
 
     const stdout = spawnStart(tmp.dir);
     assert.ok(
-      stdout.includes('Skill-check discipline'),
-      'stdout should contain "Skill-check discipline"',
+      !stdout.includes('Skill-check discipline'),
+      'skill-check injection belongs to skill-check-start.js, not compress-start.js',
     );
+    assert.ok(stdout.includes('Verification discipline'), 'ambient behaviors still appended');
   } finally {
     tmp.cleanup();
   }
 });
 
-test('Cycle2: stdout contains /pakka:plan and /pakka:build and /pakka:review mentions', () => {
-  const tmp = makeTmpDir();
-  try {
-    const rulesDir = path.join(tmp.dir, 'rules');
-    fs.mkdirSync(rulesDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(rulesDir, 'output-compress.md'),
-      'PAKKA COMPRESSION ACTIVE — level: ultra\n\n## Rules\nDrop filler.\n',
-    );
-
-    const stdout = spawnStart(tmp.dir);
-    assert.ok(stdout.includes('/pakka:plan'), 'stdout should mention /pakka:plan');
-    assert.ok(stdout.includes('/pakka:build'), 'stdout should mention /pakka:build');
-    assert.ok(stdout.includes('/pakka:review'), 'stdout should mention /pakka:review');
-  } finally {
-    tmp.cleanup();
-  }
+test('Cycle2: skill-check-start.js mentions /pakka:plan, /pakka:build, /pakka:review', () => {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'skill-check-start.js')],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(__dirname, '..') },
+      timeout: 5000,
+    },
+  );
+  if (result.error) throw result.error;
+  const stdout = result.stdout || '';
+  assert.ok(stdout.includes('/pakka:plan'), 'stdout should mention /pakka:plan');
+  assert.ok(stdout.includes('/pakka:build'), 'stdout should mention /pakka:build');
+  assert.ok(stdout.includes('/pakka:review'), 'stdout should mention /pakka:review');
 });
 
 // ---------------------------------------------------------------------------
@@ -195,13 +197,13 @@ test('Fallback: when rules file absent, stdout still contains "Verification disc
   }
 });
 
-test('Fallback: when rules file absent, stdout still contains "Skill-check discipline"', () => {
+test('Fallback: when rules file absent, skill-check is still NOT injected here', () => {
   const tmp = makeTmpDir();
   try {
     const stdout = spawnStart(tmp.dir);
     assert.ok(
-      stdout.includes('Skill-check discipline'),
-      'fallback path should also inject Skill-check discipline',
+      !stdout.includes('Skill-check discipline'),
+      'fallback path must not inject skill-check (moved to skill-check-start.js)',
     );
   } finally {
     tmp.cleanup();

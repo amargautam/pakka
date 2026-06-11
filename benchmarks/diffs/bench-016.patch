@@ -1,0 +1,107 @@
+diff --git a/packages/server/src/unstable-core-do-not-import/error/TRPCError.ts b/packages/server/src/unstable-core-do-not-import/error/TRPCError.ts
+index 7feb8609200..913a35e4bae 100644
+--- a/packages/server/src/unstable-core-do-not-import/error/TRPCError.ts
++++ b/packages/server/src/unstable-core-do-not-import/error/TRPCError.ts
+@@ -3,7 +3,19 @@ import { isObject } from '../utils';
+ 
+ class UnknownCauseError extends Error {
+   [key: string]: unknown;
++
++  constructor(cause: object) {
++    super(getMessage(cause));
++    Object.assign(this, cause);
++  }
+ }
++
++function getMessage(cause: object) {
++  if ('message' in cause) return String(cause.message);
++
++  return undefined;
++}
++
+ export function getCauseFromUnknown(cause: unknown): Error | undefined {
+   if (cause instanceof Error) {
+     return cause;
+@@ -22,7 +34,7 @@ export function getCauseFromUnknown(cause: unknown): Error | undefined {
+ 
+   // If it's an object, we'll create a synthetic error
+   if (isObject(cause)) {
+-    return Object.assign(new UnknownCauseError(), cause);
++    return new UnknownCauseError(cause);
+   }
+ 
+   return undefined;
+diff --git a/packages/tests/server/regression/issue-7272-node-vm-error-message.test.ts b/packages/tests/server/regression/issue-7272-node-vm-error-message.test.ts
+new file mode 100644
+index 00000000000..88510cd70b3
+--- /dev/null
++++ b/packages/tests/server/regression/issue-7272-node-vm-error-message.test.ts
+@@ -0,0 +1,68 @@
++import * as vm from 'node:vm';
++import {
++  getCauseFromUnknown,
++  getTRPCErrorFromUnknown,
++} from '@trpc/server/unstable-core-do-not-import';
++
++describe('getCauseFromUnknown', () => {
++  test('preserves non-enumerable string message from error-like object', () => {
++    const crossRealmError = {};
++    Object.defineProperty(crossRealmError, 'message', {
++      value: 'something went wrong in the VM',
++      enumerable: false,
++      writable: true,
++      configurable: true,
++    });
++
++    const cause = getCauseFromUnknown(crossRealmError);
++
++    expect(cause).toBeInstanceOf(Error);
++    expect(cause?.message).toBe('something went wrong in the VM');
++  });
++
++  test('handles cause object with non-string message property without throwing', () => {
++    const causeWithNumericMessage = { message: 42, extra: 'data' };
++
++    const cause = getCauseFromUnknown(causeWithNumericMessage);
++
++    expect(cause).toBeInstanceOf(Error);
++    expect((cause as typeof causeWithNumericMessage & Error).extra).toBe(
++      'data',
++    );
++  });
++
++  test('handles cause object with no message property', () => {
++    const causeWithNoMessage = { code: 'ERR_SOMETHING', extra: 'data' };
++
++    const cause = getCauseFromUnknown(causeWithNoMessage);
++
++    expect(cause).toBeInstanceOf(Error);
++    expect((cause as typeof causeWithNoMessage & Error).code).toBe(
++      'ERR_SOMETHING',
++    );
++  });
++
++  test('preserves message from actual Node VM cross-realm error', () => {
++    let vmError: unknown;
++
++    const context = vm.createContext({
++      captureError: (e: unknown) => {
++        vmError = e;
++      },
++    });
++    vm.runInContext(
++      'try { null.property } catch(e) { captureError(e) }',
++      context,
++    );
++
++    expect(vmError).toBeDefined();
++    expect(vmError instanceof Error).toBe(false);
++
++    const trpcError = getTRPCErrorFromUnknown(vmError);
++
++    expect(trpcError.message).not.toBe('');
++    expect(trpcError.message).toBe(
++      "Cannot read properties of null (reading 'property')",
++    );
++  });
++});

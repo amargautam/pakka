@@ -66,6 +66,8 @@ func main() {
 		runOrchestratorStatus()
 	case "backfill-output-tokens":
 		_ = (&BackfillOutputTokensCmd{}).Run(os.Args[2:])
+	case "bench":
+		_ = (&BenchCmd{}).Run(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "pakka-core %s — unknown subcommand %q\n", version, os.Args[1])
 		os.Exit(2)

@@ -1,0 +1,98 @@
+diff --git a/packages/server/src/unstable-core-do-not-import/http/resolveResponse.ts b/packages/server/src/unstable-core-do-not-import/http/resolveResponse.ts
+index 05d18e6399d..44fe5454e19 100644
+--- a/packages/server/src/unstable-core-do-not-import/http/resolveResponse.ts
++++ b/packages/server/src/unstable-core-do-not-import/http/resolveResponse.ts
+@@ -632,7 +632,7 @@ export async function resolveResponse<TRouter extends AnyRouter>(
+         serialize: (data) => config.transformer.output.serialize(data),
+         onError: (cause) => {
+           opts.onError?.({
+-            error: getTRPCErrorFromUnknown(cause),
++            error: getTRPCErrorFromUnknown(cause.error),
+             path: undefined,
+             input: undefined,
+             ctx: ctxManager.valueOrUndefined(),
+diff --git a/packages/tests/server/errors.test.ts b/packages/tests/server/errors.test.ts
+index 5b08e5ef13d..c943daad504 100644
+--- a/packages/tests/server/errors.test.ts
++++ b/packages/tests/server/errors.test.ts
+@@ -543,3 +543,40 @@ describe('links have meta data about http failures', async () => {
+     expect(error).toBeInstanceOf(MyCustomError);
+   });
+ });
++
++describe('onError', () => {
++  test('streaming onError should unwrap { error, path } and preserve error message and path', async () => {
++    const t = initTRPC.create();
++
++    const router = t.router({
++      failingIterable: t.procedure.query(async function* () {
++        yield 1;
++        throw new Error('stream broke');
++      }),
++    });
++
++    await using ctx = testServerAndClientResource(router);
++
++    // Act
++    const iterable = await ctx.client.failingIterable.query();
++    const aggregated: Array<unknown> = [];
++    const error = await waitError(
++      async () => {
++        for await (const value of iterable) {
++          aggregated.push(value);
++        }
++      },
++      TRPCClientError<typeof router>,
++    );
++
++    expect(aggregated).toEqual([1]);
++    expect(error.message).toBe('stream broke');
++    expect(ctx.onErrorSpy.mock.calls.length).toBe(1);
++
++    const serverErrorOpts = ctx.onErrorSpy.mock.calls[0]![0];
++    expect(serverErrorOpts.error).toBeInstanceOf(TRPCError);
++    expect(serverErrorOpts.error.message).toBe('stream broke');
++    expect(serverErrorOpts.error.cause).toBeInstanceOf(Error);
++    expect(serverErrorOpts.error.cause!.message).toBe('stream broke');
++  });
++});
+diff --git a/packages/tests/server/streaming.test.ts b/packages/tests/server/streaming.test.ts
+index c905487dbdc..2461dc04c13 100644
+--- a/packages/tests/server/streaming.test.ts
++++ b/packages/tests/server/streaming.test.ts
+@@ -715,7 +715,16 @@ describe('no transformer', () => {
+ 
+     const serverError = ctx.onErrorSpy.mock.calls[0]![0].error;
+     expect(serverError.code).toBe('INTERNAL_SERVER_ERROR');
+-    expect(serverError.message).toMatchInlineSnapshot(`""`);
++    expect(serverError.message).toMatchInlineSnapshot(`
++      "[
++        {
++          "expected": "number",
++          "code": "invalid_type",
++          "path": [],
++          "message": "Invalid input: expected number, received string"
++        }
++      ]"
++    `);
+   });
+ 
+   test('output validation iterable return error', async () => {
+@@ -815,7 +824,16 @@ describe('no transformer', () => {
+ 
+     const serverError = ctx.onErrorSpy.mock.calls[0]![0].error;
+     expect(serverError.code).toBe('INTERNAL_SERVER_ERROR');
+-    expect(serverError.message).toMatchInlineSnapshot(`""`);
++    expect(serverError.message).toMatchInlineSnapshot(`
++      "[
++        {
++          "expected": "string",
++          "code": "invalid_type",
++          "path": [],
++          "message": "Invalid input: expected string, received number"
++        }
++      ]"
++    `);
+   });
+ 
+   test('embed promise', async () => {

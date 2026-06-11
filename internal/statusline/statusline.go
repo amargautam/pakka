@@ -60,6 +60,14 @@ var OverrideRepoKey func(cwd string) string
 // benchmarks/compress-samples/subagent-return.txt. Reduction measured as
 // (baseline_output_tokens - compressed_output_tokens) / baseline_output_tokens.
 // Replace with per-session measured ratio when v0.3.0 $ tracking lands.
+//
+// TODO(issue #13): this constant table MUST be replaced by the measured
+// per-level output ratio from a full `make bench` run (A/B via claude -p
+// OAuth, raw arm = PAKKA_DISABLED=1). The harness is in internal/bench and
+// emits measured_output_ratio per level into benchmarks/results/. A smoke
+// run is not statistically sufficient to replace these values; the full
+// corpus run is. Do not delete this TODO until the table values carry
+// commit-hash provenance from benchmarks/results/.
 var outputMultiplier = map[string]float64{
 	"lite":        0.37,
 	"strict":      0.49,

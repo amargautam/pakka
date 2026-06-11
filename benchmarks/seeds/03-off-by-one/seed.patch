@@ -1,0 +1,27 @@
+--- /dev/null
++++ b/util/slice.go
+@@ -0,0 +1,22 @@
++package util
++
++// LastN returns the last n elements from a slice.
++// BUG: uses len-n-1 instead of len-n, returning n+1 items.
++func LastN[T any](items []T, n int) []T {
++	if n <= 0 {
++		return nil
++	}
++	if n >= len(items) {
++		return items
++	}
++	return items[len(items)-n-1:]
++}
++
++// FirstN returns the first n elements from a slice.
++func FirstN[T any](items []T, n int) []T {
++	if n <= 0 {
++		return nil
++	}
++	if n >= len(items) {
++		return items
++	}
++	return items[:n]
++}

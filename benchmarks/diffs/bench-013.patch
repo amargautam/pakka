@@ -1,0 +1,951 @@
+diff --git a/packages/next/src/build/index.ts b/packages/next/src/build/index.ts
+index de697e95455d..45c827b1ad6c 100644
+--- a/packages/next/src/build/index.ts
++++ b/packages/next/src/build/index.ts
+@@ -2098,6 +2098,8 @@ export default async function build(
+               configFileName,
+               cacheComponents: isAppCacheComponentsEnabled,
+               authInterrupts: isAuthInterruptsEnabled,
++              useCacheTimeout: config.experimental.useCacheTimeout,
++              staticPageGenerationTimeout: config.staticPageGenerationTimeout,
+               httpAgentOptions: config.httpAgentOptions,
+               locales: config.i18n?.locales,
+               defaultLocale: config.i18n?.defaultLocale,
+@@ -2325,6 +2327,10 @@ export default async function build(
+                             pageType,
+                             cacheComponents: isAppCacheComponentsEnabled,
+                             authInterrupts: isAuthInterruptsEnabled,
++                            useCacheTimeout:
++                              config.experimental.useCacheTimeout,
++                            staticPageGenerationTimeout:
++                              config.staticPageGenerationTimeout,
+                             cacheHandler: config.cacheHandler,
+                             cacheHandlers: config.cacheHandlers,
+                             isrFlushToDisk: ciEnvironment.hasNextSupport
+diff --git a/packages/next/src/build/static-paths/app.ts b/packages/next/src/build/static-paths/app.ts
+index 1b78f526e8d0..957d4cbdd4a2 100644
+--- a/packages/next/src/build/static-paths/app.ts
++++ b/packages/next/src/build/static-paths/app.ts
+@@ -782,6 +782,8 @@ export async function buildAppStaticPaths({
+   distDir,
+   cacheComponents,
+   authInterrupts,
++  useCacheTimeout,
++  staticPageGenerationTimeout,
+   segments,
+   isrFlushToDisk,
+   cacheHandler,
+@@ -802,6 +804,8 @@ export async function buildAppStaticPaths({
+   route: NormalizedAppRoute
+   cacheComponents: boolean
+   authInterrupts: boolean
++  useCacheTimeout: number
++  staticPageGenerationTimeout: number
+   segments: readonly Readonly<AppSegment>[]
+   distDir: string
+   isrFlushToDisk?: boolean
+@@ -859,10 +863,12 @@ export async function buildAppStaticPaths({
+     renderOpts: {
+       incrementalCache,
+       cacheLifeProfiles,
++      staticPageGenerationTimeout,
+       supportsDynamicResponse: true,
+       cacheComponents,
+       experimental: {
+         authInterrupts,
++        useCacheTimeout,
+       },
+       waitUntil: afterRunner.context.waitUntil,
+       onClose: afterRunner.context.onClose,
+diff --git a/packages/next/src/build/templates/app-page.ts b/packages/next/src/build/templates/app-page.ts
+index b299a6847682..59ff7b100fec 100644
+--- a/packages/next/src/build/templates/app-page.ts
++++ b/packages/next/src/build/templates/app-page.ts
+@@ -860,6 +860,7 @@ export async function handler(
+           prefetchHints: prefetchHintsManifest,
+           incrementalCache,
+           cacheLifeProfiles: nextConfig.cacheLife,
++          staticPageGenerationTimeout: nextConfig.staticPageGenerationTimeout,
+           basePath: nextConfig.basePath,
+           serverActions: nextConfig.experimental.serverActions,
+           logServerFunctions:
+@@ -888,6 +889,7 @@ export async function handler(
+             inlineCss: Boolean(nextConfig.experimental.inlineCss),
+             prefetchInlining: nextConfig.experimental.prefetchInlining ?? false,
+             authInterrupts: Boolean(nextConfig.experimental.authInterrupts),
++            useCacheTimeout: nextConfig.experimental.useCacheTimeout,
+             cachedNavigations: Boolean(
+               nextConfig.experimental.cachedNavigations
+             ),
+diff --git a/packages/next/src/build/templates/app-route.ts b/packages/next/src/build/templates/app-route.ts
+index 7991b066b936..183e4f34832f 100644
+--- a/packages/next/src/build/templates/app-route.ts
++++ b/packages/next/src/build/templates/app-route.ts
+@@ -243,11 +243,13 @@ export async function handler(
+     renderOpts: {
+       experimental: {
+         authInterrupts: Boolean(nextConfig.experimental.authInterrupts),
++        useCacheTimeout: nextConfig.experimental.useCacheTimeout,
+       },
+       cacheComponents: Boolean(nextConfig.cacheComponents),
+       supportsDynamicResponse,
+       incrementalCache,
+       cacheLifeProfiles: nextConfig.cacheLife,
++      staticPageGenerationTimeout: nextConfig.staticPageGenerationTimeout,
+       waitUntil: ctx.waitUntil,
+       onClose: (cb) => {
+         res.on('close', cb)
+diff --git a/packages/next/src/build/templates/edge-ssr-app.ts b/packages/next/src/build/templates/edge-ssr-app.ts
+index 0261cb135540..71f3159063a9 100644
+--- a/packages/next/src/build/templates/edge-ssr-app.ts
++++ b/packages/next/src/build/templates/edge-ssr-app.ts
+@@ -152,6 +152,7 @@ async function requestHandler(
+ 
+       multiZoneDraftMode: false,
+       cacheLifeProfiles: nextConfig.cacheLife,
++      staticPageGenerationTimeout: nextConfig.staticPageGenerationTimeout,
+       basePath: nextConfig.basePath,
+       serverActions: nextConfig.experimental.serverActions,
+       logServerFunctions:
+@@ -167,6 +168,7 @@ async function requestHandler(
+         inlineCss: Boolean(nextConfig.experimental.inlineCss),
+         prefetchInlining: nextConfig.experimental.prefetchInlining ?? false,
+         authInterrupts: Boolean(nextConfig.experimental.authInterrupts),
++        useCacheTimeout: nextConfig.experimental.useCacheTimeout,
+         cachedNavigations: Boolean(nextConfig.experimental.cachedNavigations),
+         clientTraceMetadata:
+           nextConfig.experimental.clientTraceMetadata || ([] as any),
+diff --git a/packages/next/src/build/utils.ts b/packages/next/src/build/utils.ts
+index db228c730c2d..dd2dfed71a06 100644
+--- a/packages/next/src/build/utils.ts
++++ b/packages/next/src/build/utils.ts
+@@ -684,6 +684,8 @@ export async function isPageStatic({
+   pageType,
+   cacheComponents,
+   authInterrupts,
++  useCacheTimeout,
++  staticPageGenerationTimeout,
+   originalAppPath,
+   isrFlushToDisk,
+   cacheMaxMemorySize,
+@@ -702,6 +704,8 @@ export async function isPageStatic({
+   distDir: string
+   cacheComponents: boolean
+   authInterrupts: boolean
++  useCacheTimeout: number
++  staticPageGenerationTimeout: number
+   configFileName: string
+   httpAgentOptions: NextConfigComplete['httpAgentOptions']
+   locales?: readonly string[]
+@@ -874,6 +878,8 @@ export async function isPageStatic({
+               route,
+               cacheComponents,
+               authInterrupts,
++              useCacheTimeout,
++              staticPageGenerationTimeout,
+               segments,
+               distDir,
+               requestHeaders: {},
+diff --git a/packages/next/src/export/index.ts b/packages/next/src/export/index.ts
+index 0849d675cbbb..e73a53de7cd7 100644
+--- a/packages/next/src/export/index.ts
++++ b/packages/next/src/export/index.ts
+@@ -496,6 +496,7 @@ async function exportAppImpl(
+     serverActions: nextConfig.experimental.serverActions,
+     serverComponents: enabledDirectories.app,
+     cacheLifeProfiles: nextConfig.cacheLife,
++    staticPageGenerationTimeout: nextConfig.staticPageGenerationTimeout,
+     nextFontManifest: require(
+       join(distDir, 'server', `${NEXT_FONT_MANIFEST}.json`)
+     ),
+@@ -512,6 +513,7 @@ async function exportAppImpl(
+       inlineCss: nextConfig.experimental.inlineCss ?? false,
+       prefetchInlining: nextConfig.experimental.prefetchInlining ?? false,
+       authInterrupts: !!nextConfig.experimental.authInterrupts,
++      useCacheTimeout: nextConfig.experimental.useCacheTimeout,
+       cachedNavigations: nextConfig.experimental.cachedNavigations ?? false,
+       maxPostponedStateSizeBytes: parseMaxPostponedStateSize(
+         nextConfig.experimental.maxPostponedStateSize
+diff --git a/packages/next/src/export/routes/app-route.ts b/packages/next/src/export/routes/app-route.ts
+index 8fa5eb93c243..5c30f8d24ab4 100644
+--- a/packages/next/src/export/routes/app-route.ts
++++ b/packages/next/src/export/routes/app-route.ts
+@@ -48,7 +48,10 @@ export async function exportAppRoute(
+   htmlFilepath: string,
+   fileWriter: MultiFileWriter,
+   cacheComponents: boolean,
+-  experimental: Required<Pick<ExperimentalConfig, 'authInterrupts'>>,
++  staticPageGenerationTimeout: number,
++  experimental: Required<
++    Pick<ExperimentalConfig, 'authInterrupts' | 'useCacheTimeout'>
++  >,
+   buildId: string
+ ): Promise<ExportRouteResult> {
+   // Ensure that the URL is absolute.
+@@ -81,6 +84,7 @@ export async function exportAppRoute(
+       onClose: afterRunner.context.onClose,
+       onAfterTaskError: afterRunner.context.onTaskError,
+       cacheLifeProfiles,
++      staticPageGenerationTimeout,
+     },
+     sharedContext: {
+       buildId,
+diff --git a/packages/next/src/export/worker.ts b/packages/next/src/export/worker.ts
+index 0565a6836c1d..7740ef508c28 100644
+--- a/packages/next/src/export/worker.ts
++++ b/packages/next/src/export/worker.ts
+@@ -257,6 +257,7 @@ async function exportPageImpl(
+       htmlFilepath,
+       fileWriter,
+       commonRenderOpts.cacheComponents,
++      commonRenderOpts.staticPageGenerationTimeout,
+       commonRenderOpts.experimental,
+       buildId
+     )
+diff --git a/packages/next/src/server/app-render/app-render.tsx b/packages/next/src/server/app-render/app-render.tsx
+index f66b782d349d..e85cf161ad0c 100644
+--- a/packages/next/src/server/app-render/app-render.tsx
++++ b/packages/next/src/server/app-render/app-render.tsx
+@@ -6814,6 +6814,8 @@ async function validateInstantConfigInBuildWithSample(
+     route: outerWorkStore.route,
+     incrementalCache: outerWorkStore.incrementalCache,
+     cacheLifeProfiles: outerWorkStore.cacheLifeProfiles,
++    useCacheTimeout: outerWorkStore.useCacheTimeout,
++    staticPageGenerationTimeout: outerWorkStore.staticPageGenerationTimeout,
+     isBuildTimePrerendering: false,
+     fetchCache: outerWorkStore.fetchCache,
+     isOnDemandRevalidate: false,
+diff --git a/packages/next/src/server/app-render/types.ts b/packages/next/src/server/app-render/types.ts
+index 3e9da47f1ae3..10e85fa044fa 100644
+--- a/packages/next/src/server/app-render/types.ts
++++ b/packages/next/src/server/app-render/types.ts
+@@ -111,6 +111,7 @@ export interface RenderOptsPartial {
+   cacheLifeProfiles?: {
+     [profile: string]: import('../use-cache/cache-life').CacheLife
+   }
++  staticPageGenerationTimeout: number
+   isOnDemandRevalidate?: boolean
+   isPossibleServerAction?: boolean
+   setCacheStatus?: (status: ServerCacheStatus, htmlRequestId: string) => void
+@@ -165,6 +166,7 @@ export interface RenderOptsPartial {
+     inlineCss: boolean
+     prefetchInlining: PrefetchInliningConfig
+     authInterrupts: boolean
++    useCacheTimeout: number
+     cachedNavigations: boolean
+ 
+     /**
+diff --git a/packages/next/src/server/app-render/work-async-storage.external.ts b/packages/next/src/server/app-render/work-async-storage.external.ts
+index 93485acf6cc8..ed3833166804 100644
+--- a/packages/next/src/server/app-render/work-async-storage.external.ts
++++ b/packages/next/src/server/app-render/work-async-storage.external.ts
+@@ -29,6 +29,8 @@ export interface WorkStore {
+ 
+   readonly incrementalCache?: IncrementalCache
+   readonly cacheLifeProfiles?: { [profile: string]: CacheLife }
++  readonly useCacheTimeout: number
++  readonly staticPageGenerationTimeout: number
+ 
+   readonly isOnDemandRevalidate?: boolean
+   readonly isBuildTimePrerendering?: boolean
+diff --git a/packages/next/src/server/async-storage/work-store.ts b/packages/next/src/server/async-storage/work-store.ts
+index b7eefb9c6da6..e5f5fbf22aed 100644
+--- a/packages/next/src/server/async-storage/work-store.ts
++++ b/packages/next/src/server/async-storage/work-store.ts
+@@ -23,6 +23,7 @@ export type WorkStoreContext = {
+   nonce?: string
+   renderOpts: {
+     cacheLifeProfiles?: { [profile: string]: CacheLife }
++    staticPageGenerationTimeout: number
+     incrementalCache?: IncrementalCache
+     isOnDemandRevalidate?: boolean
+     cacheComponents: boolean
+@@ -31,7 +32,7 @@ export type WorkStoreContext = {
+     pendingWaitUntil?: Promise<any>
+     experimental: Pick<
+       RenderOpts['experimental'],
+-      'isRoutePPREnabled' | 'authInterrupts'
++      'isRoutePPREnabled' | 'authInterrupts' | 'useCacheTimeout'
+     >
+ 
+     /**
+@@ -121,6 +122,8 @@ export function createWorkStore({
+       // so that it can access the fs cache without mocks
+       renderOpts.incrementalCache || (globalThis as any).__incrementalCache,
+     cacheLifeProfiles: renderOpts.cacheLifeProfiles,
++    useCacheTimeout: renderOpts.experimental.useCacheTimeout,
++    staticPageGenerationTimeout: renderOpts.staticPageGenerationTimeout,
+     isBuildTimePrerendering: renderOpts.isBuildTimePrerendering,
+     fetchCache: renderOpts.fetchCache,
+     isOnDemandRevalidate: renderOpts.isOnDemandRevalidate,
+diff --git a/packages/next/src/server/base-server.ts b/packages/next/src/server/base-server.ts
+index 57f13d704de6..0bc1eff4c230 100644
+--- a/packages/next/src/server/base-server.ts
++++ b/packages/next/src/server/base-server.ts
+@@ -553,6 +553,7 @@ export default abstract class Server<
+       distDir: this.distDir,
+       serverComponents: this.enabledDirectories.app,
+       cacheLifeProfiles: this.nextConfig.cacheLife,
++      staticPageGenerationTimeout: this.nextConfig.staticPageGenerationTimeout,
+       enableTainting: this.nextConfig.experimental.taint,
+       crossOrigin: this.nextConfig.crossOrigin
+         ? this.nextConfig.crossOrigin
+@@ -576,6 +577,7 @@ export default abstract class Server<
+         prefetchInlining:
+           this.nextConfig.experimental.prefetchInlining ?? false,
+         authInterrupts: !!this.nextConfig.experimental.authInterrupts,
++        useCacheTimeout: this.nextConfig.experimental.useCacheTimeout,
+         cachedNavigations:
+           this.nextConfig.experimental.cachedNavigations ?? false,
+         maxPostponedStateSizeBytes: parseMaxPostponedStateSize(
+diff --git a/packages/next/src/server/config-schema.ts b/packages/next/src/server/config-schema.ts
+index 327381835743..98c9fa788fe7 100644
+--- a/packages/next/src/server/config-schema.ts
++++ b/packages/next/src/server/config-schema.ts
+@@ -398,6 +398,7 @@ export const experimentalSchema = {
+   serverComponentsHmrCache: z.boolean().optional(),
+   authInterrupts: z.boolean().optional(),
+   useCache: z.boolean().optional(),
++  useCacheTimeout: z.number().positive().optional(),
+   useNodeStreams: z.boolean().optional(),
+   slowModuleDetection: z
+     .object({
+diff --git a/packages/next/src/server/config-shared.ts b/packages/next/src/server/config-shared.ts
+index 23f8907b526a..96f187da5fb5 100644
+--- a/packages/next/src/server/config-shared.ts
++++ b/packages/next/src/server/config-shared.ts
+@@ -35,6 +35,8 @@ export type NextConfigComplete = Required<Omit<NextConfig, 'configFile'>> & {
+   experimental: ExperimentalConfig & {
+     // Normalized by config.ts: true and partial objects become resolved objects
+     prefetchInlining?: PrefetchInliningConfig
++    // Normalized by config.ts: defaulted to 90% of staticPageGenerationTimeout
++    useCacheTimeout: number
+   }
+   // The root directory of the distDir. In development mode, this is the parent directory of `distDir`
+   // since development builds use `{distDir}/dev`. This is used to ensure that the bundler doesn't
+@@ -1014,6 +1016,13 @@ export interface ExperimentalConfig {
+    */
+   authInterrupts?: boolean
+ 
++  /**
++   * Seconds before a `'use cache'` fill is considered stalled. Defaults to
++   * 90% of `staticPageGenerationTimeout`. In prerender it's clamped to that
++   * ceiling so errors surface before the build worker kills the page.
++   */
++  useCacheTimeout?: number
++
+   /**
+    * Enables the use of the `"use cache"` directive.
+    * @deprecated use top-level `cacheComponents` instead
+@@ -1989,6 +1998,7 @@ export interface NextConfigRuntime {
+   useFileSystemPublicRoutes: NextConfigComplete['useFileSystemPublicRoutes']
+   logging?: NextConfigComplete['logging']
+   adapterPath?: NextConfigComplete['adapterPath']
++  staticPageGenerationTimeout: NextConfigComplete['staticPageGenerationTimeout']
+ 
+   experimental: Pick<
+     NextConfigComplete['experimental'],
+@@ -2002,6 +2012,7 @@ export interface NextConfigRuntime {
+     | 'inlineCss'
+     | 'prefetchInlining'
+     | 'authInterrupts'
++    | 'useCacheTimeout'
+     | 'clientTraceMetadata'
+     | 'clientParamParsingOrigins'
+     | 'allowedRevalidateHeaderKeys'
+@@ -2051,64 +2062,63 @@ export function getNextConfigRuntime(
+     return config
+   }
+ 
+-  let ex = config.experimental
++  const ex = config.experimental
+ 
+   type Requiredish<T> = {
+     [K in keyof Required<T>]: T[K]
+   }
+ 
+-  let experimental = ex
+-    ? ({
+-        ppr: ex.ppr,
+-        taint: ex.taint,
+-        serverActions: ex.serverActions,
+-        staleTimes: ex.staleTimes,
+-        dynamicOnHover: ex.dynamicOnHover,
+-        useOffline: ex.useOffline,
+-        optimisticRouting: ex.optimisticRouting,
+-        inlineCss: ex.inlineCss,
+-        prefetchInlining: ex.prefetchInlining,
+-        authInterrupts: ex.authInterrupts,
+-        clientTraceMetadata: ex.clientTraceMetadata,
+-        clientParamParsingOrigins: ex.clientParamParsingOrigins,
+-        allowedRevalidateHeaderKeys: ex.allowedRevalidateHeaderKeys,
+-        fetchCacheKeyPrefix: ex.fetchCacheKeyPrefix,
+-        isrFlushToDisk: ex.isrFlushToDisk,
+-        optimizeCss: ex.optimizeCss,
+-        nextScriptWorkers: ex.nextScriptWorkers,
+-        disableOptimizedLoading: ex.disableOptimizedLoading,
+-        largePageDataBytes: ex.largePageDataBytes,
+-        serverComponentsHmrCache: ex.serverComponentsHmrCache,
+-        caseSensitiveRoutes: ex.caseSensitiveRoutes,
+-        validateRSCRequestHeaders: ex.validateRSCRequestHeaders,
+-        sri: ex.sri,
+-        useSkewCookie: ex.useSkewCookie,
+-        preloadEntriesOnStart: ex.preloadEntriesOnStart,
+-        hideLogsAfterAbort: ex.hideLogsAfterAbort,
+-        removeUncaughtErrorAndRejectionListeners:
+-          ex.removeUncaughtErrorAndRejectionListeners,
+-        imgOptConcurrency: ex.imgOptConcurrency,
+-        imgOptMaxInputPixels: ex.imgOptMaxInputPixels,
+-        imgOptSequentialRead: ex.imgOptSequentialRead,
+-        imgOptSkipMetadata: ex.imgOptSkipMetadata,
+-        imgOptTimeoutInSeconds: ex.imgOptTimeoutInSeconds,
+-        proxyClientMaxBodySize: ex.proxyClientMaxBodySize,
+-        proxyTimeout: ex.proxyTimeout,
+-        testProxy: ex.testProxy,
+-        runtimeServerDeploymentId: ex.runtimeServerDeploymentId,
+-        maxPostponedStateSize: ex.maxPostponedStateSize,
+-        cachedNavigations: ex.cachedNavigations,
+-        partialFallbacks: ex.partialFallbacks,
+-        exposeTestingApiInProductionBuild: ex.exposeTestingApiInProductionBuild,
+-        supportsImmutableAssets: ex.supportsImmutableAssets,
+-        useNodeStreams: ex.useNodeStreams,
+-
+-        trustHostHeader: ex.trustHostHeader,
+-        isExperimentalCompile: ex.isExperimentalCompile,
+-      } satisfies Requiredish<NextConfigRuntime['experimental']>)
+-    : {}
+-
+-  let runtimeConfig: Requiredish<NextConfigRuntime> = {
++  const experimental = {
++    ppr: ex.ppr,
++    taint: ex.taint,
++    serverActions: ex.serverActions,
++    staleTimes: ex.staleTimes,
++    dynamicOnHover: ex.dynamicOnHover,
++    useOffline: ex.useOffline,
++    optimisticRouting: ex.optimisticRouting,
++    inlineCss: ex.inlineCss,
++    prefetchInlining: ex.prefetchInlining,
++    authInterrupts: ex.authInterrupts,
++    useCacheTimeout: ex.useCacheTimeout,
++    clientTraceMetadata: ex.clientTraceMetadata,
++    clientParamParsingOrigins: ex.clientParamParsingOrigins,
++    allowedRevalidateHeaderKeys: ex.allowedRevalidateHeaderKeys,
++    fetchCacheKeyPrefix: ex.fetchCacheKeyPrefix,
++    isrFlushToDisk: ex.isrFlushToDisk,
++    optimizeCss: ex.optimizeCss,
++    nextScriptWorkers: ex.nextScriptWorkers,
++    disableOptimizedLoading: ex.disableOptimizedLoading,
++    largePageDataBytes: ex.largePageDataBytes,
++    serverComponentsHmrCache: ex.serverComponentsHmrCache,
++    caseSensitiveRoutes: ex.caseSensitiveRoutes,
++    validateRSCRequestHeaders: ex.validateRSCRequestHeaders,
++    sri: ex.sri,
++    useSkewCookie: ex.useSkewCookie,
++    preloadEntriesOnStart: ex.preloadEntriesOnStart,
++    hideLogsAfterAbort: ex.hideLogsAfterAbort,
++    removeUncaughtErrorAndRejectionListeners:
++      ex.removeUncaughtErrorAndRejectionListeners,
++    imgOptConcurrency: ex.imgOptConcurrency,
++    imgOptMaxInputPixels: ex.imgOptMaxInputPixels,
++    imgOptSequentialRead: ex.imgOptSequentialRead,
++    imgOptSkipMetadata: ex.imgOptSkipMetadata,
++    imgOptTimeoutInSeconds: ex.imgOptTimeoutInSeconds,
++    proxyClientMaxBodySize: ex.proxyClientMaxBodySize,
++    proxyTimeout: ex.proxyTimeout,
++    testProxy: ex.testProxy,
++    runtimeServerDeploymentId: ex.runtimeServerDeploymentId,
++    maxPostponedStateSize: ex.maxPostponedStateSize,
++    cachedNavigations: ex.cachedNavigations,
++    partialFallbacks: ex.partialFallbacks,
++    exposeTestingApiInProductionBuild: ex.exposeTestingApiInProductionBuild,
++    supportsImmutableAssets: ex.supportsImmutableAssets,
++    useNodeStreams: ex.useNodeStreams,
++
++    trustHostHeader: ex.trustHostHeader,
++    isExperimentalCompile: ex.isExperimentalCompile,
++  } satisfies Requiredish<NextConfigRuntime['experimental']>
++
++  const runtimeConfig: Requiredish<NextConfigRuntime> = {
+     deploymentId: config.experimental.runtimeServerDeploymentId
+       ? ''
+       : config.deploymentId,
+@@ -2144,6 +2154,7 @@ export function getNextConfigRuntime(
+     pageExtensions: config.pageExtensions,
+     useFileSystemPublicRoutes: config.useFileSystemPublicRoutes,
+     logging: config.logging,
++    staticPageGenerationTimeout: config.staticPageGenerationTimeout,
+ 
+     experimental,
+   }
+diff --git a/packages/next/src/server/config.ts b/packages/next/src/server/config.ts
+index 4134d79b239c..d5ca0612ef47 100644
+--- a/packages/next/src/server/config.ts
++++ b/packages/next/src/server/config.ts
+@@ -1526,6 +1526,14 @@ function assignDefaultsAndValidate(
+     result.distDir = join(result.distDir, 'dev')
+   }
+ 
++  // Derive the `'use cache'` fill timeout from `staticPageGenerationTimeout`
++  // if the user didn't set one explicitly. 90% leaves headroom for the
++  // cache-fill error to surface before the build worker kills the page.
++  if (result.experimental.useCacheTimeout === undefined) {
++    result.experimental.useCacheTimeout =
++      result.staticPageGenerationTimeout * 0.9
++  }
++
+   return result as NextConfigComplete
+ }
+ 
+diff --git a/packages/next/src/server/dev/next-dev-server.ts b/packages/next/src/server/dev/next-dev-server.ts
+index 2de5a1d2612c..adab4cd97db1 100644
+--- a/packages/next/src/server/dev/next-dev-server.ts
++++ b/packages/next/src/server/dev/next-dev-server.ts
+@@ -819,6 +819,9 @@ export default class DevServer extends Server {
+           nextConfigOutput: this.nextConfig.output,
+           buildId: this.buildId,
+           authInterrupts: Boolean(this.nextConfig.experimental.authInterrupts),
++          useCacheTimeout: this.nextConfig.experimental.useCacheTimeout,
++          staticPageGenerationTimeout:
++            this.nextConfig.staticPageGenerationTimeout,
+           sriEnabled: Boolean(this.nextConfig.experimental.sri?.algorithm),
+         })
+         return pathsResult
+diff --git a/packages/next/src/server/dev/static-paths-worker.ts b/packages/next/src/server/dev/static-paths-worker.ts
+index ac32f04332bf..8a19ad27cd22 100644
+--- a/packages/next/src/server/dev/static-paths-worker.ts
++++ b/packages/next/src/server/dev/static-paths-worker.ts
+@@ -58,6 +58,8 @@ export async function loadStaticPaths({
+   nextConfigOutput,
+   buildId,
+   authInterrupts,
++  useCacheTimeout,
++  staticPageGenerationTimeout,
+   sriEnabled,
+ }: {
+   dir: string
+@@ -81,6 +83,8 @@ export async function loadStaticPaths({
+   nextConfigOutput: 'standalone' | 'export' | undefined
+   buildId: string
+   authInterrupts: boolean
++  useCacheTimeout: number
++  staticPageGenerationTimeout: number
+   sriEnabled: boolean
+ }): Promise<StaticPathsResult> {
+   // this needs to be initialized before loadComponents otherwise
+@@ -151,6 +155,8 @@ export async function loadStaticPaths({
+       partialFallbacksEnabled: config.partialFallbacks,
+       buildId,
+       authInterrupts,
++      useCacheTimeout,
++      staticPageGenerationTimeout,
+       rootParamKeys,
+     })
+   } else if (!components.getStaticPaths) {
+diff --git a/packages/next/src/server/use-cache/use-cache-wrapper.ts b/packages/next/src/server/use-cache/use-cache-wrapper.ts
+index 49f124b72686..5c08ba08147f 100644
+--- a/packages/next/src/server/use-cache/use-cache-wrapper.ts
++++ b/packages/next/src/server/use-cache/use-cache-wrapper.ts
+@@ -102,19 +102,6 @@ interface PublicCacheContext {
+ 
+ type CacheContext = PrivateCacheContext | PublicCacheContext
+ 
+-// The maximum time we allow a `'use cache'` entry to fill. After this, we
+-// assume the fill is stalled — either on hanging input to the cached function,
+-// or on hanging I/O inside of it — and de-opt with an error.
+-//
+-// For prerender, this needs to be lower than the general build timeout
+-// (`staticPageGenerationTimeout`, default 60s) so the cache-fill error surfaces
+-// before the build worker kills the page.
+-//
+-// TODO: Derive this from the configured `staticPageGenerationTimeout` instead
+-// of hard-coding it, so users who raise or lower the build timeout get a
+-// matching cache-fill timeout.
+-const USE_CACHE_FILL_TIMEOUT_MS = 50_000
+-
+ type CacheKeyParts =
+   | [buildId: string, id: string, args: unknown[]]
+   | [buildId: string, id: string, args: unknown[], hmrRefreshHash: string]
+@@ -642,6 +629,28 @@ function assertDefaultCacheLife(
+   }
+ }
+ 
++// The maximum time we allow a `'use cache'` entry to fill. After this, we
++// assume the fill is stalled — either on hanging input to the cached function,
++// or on hanging I/O inside of it — and de-opt with an error.
++//
++// For prerender, the effective value is clamped to 90% of the configured
++// `staticPageGenerationTimeout` so the cache-fill error surfaces before the
++// build worker kills the page. In dev (`request`), the configured
++// `experimental.useCacheTimeout` is used straight.
++function getUseCacheFillTimeoutMs(
++  workStore: WorkStore,
++  workUnitStoreType: 'prerender' | 'prerender-runtime' | 'request'
++): number {
++  const { useCacheTimeout, staticPageGenerationTimeout } = workStore
++
++  const effectiveTimeout =
++    workUnitStoreType === 'request'
++      ? useCacheTimeout
++      : Math.min(useCacheTimeout, staticPageGenerationTimeout * 0.9)
++
++  return effectiveTimeout * 1000
++}
++
+ function generateCacheEntryWithCacheContext(
+   workStore: WorkStore,
+   cacheContext: CacheContext,
+@@ -1072,10 +1081,13 @@ async function generateCacheEntryImpl(
+     case 'prerender-runtime':
+     case 'prerender':
+       const timeoutAbortController = new AbortController()
+-      const timer = setTimeout(() => {
+-        workStore.invalidDynamicUsageError = timeoutError
+-        timeoutAbortController.abort(timeoutError)
+-      }, USE_CACHE_FILL_TIMEOUT_MS)
++      const timer = setTimeout(
++        () => {
++          workStore.invalidDynamicUsageError = timeoutError
++          timeoutAbortController.abort(timeoutError)
++        },
++        getUseCacheFillTimeoutMs(workStore, outerWorkUnitStore.type)
++      )
+ 
+       const dynamicAccessAbortSignal =
+         dynamicAccessAsyncStorage.getStore()?.abortController.signal
+@@ -1169,10 +1181,13 @@ async function generateCacheEntryImpl(
+         if (stagedRendering?.currentStage !== RenderStage.Dynamic) {
+           const devTimeoutAbortController = new AbortController()
+           devTimeoutSignal = devTimeoutAbortController.signal
+-          devTimeoutTimer = setTimeout(() => {
+-            workStore.invalidDynamicUsageError = timeoutError
+-            devTimeoutAbortController.abort(timeoutError)
+-          }, USE_CACHE_FILL_TIMEOUT_MS)
++          devTimeoutTimer = setTimeout(
++            () => {
++              workStore.invalidDynamicUsageError = timeoutError
++              devTimeoutAbortController.abort(timeoutError)
++            },
++            getUseCacheFillTimeoutMs(workStore, outerWorkUnitStore.type)
++          )
+         }
+       }
+     // fallthrough
+diff --git a/packages/next/src/server/web/adapter.ts b/packages/next/src/server/web/adapter.ts
+index 91b1282324e2..7fa68e59bb7d 100644
+--- a/packages/next/src/server/web/adapter.ts
++++ b/packages/next/src/server/web/adapter.ts
+@@ -302,11 +302,21 @@ export async function adapter(
+               renderOpts: {
+                 cacheLifeProfiles:
+                   params.request.nextConfig?.experimental?.cacheLife,
++                // Proxy doesn't do static generation, so this value does not
++                // apply here. 0 is a sentinel: if something ever reads it,
++                // it'll surface loudly instead of silently using a misleading
++                // default.
++                staticPageGenerationTimeout: 0,
+                 cacheComponents: false,
+                 experimental: {
+                   isRoutePPREnabled: false,
+                   authInterrupts:
+                     !!params.request.nextConfig?.experimental?.authInterrupts,
++                  // Proxy doesn't fill Cache Components entries, so this value
++                  // is never read. 0 is a sentinel: if something ever reads it,
++                  // the cache fill will time out immediately and surface the
++                  // bug.
++                  useCacheTimeout: 0,
+                 },
+                 supportsDynamicResponse: true,
+                 waitUntil,
+diff --git a/packages/next/src/server/web/edge-route-module-wrapper.ts b/packages/next/src/server/web/edge-route-module-wrapper.ts
+index 47d19c398dd5..3f9ed595e8fd 100644
+--- a/packages/next/src/server/web/edge-route-module-wrapper.ts
++++ b/packages/next/src/server/web/edge-route-module-wrapper.ts
+@@ -126,8 +126,16 @@ export class EdgeRouteModuleWrapper {
+         cacheComponents: !!process.env.__NEXT_CACHE_COMPONENTS,
+         experimental: {
+           authInterrupts: !!process.env.__NEXT_EXPERIMENTAL_AUTH_INTERRUPTS,
++          // Edge runtime doesn't support Cache Components, so this value is
++          // never read. 0 is a sentinel: if something ever reads it, the cache
++          // fill will time out immediately and surface the bug.
++          useCacheTimeout: 0,
+         },
+         cacheLifeProfiles: nextConfig.cacheLife,
++        // Edge runtime doesn't do static generation, so this value does not
++        // apply here. 0 is a sentinel: if something ever reads it, it'll
++        // surface loudly instead of silently using a misleading default.
++        staticPageGenerationTimeout: 0,
+       },
+       sharedContext: {
+         buildId: '', // TODO: Populate this properly.
+diff --git a/test/e2e/app-dir/use-cache-configured-timeout/app/above-dev-timeout/page.tsx b/test/e2e/app-dir/use-cache-configured-timeout/app/above-dev-timeout/page.tsx
+new file mode 100644
+index 000000000000..47599d9feef5
+--- /dev/null
++++ b/test/e2e/app-dir/use-cache-configured-timeout/app/above-dev-timeout/page.tsx
+@@ -0,0 +1,20 @@
++// Cache body sleeps 17s, which exceeds the configured dev `useCacheTimeout`
++// (15s) — proving the configured value is actually applied in dev (and
++// not the hard-coded default or some other value).
++async function getCachedData(): Promise<string> {
++  'use cache'
++
++  await new Promise((resolve) => setTimeout(resolve, 17_000))
++
++  return 'cached'
++}
++
++async function Cached() {
++  const data = await getCachedData()
++
++  return <p id="result">{data}</p>
++}
++
++export default function Page() {
++  return <Cached />
++}
+diff --git a/test/e2e/app-dir/use-cache-configured-timeout/app/below-dev-timeout/page.tsx b/test/e2e/app-dir/use-cache-configured-timeout/app/below-dev-timeout/page.tsx
+new file mode 100644
+index 000000000000..828c7e258e73
+--- /dev/null
++++ b/test/e2e/app-dir/use-cache-configured-timeout/app/below-dev-timeout/page.tsx
+@@ -0,0 +1,21 @@
++// Cache body sleeps 11s, which falls between the build-time clamp (9s)
++// and the configured dev `useCacheTimeout` (15s).
++// - Dev: the cache fills successfully (15s > 11s, no clamp).
++// - Build: the cache times out (clamp 9s < 11s).
++async function getCachedData(): Promise<string> {
++  'use cache'
++
++  await new Promise((resolve) => setTimeout(resolve, 11_000))
++
++  return 'cached'
++}
++
++async function Cached() {
++  const data = await getCachedData()
++
++  return <p id="result">{data}</p>
++}
++
++export default function Page() {
++  return <Cached />
++}
+diff --git a/test/e2e/app-dir/use-cache-configured-timeout/app/layout.tsx b/test/e2e/app-dir/use-cache-configured-timeout/app/layout.tsx
+new file mode 100644
+index 000000000000..888614deda3b
+--- /dev/null
++++ b/test/e2e/app-dir/use-cache-configured-timeout/app/layout.tsx
+@@ -0,0 +1,8 @@
++import { ReactNode } from 'react'
++export default function Root({ children }: { children: ReactNode }) {
++  return (
++    <html>
++      <body>{children}</body>
++    </html>
++  )
++}
+diff --git a/test/e2e/app-dir/use-cache-configured-timeout/next.config.js b/test/e2e/app-dir/use-cache-configured-timeout/next.config.js
+new file mode 100644
+index 000000000000..00248a863dda
+--- /dev/null
++++ b/test/e2e/app-dir/use-cache-configured-timeout/next.config.js
+@@ -0,0 +1,37 @@
++/**
++ * This configuration is NOT realistic — it's set up to exercise the clamp
++ * logic in both dev and build. In practice, users might tune
++ * `experimental.useCacheTimeout` up (e.g. for slower dev-time backends) or
++ * down (e.g. for faster feedback while iterating); what's unusual here is
++ * the very low `staticPageGenerationTimeout`.
++ *
++ * Setup:
++ *   - `staticPageGenerationTimeout: 10` → build-time clamp = 9s, with a
++ *     1s buffer before the build worker kills the page at 10s.
++ *   - Dev `useCacheTimeout: 15` → would be clamped to 9s if we clamped in
++ *     dev. We don't, so the raw 15s applies.
++ *   - Build `useCacheTimeout: 60` → clamped to 9s.
++ *   - `/below-dev-timeout` sleeps 11s (between 9s and 15s).
++ *   - `/above-dev-timeout` sleeps 17s (above 15s).
++ *
++ * This way:
++ *   - Dev `/below-dev-timeout` succeeds (proves no clamp; if we clamped, it
++ *     would time out at 9s < 11s).
++ *   - Dev `/above-dev-timeout` times out at 15s (proves the configured dev
++ *     value is actually applied).
++ *   - Build fails on both pages via the clamp (9s < 11s, 9s < 17s).
++ *
++ * @type {import('next').NextConfig}
++ */
++const nextConfig = {
++  cacheComponents: true,
++  staticPageGenerationTimeout: 10,
++  experimental: {
++    useCacheTimeout: process.env.__NEXT_DEV_SERVER ? 15 : 60,
++    // Keep building all pages after a failure so the test can assert that
++    // both pages timed out via the clamp.
++    prerenderEarlyExit: false,
++  },
++}
++
++module.exports = nextConfig
+diff --git a/test/e2e/app-dir/use-cache-configured-timeout/use-cache-configured-timeout.test.ts b/test/e2e/app-dir/use-cache-configured-timeout/use-cache-configured-timeout.test.ts
+new file mode 100644
+index 000000000000..794eedff33b6
+--- /dev/null
++++ b/test/e2e/app-dir/use-cache-configured-timeout/use-cache-configured-timeout.test.ts
+@@ -0,0 +1,80 @@
++import { nextTestSetup } from 'e2e-utils'
++import stripAnsi from 'strip-ansi'
++
++const expectedTimeoutErrorMessage =
++  'Filling a cache during prerender timed out, likely because request-specific arguments such as params, searchParams, cookies() or dynamic data were used inside "use cache".'
++
++describe('use-cache-configured-timeout', () => {
++  const { next, isNextDev, skipped } = nextTestSetup({
++    files: __dirname,
++    skipDeployment: true,
++    skipStart: process.env.NEXT_TEST_MODE !== 'dev',
++  })
++
++  if (skipped) {
++    return
++  }
++
++  if (isNextDev) {
++    describe('when a "use cache" fill is below the configured dev `useCacheTimeout`', () => {
++      it('should not clamp the dev timeout and allow the cache fill to complete', async () => {
++        const outputIndex = next.cliOutput.length
++        const browser = await next.browser('/below-dev-timeout')
++
++        await expect(browser.elementByCss('#result').text()).resolves.toBe(
++          'cached'
++        )
++
++        const cliOutput = stripAnsi(next.cliOutput.slice(outputIndex))
++
++        expect(cliOutput).not.toContain(expectedTimeoutErrorMessage)
++      })
++    })
++
++    describe('when a "use cache" fill exceeds the configured dev `useCacheTimeout`', () => {
++      it('should apply the configured timeout and show the error', async () => {
++        const outputIndex = next.cliOutput.length
++        const browser = await next.browser('/above-dev-timeout')
++
++        await expect(browser).toDisplayRedbox(`
++         {
++           "code": "E394",
++           "description": "Filling a cache during prerender timed out, likely because request-specific arguments such as params, searchParams, cookies() or dynamic data were used inside "use cache".",
++           "environmentLabel": null,
++           "label": "Runtime Error",
++           "source": "app/above-dev-timeout/page.tsx (4:1) @ getCachedData
++         > 4 | async function getCachedData(): Promise<string> {
++             | ^",
++           "stack": [
++             "getCachedData app/above-dev-timeout/page.tsx (4:1)",
++             "Cached app/above-dev-timeout/page.tsx (13:22)",
++             "Page app/above-dev-timeout/page.tsx (19:10)",
++           ],
++         }
++        `)
++
++        const cliOutput = stripAnsi(next.cliOutput.slice(outputIndex))
++
++        expect(cliOutput).toContain(expectedTimeoutErrorMessage)
++      })
++    })
++  } else {
++    describe('when `experimental.useCacheTimeout` exceeds `staticPageGenerationTimeout` during prerendering', () => {
++      it('should clamp the build timeout and fail both pages with a timeout error', async () => {
++        try {
++          await next.start()
++        } catch {
++          // expected
++        }
++
++        expect(next.cliOutput).toContain(expectedTimeoutErrorMessage)
++        expect(next.cliOutput).toContain(
++          'Error occurred prerendering page "/below-dev-timeout"'
++        )
++        expect(next.cliOutput).toContain(
++          'Error occurred prerendering page "/above-dev-timeout"'
++        )
++      })
++    })
++  }
++})
+diff --git a/test/e2e/app-dir/use-cache-hanging/app/dynamic/page.tsx b/test/e2e/app-dir/use-cache-hanging/app/dynamic/page.tsx
+index f56ec0507aa4..cf5cb630c4b2 100644
+--- a/test/e2e/app-dir/use-cache-hanging/app/dynamic/page.tsx
++++ b/test/e2e/app-dir/use-cache-hanging/app/dynamic/page.tsx
+@@ -5,11 +5,12 @@ import { ReactNode, Suspense } from 'react'
+ // subject to the dev fill timeout. This mirrors prerender, where caches
+ // past `connection()` aren't executed at all and therefore not subject to
+ // the timeout handling either. The sleep is intentionally longer than the
+-// 50s timeout so the test fails if the timer isn't cleared.
++// configured `experimental.useCacheTimeout` (10s) so the test fails if the
++// timer isn't cleared.
+ async function Cached(): Promise<ReactNode> {
+   'use cache'
+ 
+-  await new Promise((resolve) => setTimeout(resolve, 52_000))
++  await new Promise((resolve) => setTimeout(resolve, 12_000))
+ 
+   return <p id="cached">cached</p>
+ }
+diff --git a/test/e2e/app-dir/use-cache-hanging/next.config.js b/test/e2e/app-dir/use-cache-hanging/next.config.js
+index e64bae22d658..451e2950f01f 100644
+--- a/test/e2e/app-dir/use-cache-hanging/next.config.js
++++ b/test/e2e/app-dir/use-cache-hanging/next.config.js
+@@ -3,6 +3,11 @@
+  */
+ const nextConfig = {
+   cacheComponents: true,
++  experimental: {
++    // Lower the `'use cache'` fill timeout so tests don't race the browser's
++    // page.goto ceiling (default ~60s) after the 54s default + compile time.
++    useCacheTimeout: 10,
++  },
+ }
+ 
+ module.exports = nextConfig
+diff --git a/test/e2e/app-dir/use-cache-hanging/use-cache-hanging.test.ts b/test/e2e/app-dir/use-cache-hanging/use-cache-hanging.test.ts
+index 3f34edaa5c12..3683aa3d9695 100644
+--- a/test/e2e/app-dir/use-cache-hanging/use-cache-hanging.test.ts
++++ b/test/e2e/app-dir/use-cache-hanging/use-cache-hanging.test.ts
+@@ -42,7 +42,7 @@ describe('use-cache-hanging', () => {
+ 
+         expect(cliOutput).toContain(`Error: ${expectedTimeoutErrorMessage}
+     at getCachedData (app/static/page.tsx:6:1)`)
+-      }, 180_000)
++      })
+     })
+ 
+     describe('when a "use cache" fill hangs in the runtime stage', () => {
+@@ -71,7 +71,7 @@ describe('use-cache-hanging', () => {
+ 
+         expect(cliOutput).toContain(`Error: ${expectedTimeoutErrorMessage}
+     at getCachedData (app/runtime/page.tsx:8:1)`)
+-      }, 180_000)
++      })
+     })
+ 
+     describe('when a "use cache" performs long-running I/O in the dynamic stage', () => {
+@@ -86,7 +86,7 @@ describe('use-cache-hanging', () => {
+         const cliOutput = stripAnsi(next.cliOutput.slice(outputIndex))
+ 
+         expect(cliOutput).not.toContain(expectedTimeoutErrorMessage)
+-      }, 180_000)
++      })
+     })
+   } else {
+     describe('when a "use cache" fill hangs during prerendering', () => {
+@@ -105,7 +105,7 @@ describe('use-cache-hanging', () => {
+           // Webpack production builds don't have source maps by default.
+           expect(next.cliOutput).toContain(expectedTimeoutErrorMessage)
+         }
+-      }, 180_000)
++      })
+     })
+   }
+ })
