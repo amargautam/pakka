@@ -1,6 +1,6 @@
 // Package pricing provides per-model token pricing and USD cost helpers.
 //
-// Source: https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-05-02)
+// Source: https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-06-11)
 package pricing
 
 import "fmt"
@@ -14,8 +14,11 @@ type ModelPrices struct {
 }
 
 // Table maps model ID strings to their prices.
-// Source: https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-05-02)
+// Source: https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-06-11)
 var Table = map[string]ModelPrices{
+	"claude-fable-5":            {10.00, 50.00, 12.50, 1.00},
+	"claude-mythos-5":           {10.00, 50.00, 12.50, 1.00},
+	"claude-opus-4-8":           {5.00, 25.00, 6.25, 0.50},
 	"claude-opus-4-7":           {5.00, 25.00, 6.25, 0.50},
 	"claude-opus-4-6":           {5.00, 25.00, 6.25, 0.50},
 	"claude-opus-4-5":           {5.00, 25.00, 6.25, 0.50},
@@ -30,9 +33,23 @@ var Table = map[string]ModelPrices{
 var Default = ModelPrices{3.00, 15.00, 3.75, 0.30}
 
 // Lookup returns the prices for the given model ID, falling back to Default.
+//
+// Matching is exact first. If no exact entry exists, Lookup falls back to the
+// longest Table key that is a prefix of the model ID followed by '-', so dated
+// full IDs reported by Claude Code (e.g. "claude-opus-4-8-20260301") resolve
+// to their base model's prices. Unknown models return Default.
 func Lookup(model string) ModelPrices {
 	if p, ok := Table[model]; ok {
 		return p
+	}
+	var bestKey string
+	for k := range Table {
+		if len(model) > len(k) && model[:len(k)] == k && model[len(k)] == '-' && len(k) > len(bestKey) {
+			bestKey = k
+		}
+	}
+	if bestKey != "" {
+		return Table[bestKey]
 	}
 	return Default
 }

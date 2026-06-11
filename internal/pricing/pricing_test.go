@@ -9,6 +9,9 @@ func TestLookupKnownModel(t *testing.T) {
 		model string
 		want  ModelPrices
 	}{
+		{"claude-fable-5", ModelPrices{10.00, 50.00, 12.50, 1.00}},
+		{"claude-mythos-5", ModelPrices{10.00, 50.00, 12.50, 1.00}},
+		{"claude-opus-4-8", ModelPrices{5.00, 25.00, 6.25, 0.50}},
 		{"claude-opus-4-7", ModelPrices{5.00, 25.00, 6.25, 0.50}},
 		{"claude-opus-4-6", ModelPrices{5.00, 25.00, 6.25, 0.50}},
 		{"claude-opus-4-5", ModelPrices{5.00, 25.00, 6.25, 0.50}},
@@ -22,6 +25,52 @@ func TestLookupKnownModel(t *testing.T) {
 		if got != c.want {
 			t.Errorf("Lookup(%q) = %+v, want %+v", c.model, got, c.want)
 		}
+	}
+}
+
+func TestLookupFable5Output(t *testing.T) {
+	if got := Lookup("claude-fable-5").Output; got != 50 {
+		t.Errorf("Lookup(claude-fable-5).Output = %v, want 50", got)
+	}
+}
+
+func TestLookupPrefixFallback(t *testing.T) {
+	cases := []struct {
+		name  string
+		model string
+		want  ModelPrices
+	}{
+		{"exact hit stays exact", "claude-fable-5", Table["claude-fable-5"]},
+		{"dated opus 4.8 suffix", "claude-opus-4-8-20260301", Table["claude-opus-4-8"]},
+		{"dated fable suffix", "claude-fable-5-20260520", Table["claude-fable-5"]},
+		{"dated sonnet suffix", "claude-sonnet-4-6-20251114", Table["claude-sonnet-4-6"]},
+		{"unknown model falls to Default", "claude-zephyr-9", Default},
+		{"prefix without dash separator is not a match", "claude-fable-55", Default},
+	}
+	for _, c := range cases {
+		if got := Lookup(c.model); got != c.want {
+			t.Errorf("%s: Lookup(%q) = %+v, want %+v", c.name, c.model, got, c.want)
+		}
+	}
+}
+
+// TestSessionCostVariesByModel asserts pricing is behavioral: identical token
+// counts must produce different USD costs for fable-5 vs sonnet-4-6 sessions.
+func TestSessionCostVariesByModel(t *testing.T) {
+	const inTok, cw, cr, outTok = 100_000, 200_000, 500_000, 50_000
+	fable := SessionCostUSD(Lookup("claude-fable-5"), inTok, cw, cr, outTok)
+	sonnet := SessionCostUSD(Lookup("claude-sonnet-4-6"), inTok, cw, cr, outTok)
+	if fable == sonnet {
+		t.Fatalf("fable and sonnet costs identical (%v) — pricing not varying with model", fable)
+	}
+	if fable <= sonnet {
+		t.Errorf("fable cost %v should exceed sonnet cost %v", fable, sonnet)
+	}
+	// Fable must price at 10/50, not the 3/15 Default: 1M in + 1M out = $60.
+	got := SessionCostUSD(Lookup("claude-fable-5"), 1_000_000, 0, 0, 1_000_000)
+	const want, eps = 60.00, 1e-9
+	if diff := got - want; diff < -eps || diff > eps {
+		t.Errorf("fable 1M+1M = %.6f, want %.6f", got, want)
 	}
 }
 
