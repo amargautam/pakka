@@ -2,6 +2,21 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.10.0] — 2026-06-11
+
+### Fixed
+- commitgate: block indirect commits via exec-wrappers (`xargs`/`env`/`sudo`/`nohup`/`timeout`/…) that previously bypassed the gate ungated
+- commit-gate: skip review-state git subprocesses on non-commit Bash commands (removes per-command hot-path latency)
+- commitgate: write gate verdicts for chained and wrapped commit shapes recognised only by the AST path (new `Decision.IsCommit`)
+- meter: use the full sanitized session id as the meter filename (was truncated to 8 chars → cross-session file collisions)
+- recall: sanitize FTS5 queries — operator characters (`:`, `(`, `*`, `"`, `AND`) no longer crash the query
+- report: output-tokens figure is now the max repo-filtered cumulative snapshot, not a triangular sum of snapshots
+- bin/run: rotate `~/.pakka/debug.log` at 2 MB (was unbounded)
+
+### Changed
+- statusline: meter reads cached (`meter-cache.json`, mtime+size keyed); `$` savings now labeled `(est)` to mark the constant-multiplier output estimate
+- docs: marketplace README updated to the 8-hub command surface; `pakka/CLAUDE.md` recall scope corrected
+
 ## [v0.9.0] — 2026-06-02
 
 ### Added
