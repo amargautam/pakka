@@ -58,6 +58,10 @@ type settingsJSON struct {
 		Recall struct {
 			Enabled *bool `json:"enabled"`
 		} `json:"recall"`
+		Guard struct {
+			DemoteThreshold *int `json:"demoteThreshold"`
+			DecayWindowDays *int `json:"decayWindowDays"`
+		} `json:"guard"`
 	} `json:"pakka"`
 }
 
