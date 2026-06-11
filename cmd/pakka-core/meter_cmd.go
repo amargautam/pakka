@@ -46,11 +46,7 @@ func runMeter() {
 // Degrades gracefully: if transcripts are unreadable mid-session, writes 0
 // rather than failing the hook. The SessionEnd hook must not block.
 func runMeterSessionEnd(event *hookevent.Event) {
-	cwd := event.CWD
-	if cwd == "" {
-		cwd, _ = os.Getwd()
-	}
-	repo := meter.RepoKey(cwd)
+	repo := sessionRepoRoot(event.CWD)
 
 	var outTokens int64
 	if n, err := statusline.RepoOutputTokens("", repo); err == nil {
@@ -61,4 +57,16 @@ func runMeterSessionEnd(event *hookevent.Event) {
 		fmt.Fprintf(os.Stderr, "pakka: meter session-end: %v\n", err)
 		// Non-fatal: don't block SessionEnd.
 	}
+}
+
+// sessionRepoRoot resolves the canonical repo_root tag for a session-end
+// snapshot: git toplevel of the session cwd, symlink-resolved; the
+// canonicalized cwd itself when not inside a git repo (multi-repo workspace
+// dirs). Falls back to the process cwd when the hook event carries none so
+// every session-end snapshot gets a non-empty, consistent tag.
+func sessionRepoRoot(cwd string) string {
+	if strings.TrimSpace(cwd) == "" {
+		cwd, _ = os.Getwd()
+	}
+	return meter.RepoKey(cwd)
 }

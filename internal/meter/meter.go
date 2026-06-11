@@ -36,8 +36,9 @@ type Entry struct {
 // RepoKey returns the canonical repo identifier for a working directory.
 //
 // Purpose: Tag meter entries and filter status-line aggregates by repo.
-// Strategy: `git rev-parse --show-toplevel`; fall back to the absolute form
-// of cwd when not a git repo. Returns "" only if cwd resolves to "".
+// Strategy: `git rev-parse --show-toplevel`, symlink-resolved; fall back to
+// the canonicalized cwd itself when not inside a git repo (e.g. a multi-repo
+// workspace dir). Returns "" only if cwd resolves to "".
 // Errors: Never errors; always returns a string suitable as a tag.
 func RepoKey(cwd string) string {
 	cwd = strings.TrimSpace(cwd)
@@ -50,17 +51,26 @@ func RepoKey(cwd string) string {
 	if err == nil {
 		top := strings.TrimSpace(string(out))
 		if top != "" {
-			if abs, err := filepath.Abs(top); err == nil {
-				return abs
-			}
-			return top
+			return canonicalPath(top)
 		}
 	}
-	// Fallback: absolute cwd.
-	if abs, err := filepath.Abs(cwd); err == nil {
-		return abs
+	// Fallback: canonicalized cwd.
+	return canonicalPath(cwd)
+}
+
+// canonicalPath returns the absolute, symlink-resolved form of path so the
+// same directory always yields one tag (macOS /tmp vs /private/tmp, home-dir
+// symlinks). Degrades: abs-only when symlink resolution fails (path gone),
+// raw input when Abs itself fails.
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
 	}
-	return cwd
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 // Run appends a token-usage entry for the given hook event.

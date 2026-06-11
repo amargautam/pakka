@@ -3,6 +3,7 @@ package meter
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -179,6 +180,88 @@ func TestSessionFilesDoNotCollideOnSharedPrefix(t *testing.T) {
 			names = append(names, f.Name())
 		}
 		t.Fatalf("want 2 distinct meter files for prefix-sharing sessions, got %d: %v", len(files), names)
+	}
+}
+
+// TestRepoKeyVariesWithCwd proves repo attribution tracks the input cwd:
+// different directories yield different keys, and the key for a non-git dir
+// (multi-repo workspace shape) is the dir itself, canonicalized.
+func TestRepoKeyVariesWithCwd(t *testing.T) {
+	base := t.TempDir()
+	dirA := filepath.Join(base, "workspace-a")
+	dirB := filepath.Join(base, "workspace-b")
+	for _, d := range []string{dirA, dirB} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	keyA := RepoKey(dirA)
+	keyB := RepoKey(dirB)
+	if keyA == "" || keyB == "" {
+		t.Fatalf("RepoKey returned empty: a=%q b=%q", keyA, keyB)
+	}
+	if keyA == keyB {
+		t.Errorf("RepoKey must vary with cwd; both = %q", keyA)
+	}
+
+	wantA, err := filepath.EvalSymlinks(dirA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyA != wantA {
+		t.Errorf("RepoKey(%q) = %q, want canonical %q", dirA, keyA, wantA)
+	}
+}
+
+// TestRepoKeyResolvesSymlinks proves canonicalization: a symlinked path and
+// its target must produce the SAME tag, or session-end snapshots taken from
+// symlinked cwds would split one repo's history across two tags.
+func TestRepoKeyResolvesSymlinks(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "real-workspace")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "linked-workspace")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	keyTarget := RepoKey(target)
+	keyLink := RepoKey(link)
+	if keyTarget != keyLink {
+		t.Errorf("RepoKey(symlink) = %q, RepoKey(target) = %q; want identical canonical tag", keyLink, keyTarget)
+	}
+	want, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyTarget != want {
+		t.Errorf("RepoKey(target) = %q, want symlink-resolved %q", keyTarget, want)
+	}
+}
+
+// TestRepoKeyGitToplevel proves a cwd nested inside a git repo is tagged
+// with the repo root, not the subdirectory.
+func TestRepoKeyGitToplevel(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := filepath.Join(t.TempDir(), "repo")
+	sub := filepath.Join(repo, "internal", "deep")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Skipf("git init failed: %v: %s", err, out)
+	}
+
+	want, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RepoKey(sub); got != want {
+		t.Errorf("RepoKey(%q) = %q, want git toplevel %q", sub, got, want)
 	}
 }
 

@@ -6,19 +6,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/statusline"
 )
 
 // BackfillOutputTokensCmd implements "pakka-core backfill-output-tokens".
 //
-// One-time recovery tool (Pass B/3, v0.9.0): walks ~/.pakka/meter/*.jsonl
-// and ~/.claude/projects/*/<session-id>.jsonl, computes per-session output
-// tokens, appends a synthetic meter entry per file with output_tokens set.
+// Recovery tool (Pass B/3, v0.9.0; repo_root re-derivation added for #10):
+// walks ~/.pakka/meter/*.jsonl and ~/.claude/projects/*/<session-id>.jsonl,
+// computes per-session output tokens, appends a synthetic meter entry per
+// file with output_tokens set, and re-derives the canonical `repo` tag for
+// existing untagged entries from each transcript's recorded cwd (same
+// canonicalization as session-end: git toplevel, symlink-resolved, or the
+// canonicalized cwd for non-repo workspace dirs).
 //
 // Idempotency: if a meter file already has any line with output_tokens > 0,
-// the file is skipped. Choice rationale: simpler than max(existing, recomputed)
-// and avoids touching files that have been backfilled or naturally populated.
+// the token pass skips it. Choice rationale: simpler than max(existing,
+// recomputed) and avoids touching files that have been backfilled or
+// naturally populated. The retag pass only touches entries with no `repo`
+// tag, so a second run is a no-op.
 type BackfillOutputTokensCmd struct{}
 
 func (c *BackfillOutputTokensCmd) Name() string { return "backfill-output-tokens" }
@@ -48,8 +58,8 @@ func (c *BackfillOutputTokensCmd) Run(args []string) error {
 	if dryRun {
 		mode = "dry-run"
 	}
-	fmt.Printf("pakka: backfill-output-tokens (%s): files processed %d, files skipped %d, orphan sessions added %d, total output tokens written %d\n",
-		mode, stats.FilesProcessed, stats.FilesSkipped, stats.OrphansAdded, stats.TotalOutputTokens)
+	fmt.Printf("pakka: backfill-output-tokens (%s): files processed %d, files skipped %d, orphan sessions added %d, entries retagged %d, total output tokens written %d\n",
+		mode, stats.FilesProcessed, stats.FilesSkipped, stats.OrphansAdded, stats.EntriesRetagged, stats.TotalOutputTokens)
 	return nil
 }
 
@@ -58,6 +68,7 @@ type BackfillStats struct {
 	FilesProcessed    int
 	FilesSkipped      int
 	OrphansAdded      int // transcripts with no matching meter file
+	EntriesRetagged   int // untagged entries that received a derived repo tag
 	TotalOutputTokens int64
 }
 
@@ -89,6 +100,8 @@ func backfillOutputTokens(meterDir, projectsDir string, dryRun bool) (BackfillSt
 		// rotated all transcripts).
 		transcriptsBySID = map[string][]string{}
 	}
+
+	resolver := newRepoResolver()
 
 	processedSIDs := map[string]struct{}{}
 	for _, e := range entries {
@@ -125,6 +138,9 @@ func backfillOutputTokens(meterDir, projectsDir string, dryRun bool) (BackfillSt
 				"session_id":    pickSID(sessIDs),
 				"output_tokens": total,
 				"source":        "backfill",
+			}
+			if repo := resolver.repoForSessions(sessIDs, transcriptsBySID); repo != "" {
+				entry["repo"] = repo
 			}
 			if err := appendJSONLine(path, entry); err != nil {
 				continue
@@ -178,10 +194,178 @@ func backfillOutputTokens(meterDir, projectsDir string, dryRun bool) (BackfillSt
 			"output_tokens": total,
 			"source":        "backfill-orphan",
 		}
+		if repo := resolver.repoForTranscripts(paths); repo != "" {
+			entry["repo"] = repo
+		}
 		_ = appendJSONLine(orphanPath, entry)
 	}
 
+	// Retag pass (#10): existing entries written without a repo tag (legacy
+	// session-end writes and v0.9.0 backfill entries) get one re-derived from
+	// their session's transcript cwd. Runs over every meter file, including
+	// ones the token pass skipped — those are exactly the untagged ones.
+	retagged, err := rederiveRepoTags(meterDir, transcriptsBySID, resolver, dryRun)
+	if err == nil {
+		stats.EntriesRetagged = retagged
+	}
+
 	return stats, nil
+}
+
+// rederiveRepoTags walks meterDir and, for every JSONL entry that lacks a
+// `repo` tag, derives one from the recorded cwd of the session's transcript
+// (canonicalized via meter.RepoKey — identical to session-end tagging) and
+// rewrites the file in place. Entries whose session has no surviving
+// transcript, and lines that don't parse, keep their line content unchanged
+// (a rewritten file is newline-terminated, normalizing a missing trailing
+// newline once). Idempotent: tagged entries are never modified, so a second
+// run rewrites nothing. Returns the number of entries that received a tag.
+func rederiveRepoTags(meterDir string, transcriptsBySID map[string][]string, resolver *repoResolver, dryRun bool) (int, error) {
+	entries, err := os.ReadDir(meterDir)
+	if err != nil {
+		return 0, fmt.Errorf("read meter dir: %w", err)
+	}
+
+	retagged := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(meterDir, e.Name())
+		n, err := rederiveRepoTagsInFile(path, transcriptsBySID, resolver, dryRun)
+		if err != nil {
+			continue
+		}
+		retagged += n
+	}
+	return retagged, nil
+}
+
+// rederiveRepoTagsInFile rewrites one meter file, tagging untagged entries.
+// Returns the number of entries tagged (0 means the file was left untouched).
+func rederiveRepoTagsInFile(path string, transcriptsBySID map[string][]string, resolver *repoResolver, dryRun bool) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+
+	var out []string
+	changed := 0
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		rewritten, tagged := retagLine(line, transcriptsBySID, resolver)
+		if tagged {
+			changed++
+			out = append(out, rewritten)
+		} else {
+			out = append(out, line)
+		}
+	}
+	scanErr := sc.Err()
+	f.Close()
+	if scanErr != nil || changed == 0 || dryRun {
+		return changed, scanErr
+	}
+
+	// Atomic rewrite: temp file in the same dir, then rename.
+	tmp := path + ".retag.tmp"
+	content := strings.Join(out, "\n") + "\n"
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return 0, err
+	}
+	return changed, nil
+}
+
+// retagLine returns (rewrittenLine, true) when line is a parseable meter
+// entry with no repo tag whose session cwd can be derived from a transcript;
+// otherwise (line, false). Unknown JSON fields are preserved via the generic
+// map round-trip.
+func retagLine(line string, transcriptsBySID map[string][]string, resolver *repoResolver) (string, bool) {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(line), &m) != nil {
+		return line, false
+	}
+	if repo, ok := m["repo"].(string); ok && repo != "" {
+		return line, false
+	}
+	sid, _ := m["session_id"].(string)
+	if sid == "" {
+		return line, false
+	}
+	repo := resolver.repoForTranscripts(transcriptsBySID[sid])
+	if repo == "" {
+		return line, false
+	}
+	m["repo"] = repo
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		return line, false
+	}
+	return string(encoded), true
+}
+
+// repoResolver derives canonical repo tags from transcript cwds, caching
+// both transcript-path→cwd reads and cwd→repo git resolutions so a backfill
+// over hundreds of meter files doesn't spawn git per line.
+type repoResolver struct {
+	cwdByTranscript map[string]string
+	repoByCWD       map[string]string
+}
+
+func newRepoResolver() *repoResolver {
+	return &repoResolver{
+		cwdByTranscript: map[string]string{},
+		repoByCWD:       map[string]string{},
+	}
+}
+
+// repoForTranscripts returns the canonical repo key for the first transcript
+// in paths that records a cwd. Empty string when none does.
+func (r *repoResolver) repoForTranscripts(paths []string) string {
+	for _, p := range paths {
+		cwd, ok := r.cwdByTranscript[p]
+		if !ok {
+			cwd = statusline.ReadCWDFromTranscriptPath(p)
+			r.cwdByTranscript[p] = cwd
+		}
+		if cwd == "" {
+			continue
+		}
+		repo, ok := r.repoByCWD[cwd]
+		if !ok {
+			repo = meter.RepoKey(cwd)
+			r.repoByCWD[cwd] = repo
+		}
+		if repo != "" {
+			return repo
+		}
+	}
+	return ""
+}
+
+// repoForSessions returns the canonical repo key for the first session in
+// sids (sorted, for deterministic attribution when a meter file aggregates
+// multiple sessions) that has a transcript with a recorded cwd. Empty string
+// when none does.
+func (r *repoResolver) repoForSessions(sids map[string]struct{}, transcriptsBySID map[string][]string) string {
+	ordered := make([]string, 0, len(sids))
+	for sid := range sids {
+		ordered = append(ordered, sid)
+	}
+	sort.Strings(ordered)
+	for _, sid := range ordered {
+		if repo := r.repoForTranscripts(transcriptsBySID[sid]); repo != "" {
+			return repo
+		}
+	}
+	return ""
 }
 
 // shortHash returns the first 8 chars of sid (after stripping non-alnum/dash),

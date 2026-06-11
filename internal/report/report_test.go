@@ -72,11 +72,13 @@ func TestGatherMeterOutputTokens(t *testing.T) {
 	// Two session-end entries for the SAME repo. Each output_tokens value is a
 	// repo-wide CUMULATIVE snapshot (not a per-session delta), so the report
 	// must take the latest/MAX snapshot (2000), not the sum — summing
-	// snapshots triangular-overcounts. Both tagged with repo == tmp so they
-	// match the canonicalized repoRoot filter.
-	sessA := `{"ts":"2026-05-01T10:00:00Z","session_id":"sess-a","repo":"` + tmp + `","output_tokens":1000}
+	// snapshots triangular-overcounts. Both tagged with the canonical
+	// (symlink-resolved) form of tmp, exactly as meter.RepoKey tags entries,
+	// so they match the canonicalized repoRoot filter.
+	canonTmp := canonicalize(t, tmp)
+	sessA := `{"ts":"2026-05-01T10:00:00Z","session_id":"sess-a","repo":"` + canonTmp + `","output_tokens":1000}
 `
-	sessB := `{"ts":"2026-05-02T10:00:00Z","session_id":"sess-b","repo":"` + tmp + `","output_tokens":2000}
+	sessB := `{"ts":"2026-05-02T10:00:00Z","session_id":"sess-b","repo":"` + canonTmp + `","output_tokens":2000}
 `
 	if err := os.WriteFile(filepath.Join(meterDir, "sess-a.jsonl"), []byte(sessA), 0644); err != nil {
 		t.Fatal(err)
@@ -113,7 +115,7 @@ func TestGatherMeterOutputTokensRepoFiltered(t *testing.T) {
 	}
 	t.Setenv("HOME", tmp)
 
-	mine := `{"ts":"2026-05-01T10:00:00Z","session_id":"s1","repo":"` + tmp + `","output_tokens":500}
+	mine := `{"ts":"2026-05-01T10:00:00Z","session_id":"s1","repo":"` + canonicalize(t, tmp) + `","output_tokens":500}
 `
 	other := `{"ts":"2026-05-02T10:00:00Z","session_id":"s2","repo":"/some/other/repo","output_tokens":9999}
 `
@@ -130,6 +132,86 @@ func TestGatherMeterOutputTokensRepoFiltered(t *testing.T) {
 	}
 	if stats.OutputTokensTotal != 500 {
 		t.Errorf("OutputTokensTotal = %d, want 500 (other repo's 9999 must not leak)", stats.OutputTokensTotal)
+	}
+}
+
+// canonicalize returns the absolute symlink-resolved form of path — the same
+// canonical form meter.RepoKey produces for entry tags (macOS t.TempDir
+// returns /var/... which is a symlink to /private/var/...).
+func canonicalize(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
+
+// TestGatherMeterOutputTokensWorkspaceContainsChildRepos verifies the repo
+// filter semantics over consistently tagged entries (#10):
+//   - a --repo-root pointing at a multi-repo workspace dir matches entries
+//     tagged with the workspace root itself AND entries tagged with child
+//     repos nested under it;
+//   - the figure is the MAX snapshot across all matching entries, never the
+//     sum;
+//   - filtering by a single child repo excludes its siblings.
+func TestGatherMeterOutputTokensWorkspaceContainsChildRepos(t *testing.T) {
+	tmp := t.TempDir()
+	meterDir := filepath.Join(tmp, "meter")
+	auditDir := filepath.Join(tmp, "audit")
+	if err := os.MkdirAll(meterDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(auditDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", tmp)
+
+	// Workspace dir (a real, non-git dir) with two child repo tags plus one
+	// snapshot tagged at the workspace root itself.
+	ws := filepath.Join(tmp, "workspace")
+	if err := os.MkdirAll(ws, 0755); err != nil {
+		t.Fatal(err)
+	}
+	canonWS := canonicalize(t, ws)
+	repoA := canonWS + "/repo-a"
+	repoB := canonWS + "/repo-b"
+
+	lines := `{"ts":"2026-06-01T10:00:00Z","session_id":"s1","repo":"` + repoA + `","output_tokens":100}
+{"ts":"2026-06-02T10:00:00Z","session_id":"s2","repo":"` + repoA + `","output_tokens":300}
+{"ts":"2026-06-03T10:00:00Z","session_id":"s3","repo":"` + repoB + `","output_tokens":200}
+{"ts":"2026-06-04T10:00:00Z","session_id":"s4","repo":"` + canonWS + `","output_tokens":250}
+{"ts":"2026-06-05T10:00:00Z","session_id":"s5","repo":"/elsewhere/repo-c","output_tokens":9999}
+`
+	if err := os.WriteFile(filepath.Join(meterDir, "multi.jsonl"), []byte(lines), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name     string
+		repoRoot string
+		want     int64
+	}{
+		// Workspace filter contains the workspace-root tag and both child
+		// repos: max(100, 300, 200, 250) = 300 — NOT the sum (850), and the
+		// foreign repo's 9999 must not leak.
+		{"workspace root", ws, 300},
+		{"child repo a", repoA, 300},
+		{"child repo b", repoB, 200},
+	}
+	for _, tc := range cases {
+		stats, err := Gather(meterDir, auditDir, tc.repoRoot)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if stats.OutputTokensTotal != tc.want {
+			t.Errorf("%s: OutputTokensTotal = %d, want %d (max snapshot among contained repos, not sum)",
+				tc.name, stats.OutputTokensTotal, tc.want)
+		}
 	}
 }
 
