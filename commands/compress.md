@@ -1,5 +1,5 @@
 ---
-description: Control pakka compression. Switch output intensity (lite|strict|ultra|super-ultra), re-compress input files, restore originals. Default level is `ultra`.
+description: Control pakka compression. Switch output intensity (lite|strict|ultra|super-ultra), re-compress input files, restore originals. Default level is `super-ultra`.
 allowed-tools: Read, Write, Bash
 argument-hint: "[lite|strict|ultra|super-ultra|restore|status]"
 ---
@@ -44,8 +44,8 @@ Check `additionalContext` for a line starting with `PAKKA HOOK HANDLED:`.
 Level effects:
 - `lite`: No filler/hedging. Keep articles + full sentences. Professional tight.
 - `strict`: Drop articles, fragments OK, short synonyms.
-- `ultra`: Default. Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality.
-- `super-ultra`: Maximum density. One token where one suffices, symbols (→ = &).
+- `ultra`: Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality.
+- `super-ultra`: Default. Maximum density. One token where one suffices, symbols (→ = &).
 
 ### Status (default action)
 
