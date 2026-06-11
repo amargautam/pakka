@@ -157,6 +157,18 @@ func findCommitCallExprs(file *syntax.File) (nodes []*syntax.CallExpr, cause str
 			}
 			return true
 		default:
+			// Exec-wrappers run their remaining arguments as a command:
+			// `xargs git commit`, `env git commit`, `sudo git commit`, etc.
+			// Here `git` and `commit` are positional args of the wrapper, not a
+			// nested CallExpr, so the `git` case above never sees them and the
+			// commit would slip through ungated. We cannot statically splice a
+			// trailer into an argv passed to a wrapper, so block with a named
+			// cause. Restricted to known wrappers so inert mentions like
+			// `echo git commit` (echo does not exec its args) stay allowed.
+			if isExecWrapper(headLit) && hasAdjacentGitCommit(call.Args) {
+				blockerCause = "git commit via " + headLit
+				return false
+			}
 			return true
 		}
 	})
@@ -164,6 +176,36 @@ func findCommitCallExprs(file *syntax.File) (nodes []*syntax.CallExpr, cause str
 		return nil, blockerCause
 	}
 	return nodes, ""
+}
+
+// execWrappers are commands that execute their trailing arguments as a new
+// command. A `git commit` appearing among their args is a real commit the
+// fast-path matcher and the `git` CallExpr case both miss.
+var execWrappers = map[string]bool{
+	"xargs": true, "env": true, "sudo": true, "doas": true, "nohup": true,
+	"command": true, "timeout": true, "nice": true, "ionice": true,
+	"stdbuf": true, "setsid": true, "chronic": true, "flock": true,
+}
+
+// isExecWrapper reports whether name runs its trailing arguments as a command.
+func isExecWrapper(name string) bool { return execWrappers[name] }
+
+// hasAdjacentGitCommit reports whether args contains a literal `git`
+// immediately followed by a literal `commit` (the argv shape of an indirect
+// commit). Quoted whole-string mentions like `grep "git commit"` reduce to a
+// single arg and never match, so this does not false-positive on them.
+func hasAdjacentGitCommit(args []*syntax.Word) bool {
+	for i := 0; i+1 < len(args); i++ {
+		a, okA := wordToLiteral(args[i])
+		if !okA || a != "git" {
+			continue
+		}
+		b, okB := wordToLiteral(args[i+1])
+		if okB && b == "commit" {
+			return true
+		}
+	}
+	return false
 }
 
 // gitSubcommand scans the args slice (args AFTER `git` itself) and returns
@@ -357,14 +399,16 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 
 	// Confirmed: at least one real commit invocation present. From here
 	// the logic mirrors the fast-path Evaluate flow — skip-marker, then
-	// trailer/gate decisions.
+	// trailer/gate decisions. Every return below sets IsCommit so the caller
+	// writes a verdict / audit entry for chained and wrapped commits too.
 	if !cfg.Signature && !cfg.CoAuthor && !cfg.AutoGate {
-		return &Decision{Allow: true}
+		return &Decision{Allow: true, IsCommit: true}
 	}
 
 	if HasSkipMarker(cmd) {
 		return &Decision{
 			Allow:     true,
+			IsCommit:  true,
 			AuditNote: "review_skipped=skip_marker",
 			Stderr:    "pakka: [skip pakka] detected — gate, trailers, and audit bypassed for this commit",
 		}
@@ -392,11 +436,12 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 
 	if gateBlocks {
 		if len(state.ErrorFindings) > 0 {
-			return &Decision{Allow: false, Stderr: FormatFindings(state.ErrorFindings)}
+			return &Decision{Allow: false, IsCommit: true, Stderr: FormatFindings(state.ErrorFindings)}
 		}
 		return &Decision{
-			Allow:  false,
-			Stderr: "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass.",
+			Allow:    false,
+			IsCommit: true,
+			Stderr:   "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass.",
 		}
 	}
 
@@ -414,7 +459,7 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 		return &Decision{Allow: false, Stderr: formatAstRejectStderr("unexpected: commit node disappeared on re-parse")}
 	}
 
-	d := &Decision{Allow: true, AuditNote: auditNote}
+	d := &Decision{Allow: true, IsCommit: true, AuditNote: auditNote}
 	if res.addedA || res.addedB {
 		d.Command = res.rewritten
 	}

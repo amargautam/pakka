@@ -83,11 +83,31 @@ func runCommitGate() {
 
 	cfg := loadCommitGateConfig()
 	cfg.SessionID = event.SessionID
-	reviewsDir := resolveReviewsDir(input.Command)
-	state := gatherReviewState(cfg, input.Command)
+
+	// This hook fires on EVERY Bash command (ls, echo, npm test, …), but only
+	// the commit path consumes review state — and gathering it runs two `git
+	// diff --cached` subprocesses plus a file read. Skip that work unless the
+	// command could plausibly be a commit. Evaluate only routes into a state-
+	// consuming branch when the command contains "commit" (fast path requires
+	// `git commit`; the AST path is entered only on a "git commit" mention), so
+	// the substring check is a safe gate. Non-commit commands get an empty
+	// State that Evaluate never reads.
+	mightCommit := strings.Contains(input.Command, "commit")
+	reviewsDir := ".pakka/reviews"
+	state := &commitgate.State{}
+	if mightCommit {
+		reviewsDir = resolveReviewsDir(input.Command)
+		state = gatherReviewState(cfg, input.Command)
+	}
 	d := commitgate.Evaluate(input.Command, cfg, state)
 
-	// Inject status trailer on allowed commits.
+	// Inject the per-session status trailer on allowed single-command commits.
+	// Restricted to the fast-path shape (IsGitCommit): the trailer is appended
+	// at end-of-line, which is correct only when the commit is the sole
+	// command. For chained/wrapped shapes the AST path has already spliced the
+	// Reviewed-by-pakka and Co-authored-by trailers into the commit node;
+	// appending here would attach the cosmetic session trailer to the last
+	// command in the chain (e.g. a trailing `git push`), so we skip it.
 	if d.Allow && commitgate.IsGitCommit(input.Command) {
 		level := loadOutputLevel()
 		cgCWD := event.CWD
@@ -108,8 +128,10 @@ func runCommitGate() {
 		_ = audit.WriteNote(event.SessionID, "commit_gate", d.AuditNote)
 	}
 
-	// Write verdict for auto-gate decisions on git commit commands
-	if commitgate.IsGitCommit(input.Command) && cfg.AutoGate {
+	// Write verdict for auto-gate decisions on any real commit — including
+	// chained/wrapped shapes recognised only by the AST path, which the old
+	// IsGitCommit-only guard skipped, leaving those commits with no verdict.
+	if d.IsCommit && cfg.AutoGate {
 		writeVerdict(event.SessionID, d, reviewsDir)
 	}
 

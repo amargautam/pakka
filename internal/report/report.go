@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/amargautam/pakka/internal/data"
+	"github.com/amargautam/pakka/internal/meter"
 )
 
 // Stats holds aggregated metrics from meter and audit data.
@@ -35,6 +36,7 @@ type Stats struct {
 type meterEntry struct {
 	TS             string `json:"ts"`
 	SessionID      string `json:"session_id"`
+	Repo           string `json:"repo,omitempty"`
 	TokensUsed     int64  `json:"tokens_used"`
 	BytesSaved     int64  `json:"bytes_saved"`
 	TokensSavedEst int64  `json:"tokens_saved_est"`
@@ -72,7 +74,15 @@ func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 		ToolUseCounts: make(map[string]int),
 	}
 
-	meterErr := gatherMeter(s, meterDir)
+	// Canonicalize repoRoot the same way meter tags entries (git toplevel, or
+	// abs path when not a repo) so output-token snapshots can be matched to the
+	// repo. Empty/"." means "no filter" — match all repos.
+	canonRepo := ""
+	if repoRoot != "" && repoRoot != "." {
+		canonRepo = meter.RepoKey(repoRoot)
+	}
+
+	meterErr := gatherMeter(s, meterDir, canonRepo)
 	auditErr := gatherAudit(s, auditDir)
 	gatherVerdicts(s)
 
@@ -81,17 +91,28 @@ func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 		return nil, fmt.Errorf("meter: %v; audit: %v", meterErr, auditErr)
 	}
 
-	// OutputTokensTotal sourced solely from meter (gatherMeter sums the
-	// output_tokens field across all session entries). Prior v0.8.x logic
-	// overrode the meter value with statusline.RepoOutputTokens(repoRoot),
-	// which read Claude Code transcripts — those get pruned, so the figure
-	// shrank across releases. v0.9.0 fix-forward: meter is sole source.
-	_ = repoRoot
-
 	return s, nil
 }
 
-func gatherMeter(s *Stats, dir string) error {
+// repoMatches reports whether a meter entry's repo tag belongs to canonRepo
+// (exact match, or a sub-repo nested under it). An empty canonRepo disables
+// filtering and matches every entry.
+func repoMatches(entryRepo, canonRepo string) bool {
+	if canonRepo == "" {
+		return true
+	}
+	return entryRepo == canonRepo || strings.HasPrefix(entryRepo, canonRepo+"/")
+}
+
+// gatherMeter accumulates meter stats. TokensUsed/BytesSaved/TokensSavedEst
+// are per-event deltas and are summed across all entries. OutputTokens is
+// different: each session-end entry is a repo-wide *cumulative snapshot*, so
+// summing snapshots overcounts (100,250,450 sum to 800 but the true cumulative
+// is 450). OutputTokensTotal therefore takes the MAX snapshot among entries
+// matching canonRepo — the latest cumulative for the repo. (Owner decision
+// 2026-06-11; see memory/DECISIONS.md "Output-tokens figure is repo-wide
+// cumulative by design".)
+func gatherMeter(s *Stats, dir, canonRepo string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -114,7 +135,9 @@ func gatherMeter(s *Stats, dir string) error {
 				continue
 			}
 			s.TotalTokensUsed += me.TokensUsed
-			s.OutputTokensTotal += me.OutputTokens
+			if repoMatches(me.Repo, canonRepo) && me.OutputTokens > s.OutputTokensTotal {
+				s.OutputTokensTotal = me.OutputTokens
+			}
 			s.TotalBytesSaved += me.BytesSaved
 			s.TokensSavedEst += me.TokensSavedEst
 

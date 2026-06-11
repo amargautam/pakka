@@ -177,8 +177,10 @@ func TestRunOutputBaseFormat(t *testing.T) {
 	useFakeRepoKey(t, nil)
 	out := run(t, &hookevent.Event{SessionID: "abc12345xyz", CWD: "/work/x"}, "strict")
 
-	// Run() emits dollar-savings format: pakka [level] · ~$X.XX saved · N bugs caught
-	for _, want := range []string{"pakka", "[strict]", "~$", "saved", "bugs caught"} {
+	// Run() emits dollar-savings format: pakka [level] · ~$X.XX saved (est) · N bugs caught.
+	// The "(est)" tag is mandatory — the $ blends measured input savings with a
+	// constant-multiplier output estimate and must never read as metered (#11).
+	for _, want := range []string{"pakka", "[strict]", "~$", "saved", "(est)", "bugs caught"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}

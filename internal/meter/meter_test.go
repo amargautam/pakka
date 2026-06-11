@@ -25,7 +25,7 @@ func TestRunCreatesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(tmp, ".pakka", "meter", "meter123.jsonl")
+	path := filepath.Join(tmp, ".pakka", "meter", "meter123session.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("meter file not created: %v", err)
@@ -62,7 +62,7 @@ func TestRunAppendsMultiple(t *testing.T) {
 		}
 	}
 
-	path := filepath.Join(tmp, ".pakka", "meter", "append12.jsonl")
+	path := filepath.Join(tmp, ".pakka", "meter", "append12session.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestWriteSavings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(tmp, ".pakka", "meter", "savings1.jsonl")
+	path := filepath.Join(tmp, ".pakka", "meter", "savings1session.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("meter file not created: %v", err)
@@ -115,7 +115,7 @@ func TestWriteOutputTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(tmp, ".pakka", "meter", "endtok01.jsonl")
+	path := filepath.Join(tmp, ".pakka", "meter", "endtok01session.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("meter file not created: %v", err)
@@ -148,6 +148,37 @@ func TestWriteOutputTokens(t *testing.T) {
 	}
 	if round.OutputTokens != 12345 {
 		t.Errorf("round-trip output_tokens = %d, want 12345", round.OutputTokens)
+	}
+}
+
+// TestSessionFilesDoNotCollideOnSharedPrefix proves the fix for the 8-char
+// shortSID truncation bug: two distinct sessions whose IDs share the first 8
+// characters (the shape of real UUID session IDs) must write to separate meter
+// files, not clobber/append into one and mis-attribute totals.
+func TestSessionFilesDoNotCollideOnSharedPrefix(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	a := "abcdef12-1111-1111-1111-111111111111"
+	b := "abcdef12-2222-2222-2222-222222222222"
+	if err := WriteSavings(a, "/repo/x", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSavings(b, "/repo/x", 200); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := filepath.Join(tmp, ".pakka", "meter")
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		var names []string
+		for _, f := range files {
+			names = append(names, f.Name())
+		}
+		t.Fatalf("want 2 distinct meter files for prefix-sharing sessions, got %d: %v", len(files), names)
 	}
 }
 

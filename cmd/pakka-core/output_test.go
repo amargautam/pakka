@@ -498,8 +498,10 @@ func TestToolResultWritesMeterEntry(t *testing.T) {
 	os.Stdout = origStdout
 	_, _ = io.Copy(io.Discard, r)
 
-	// Expect a meter file at ~/.pakka/meter/<short-sid>.jsonl
-	path := filepath.Join(tmp, ".pakka", "meter", "metertoo.jsonl") // shortSID truncates to 8
+	// Expect a meter file at ~/.pakka/meter/<sanitized-sid>.jsonl. The full
+	// sanitized session ID is the filename (no 8-char truncation — that caused
+	// cross-session collisions; see meter.shortSID).
+	path := filepath.Join(tmp, ".pakka", "meter", "metertool.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("meter file not written: %v", err)

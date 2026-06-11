@@ -89,6 +89,49 @@ func TestIdempotency(t *testing.T) {
 	}
 }
 
+// TestQueryHandlesFTSOperatorChars: queries containing FTS5 syntax characters
+// (`:`, `(`, `*`, `"`, bare AND/OR/NOT) must not error or surface a raw
+// "fts5: syntax error" to the user. Before sanitization these were passed to
+// MATCH verbatim and crashed the query. After: each token is quoted as a
+// literal, so the query runs (possibly with zero matches) and never errors.
+func TestQueryHandlesFTSOperatorChars(t *testing.T) {
+	dbPath, cleanup := makeDB(t)
+	defer cleanup()
+
+	auditDir := t.TempDir()
+	makeAuditFile(t, auditDir, []map[string]interface{}{
+		{"session_id": "s1", "ts": "2025-03-01T12:00:00Z", "kind": "tool_use",
+			"file_path": "/app/server.go", "content": "refactored oauth middleware"},
+	})
+	if err := Index(dbPath, auditDir); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+
+	hostile := []string{
+		`foo:bar`,
+		`oauth AND (`,
+		`"unterminated`,
+		`server*`,
+		`NOT OR AND`,
+		`/app/server.go`,
+		`a"b"c`,
+	}
+	for _, q := range hostile {
+		if _, err := Query(dbPath, q, 20); err != nil {
+			t.Errorf("Query(%q) errored, want graceful handling: %v", q, err)
+		}
+	}
+
+	// A literal token that IS present should still match after sanitization.
+	entries, err := Query(dbPath, "oauth", 20)
+	if err != nil {
+		t.Fatalf("Query(oauth): %v", err)
+	}
+	if len(entries) < 1 {
+		t.Error("expected ≥1 result for 'oauth' after sanitization")
+	}
+}
+
 // TestQueryReturnsResults: after indexing a file with known content, Query finds it.
 func TestQueryReturnsResults(t *testing.T) {
 	dbPath, cleanup := makeDB(t)

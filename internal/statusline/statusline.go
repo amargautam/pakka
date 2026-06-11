@@ -106,6 +106,45 @@ func saveTranscriptCache(path string, c *transcriptCache) {
 	_ = os.Rename(tmp, path)
 }
 
+// meterCacheEntry holds per-repo pre-summed tokens_saved_est for one meter
+// file, keyed by the file's mtime+size. Sums is a repo→sum map so a workspace
+// with several repos doesn't thrash the cache when the status line is rendered
+// from different repos in turn.
+type meterCacheEntry struct {
+	Mtime int64            `json:"mtime"`
+	Size  int64            `json:"size"`
+	Sums  map[string]int64 `json:"sums"`
+}
+
+type meterCache struct {
+	Entries map[string]meterCacheEntry `json:"entries"`
+}
+
+func loadMeterCache(path string) *meterCache {
+	c := &meterCache{Entries: make(map[string]meterCacheEntry)}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return c
+	}
+	_ = json.Unmarshal(data, c)
+	if c.Entries == nil {
+		c.Entries = make(map[string]meterCacheEntry)
+	}
+	return c
+}
+
+func saveMeterCache(path string, c *meterCache) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, path)
+}
+
 // metrics holds computed status-line values.
 type metrics struct {
 	outputLevel   string
@@ -294,10 +333,17 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 
 // formatRunLine renders the compact dollar-savings status-line body used by Run().
 //
-// Format: [<level>] <sep> ~$X.XX saved <sep> N bugs caught[stale-segment]
+// Format: [<level>] <sep> ~$X.XX saved (est) <sep> N bugs caught[stale-segment]
 //
 // The dollar amount is formatted with FormatUSD (2 decimal places, "$" prefix).
-// A "~" tilde prefix indicates estimated savings (not measured to-the-cent).
+// The figure is a cumulative-per-repo estimate, NOT a metered total: the input
+// side is real (bytes truncated, from the meter) but the output side multiplies
+// observed output volume by a constant per-level ratio (outputMultiplier) that
+// is not yet measured against a no-compression baseline. The "~" tilde and the
+// explicit "(est)" tag mark it as modeled so the figure is never read as a
+// to-the-cent measurement — that honesty is the point (see #11 / brand voice).
+// Replace the "(est)" qualifier with a measured ratio when the baseline bench
+// lands (DECISIONS.md "Bench methodology").
 // Stale segment appended only when staleCompress > 0.
 // ANSI 24-bit color: savings in green (111,208,140), bugs in red (232,99,74).
 func formatRunLine(m metrics, sep string) string {
@@ -305,7 +351,7 @@ func formatRunLine(m metrics, sep string) string {
 	if m.staleCompress > 0 {
 		staleSeg = fmt.Sprintf(" %s ! %d stale", sep, m.staleCompress)
 	}
-	savedStr := fmt.Sprintf("\033[38;2;111;208;140m~%s saved\033[0m", pricing.FormatUSD(m.savedUSD))
+	savedStr := fmt.Sprintf("\033[38;2;111;208;140m~%s saved (est)\033[0m", pricing.FormatUSD(m.savedUSD))
 	bugsStr := fmt.Sprintf("\033[38;2;232;99;74m%d bugs caught\033[0m", m.bugsCaught)
 	return fmt.Sprintf("\033[38;2;245;158;11m[%s]\033[0m %s %s %s %s%s",
 		m.outputLevel, sep, savedStr, sep, bugsStr, staleSeg)
@@ -326,7 +372,7 @@ func resolveLevel(outputLevel string) string {
 
 // Run prints the compact pakka status line to w, with ANSI colour on the "pakka" label.
 //
-// Format: pakka [<level>] · ~$X.XX saved · N bugs caught
+// Format: pakka [<level>] · ~$X.XX saved (est) · N bugs caught
 //
 // Replaces the old ↑/↓ token-arrow format with a dollar-savings estimate.
 // Separator (· or |) follows UTF-8 locale detection. No token arrows emitted.
@@ -459,6 +505,13 @@ type meterEntry struct {
 // tokens_saved_est across entries whose `repo` field matches the supplied
 // repo. Legacy entries (no repo field) are skipped.
 //
+// Per-file sums are memoized in ~/.pakka/meter-cache.json keyed by mtime+size,
+// mirroring the transcript cache. Meter files accumulate one-per-session and
+// are never pruned (1000+ observed), so without the cache the status line —
+// rendered on every turn — re-scanned every file each render, an O(sessions)
+// cost that grows unbounded. With the cache only the current session's file
+// (whose size changes as entries append) is re-summed per render.
+//
 // Returns 0 when meterDir is missing or unreadable.
 func readAllMeter(meterDir, repo string) (savedTokens int64) {
 	if repo == "" {
@@ -468,15 +521,46 @@ func readAllMeter(meterDir, repo string) (savedTokens int64) {
 	if err != nil {
 		return 0
 	}
+
+	cachePath := filepath.Join(resolveHome(), ".pakka", "meter-cache.json")
+	cache := loadMeterCache(cachePath)
+	dirty := false
+
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(e.Name(), ".jsonl") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
 		path := filepath.Join(meterDir, e.Name())
-		savedTokens += sumMeterFile(path, repo)
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		mtime := info.ModTime().UnixNano()
+		size := info.Size()
+
+		ce, ok := cache.Entries[path]
+		fresh := ok && ce.Mtime == mtime && ce.Size == size
+		if !fresh {
+			// File new or changed — discard stale per-repo sums.
+			ce = meterCacheEntry{Mtime: mtime, Size: size, Sums: map[string]int64{}}
+		}
+		if sum, hit := ce.Sums[repo]; fresh && hit {
+			savedTokens += sum
+			continue
+		}
+
+		sum := sumMeterFile(path, repo)
+		if ce.Sums == nil {
+			ce.Sums = map[string]int64{}
+		}
+		ce.Sums[repo] = sum
+		cache.Entries[path] = ce
+		savedTokens += sum
+		dirty = true
+	}
+
+	if dirty {
+		saveMeterCache(cachePath, cache)
 	}
 	return savedTokens
 }

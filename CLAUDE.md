@@ -13,4 +13,5 @@ Ship Claude Code plugin: (a) fewer tokens, (b) catches bugs raw Claude Code miss
 - Deny-by-default stays. Expanding allow list requires threat note.
 
 ## Out of scope for v0
-Cross-session memory. Multi-harness sync. Dashboards. Anything pretty.
+Multi-harness sync. Dashboards. Anything pretty.
+(Cross-session memory shipped v0.3.0 as `recall` — no longer out of scope.)

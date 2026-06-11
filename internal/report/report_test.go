@@ -69,12 +69,14 @@ func TestGatherMeterOutputTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Two sessions, each with an output_tokens line.
-	// No transcripts dir set up — if the old transcript override path were
-	// still active and silently zeroing the value, we'd see 0 not 3000.
-	sessA := `{"ts":"2026-05-01T10:00:00Z","session_id":"sess-a","output_tokens":1000}
+	// Two session-end entries for the SAME repo. Each output_tokens value is a
+	// repo-wide CUMULATIVE snapshot (not a per-session delta), so the report
+	// must take the latest/MAX snapshot (2000), not the sum — summing
+	// snapshots triangular-overcounts. Both tagged with repo == tmp so they
+	// match the canonicalized repoRoot filter.
+	sessA := `{"ts":"2026-05-01T10:00:00Z","session_id":"sess-a","repo":"` + tmp + `","output_tokens":1000}
 `
-	sessB := `{"ts":"2026-05-02T10:00:00Z","session_id":"sess-b","output_tokens":2000}
+	sessB := `{"ts":"2026-05-02T10:00:00Z","session_id":"sess-b","repo":"` + tmp + `","output_tokens":2000}
 `
 	if err := os.WriteFile(filepath.Join(meterDir, "sess-a.jsonl"), []byte(sessA), 0644); err != nil {
 		t.Fatal(err)
@@ -91,8 +93,43 @@ func TestGatherMeterOutputTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if stats.OutputTokensTotal != 3000 {
-		t.Errorf("OutputTokensTotal = %d, want 3000 (sum from meter, not transcript override)", stats.OutputTokensTotal)
+	if stats.OutputTokensTotal != 2000 {
+		t.Errorf("OutputTokensTotal = %d, want 2000 (max repo-wide cumulative snapshot, not sum)", stats.OutputTokensTotal)
+	}
+}
+
+// TestGatherMeterOutputTokensRepoFiltered verifies the output-tokens figure is
+// scoped to the requested repo: a larger snapshot tagged to a DIFFERENT repo
+// must not leak into this repo's cumulative.
+func TestGatherMeterOutputTokensRepoFiltered(t *testing.T) {
+	tmp := t.TempDir()
+	meterDir := filepath.Join(tmp, "meter")
+	auditDir := filepath.Join(tmp, "audit")
+	if err := os.MkdirAll(meterDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(auditDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", tmp)
+
+	mine := `{"ts":"2026-05-01T10:00:00Z","session_id":"s1","repo":"` + tmp + `","output_tokens":500}
+`
+	other := `{"ts":"2026-05-02T10:00:00Z","session_id":"s2","repo":"/some/other/repo","output_tokens":9999}
+`
+	if err := os.WriteFile(filepath.Join(meterDir, "s1.jsonl"), []byte(mine), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meterDir, "s2.jsonl"), []byte(other), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Gather(meterDir, auditDir, tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.OutputTokensTotal != 500 {
+		t.Errorf("OutputTokensTotal = %d, want 500 (other repo's 9999 must not leak)", stats.OutputTokensTotal)
 	}
 }
 

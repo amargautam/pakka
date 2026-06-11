@@ -241,6 +241,29 @@ func parseAuditLine(sourceFile, line string) (sessionID, ts, kind, filePath, con
 	return sessionID, ts, kind, filePath, content
 }
 
+// sanitizeFTSQuery converts free-text user input into a safe FTS5 MATCH
+// expression. FTS5 parses the MATCH string as a query grammar — bare input
+// containing column-filter (`:`), boolean (`AND`/`OR`/`NOT`), grouping
+// (`(`/`)`), prefix (`*`), or phrase (`"`) syntax either errors out (surfacing
+// "fts5: syntax error" to the user) or executes operators the user never
+// intended. We split the input on whitespace and wrap each token as a quoted
+// FTS5 string literal (doubling embedded double-quotes per FTS5 escaping),
+// joined by spaces. FTS5 treats space-separated terms as an implicit AND, so
+// multi-word search is preserved while every operator character is neutralised
+// to a literal. Returns "" when the input has no searchable tokens, so callers
+// fall back to the recent-entries path.
+func sanitizeFTSQuery(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(fields))
+	for _, f := range fields {
+		quoted = append(quoted, `"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
+	}
+	return strings.Join(quoted, " ")
+}
+
 // Query searches the FTS5 index for text and returns up to limit results.
 //
 // Empty text returns the most recent limit entries ordered by ts desc.
@@ -257,9 +280,12 @@ func Query(dbPath, text string, limit int) ([]Entry, error) {
 		limit = 20
 	}
 
+	matchExpr := sanitizeFTSQuery(text)
+
 	var rows *sql.Rows
-	if strings.TrimSpace(text) == "" {
-		// No query: return most recent entries by ts.
+	if matchExpr == "" {
+		// No query (or query reduced to nothing after sanitization): return
+		// most recent entries by ts.
 		rows, err = db.Query(`
 			SELECT session_id, ts, kind, file_path, content
 			FROM audit_fts
@@ -274,7 +300,7 @@ func Query(dbPath, text string, limit int) ([]Entry, error) {
 			WHERE audit_fts MATCH ?
 			ORDER BY rank
 			LIMIT ?
-		`, text, limit)
+		`, matchExpr, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("recall: query: %w", err)
@@ -282,7 +308,7 @@ func Query(dbPath, text string, limit int) ([]Entry, error) {
 	defer rows.Close()
 
 	var results []Entry
-	isScored := strings.TrimSpace(text) != ""
+	isScored := matchExpr != ""
 
 	for rows.Next() {
 		var e Entry

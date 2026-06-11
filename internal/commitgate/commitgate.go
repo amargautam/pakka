@@ -73,6 +73,7 @@ type Decision struct {
 	Command   string // rewritten command; empty = no rewrite
 	Stderr    string // message for stderr on block
 	AuditNote string // note for audit log (review_skipped=reason)
+	IsCommit  bool   // command is a real git commit (any shape, fast-path or AST)
 }
 
 // BaselineTrailer returns the baseline trailer value (Trailer A).
@@ -754,9 +755,10 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 		return &Decision{Allow: true}
 	}
 
-	// Nothing to do: no trailers and no gate.
+	// Nothing to do: no trailers and no gate. (Still a commit — flag it so the
+	// caller writes a verdict / audit entry.)
 	if !cfg.Signature && !cfg.CoAuthor && !cfg.AutoGate {
-		return &Decision{Allow: true}
+		return &Decision{Allow: true, IsCommit: true}
 	}
 
 	// Per-commit skip → allow, no trailers, no gate.
@@ -765,6 +767,7 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	if HasSkipMarker(cmd) {
 		return &Decision{
 			Allow:     true,
+			IsCommit:  true,
 			AuditNote: "review_skipped=skip_marker",
 			Stderr:    "pakka: [skip pakka] detected — gate, trailers, and audit bypassed for this commit",
 		}
@@ -790,7 +793,7 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	// only if at least one trailer was injected.
 	maybeRewrite := func(trailerAValue string) *Decision {
 		rewritten := rewrite(trailerAValue)
-		d := &Decision{Allow: true}
+		d := &Decision{Allow: true, IsCommit: true}
 		if rewritten != cmd {
 			d.Command = rewritten
 		}
@@ -814,11 +817,12 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 
 		// No recent pass — block.
 		if len(state.ErrorFindings) > 0 {
-			return &Decision{Allow: false, Stderr: FormatFindings(state.ErrorFindings)}
+			return &Decision{Allow: false, IsCommit: true, Stderr: FormatFindings(state.ErrorFindings)}
 		}
 		return &Decision{
-			Allow:  false,
-			Stderr: "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass.",
+			Allow:    false,
+			IsCommit: true,
+			Stderr:   "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass.",
 		}
 	}
 

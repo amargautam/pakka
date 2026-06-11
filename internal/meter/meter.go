@@ -155,6 +155,13 @@ func estimateTokens(event *hookevent.Event) int64 {
 	return int64(math.Round(n / 3.5))
 }
 
+// shortSID sanitizes a session ID to [A-Za-z0-9_-] for use as a meter
+// filename. The full sanitized ID is kept (capped at 64 chars only as a
+// pathological-length guard): an 8-char prefix collided across sessions —
+// real Claude Code session IDs are UUIDs sharing common prefixes — so two
+// sessions would write to one file and mis-attribute totals. Reads glob all
+// *.jsonl and sum by the in-entry repo tag, so widening the name loses no
+// pre-existing data.
 func shortSID(sid string) string {
 	var b strings.Builder
 	for _, r := range sid {
@@ -164,8 +171,8 @@ func shortSID(sid string) string {
 		}
 	}
 	clean := b.String()
-	if len(clean) > 8 {
-		return clean[:8]
+	if len(clean) > 64 {
+		return clean[:64]
 	}
 	return clean
 }

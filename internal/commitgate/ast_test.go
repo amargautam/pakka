@@ -102,6 +102,24 @@ func TestEvaluate_AST(t *testing.T) {
 			wantAllow:       false,
 			wantCauseSubstr: "dynamic command name",
 		},
+		{
+			name:            "criterion 9: xargs git commit blocked (gate bypass)",
+			cmd:             `echo x | xargs git commit -m msg`,
+			wantAllow:       false,
+			wantCauseSubstr: "git commit via xargs",
+		},
+		{
+			name:            "criterion 10: env git commit blocked (gate bypass)",
+			cmd:             `env git commit -m msg`,
+			wantAllow:       false,
+			wantCauseSubstr: "git commit via env",
+		},
+		{
+			name:            "criterion 11: sudo git commit blocked (gate bypass)",
+			cmd:             `sudo git commit -m msg`,
+			wantAllow:       false,
+			wantCauseSubstr: "git commit via sudo",
+		},
 	}
 
 	for _, tt := range tests {
@@ -151,5 +169,50 @@ func TestEvaluate_AST(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestEvaluate_InertGitCommitMentionsAllowed guards against the wrapper-bypass
+// fix over-blocking: commands that merely MENTION "git commit" without
+// executing it — a quoted grep pattern, or a non-exec builtin like echo — must
+// pass through untouched (allowed, no rewrite, no block).
+func TestEvaluate_InertGitCommitMentionsAllowed(t *testing.T) {
+	cfg := DefaultConfig()
+	state := &State{HasRecentPass: true}
+
+	for _, cmd := range []string{
+		`grep "git commit" file.go`,
+		`echo git commit`,
+		`echo "run git commit later"`,
+	} {
+		d := Evaluate(cmd, cfg, state)
+		if !d.Allow {
+			t.Errorf("inert mention blocked: cmd=%q stderr=%q", cmd, d.Stderr)
+		}
+		if d.Command != "" {
+			t.Errorf("inert mention rewritten: cmd=%q out=%q", cmd, d.Command)
+		}
+		if d.IsCommit {
+			t.Errorf("inert mention flagged IsCommit: cmd=%q", cmd)
+		}
+	}
+}
+
+// TestEvaluate_ChainedCommitFlagsIsCommit proves chained/wrapped commits the
+// AST path recognises are tagged IsCommit, so the caller writes a verdict for
+// them (previously only IsGitCommit single-command shapes got verdicts).
+func TestEvaluate_ChainedCommitFlagsIsCommit(t *testing.T) {
+	cfg := DefaultConfig()
+	state := &State{HasRecentPass: true}
+
+	for _, cmd := range []string{
+		`git add -A && git commit -m "msg"`,
+		`make test && git commit -m "msg" && git push`,
+		`GIT_AUTHOR_DATE=2026-01-01 git commit -m "msg"`,
+	} {
+		d := Evaluate(cmd, cfg, state)
+		if !d.IsCommit {
+			t.Errorf("chained commit not flagged IsCommit: cmd=%q", cmd)
+		}
 	}
 }
