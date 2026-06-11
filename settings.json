@@ -61,7 +61,9 @@
     "guard": {
       "deny_paths": [],
       "allow_paths": [],
-      "audit_all_blocks": true
+      "audit_all_blocks": true,
+      "demoteThreshold": 5,
+      "decayWindowDays": 30
     },
     "audit": { "path": "~/.pakka/audit" },
     "meter": { "path": "~/.pakka/meter" }
