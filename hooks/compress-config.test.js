@@ -47,6 +47,8 @@ const {
   readFlag,
   filterRuleset,
   getSemanticEnabled,
+  stripQuotedSegments,
+  isDirectiveUse,
 } = require('./compress-config');
 
 // ===========================================================================
@@ -437,4 +439,67 @@ test('filterRuleset — empty string input → returns empty string', () => {
     const out = filterRuleset('', 'ultra');
     assert.equal(out, '');
   });
+});
+
+// ===========================================================================
+// stripQuotedSegments (issue #11)
+// ===========================================================================
+
+test('stripQuotedSegments — removes fenced blocks, backticks, double quotes', () => {
+  assert.ok(!stripQuotedSegments('see ```fix the gate``` above').includes('fix'));
+  assert.ok(!stripQuotedSegments('the `fix` keyword').includes('fix'));
+  assert.ok(!stripQuotedSegments('docs say "fix the gate" here').includes('fix'));
+});
+
+test('stripQuotedSegments — keeps unquoted text intact', () => {
+  const out = stripQuotedSegments('fix the gate, see "the error" log');
+  assert.ok(out.includes('fix the gate'));
+  assert.ok(!out.includes('the error'));
+});
+
+// ===========================================================================
+// isDirectiveUse (issue #11) — table-driven: result varies with phrasing
+// ===========================================================================
+
+const DIRECTIVE_TABLE = [
+  // [text (lowercased, pre-stripped), keyword, expected]
+  ['fix the gate so the meter resets', 'fix', true],
+  ['the gate is broken when the flag is missing', 'broken', false],
+  ['debug why the hook exits early', 'debug', true],
+  ["there's an error message saying enoent", 'error', false],
+  ['error: enoent: no such file or directory', 'error', false],
+  ['the fix is coming in the next release', 'fix', false],
+  ['did you fix the parser yesterday', 'fix', false],
+  ['can you fix the status line', 'fix', true],
+  ['i want you to fix the meter', 'fix', true],
+  // strong lead-in with keyword as final token — no object word required
+  ['please fix', 'fix', true],
+  ["let's review", 'review', true],
+  // newline acts as clause boundary after pasted context
+  ['here is some pasted context\nfix the gate now', 'fix', true],
+  // bare keyword with no directive shape
+  ['coupling', 'coupling', false],
+];
+
+for (const [text, keyword, expected] of DIRECTIVE_TABLE) {
+  test('isDirectiveUse("' + text.replace(/\n/g, '\\n') + '", "' + keyword + '") → ' + expected, () => {
+    assert.equal(isDirectiveUse(text, keyword), expected);
+  });
+}
+
+test('isDirectiveUse — adversarial repeated-keyword input stays linear (no quadratic prefix re-scan)', () => {
+  // ~700KB of repeated non-directive keyword occurrences. Pre-fix this took
+  // tens of seconds (full prefix slice+match per occurrence); bounded windows
+  // must keep it well under a second.
+  const huge = 'the broken '.repeat(64000);
+  const start = Date.now();
+  const result = isDirectiveUse(huge, 'broken');
+  const elapsed = Date.now() - start;
+  assert.equal(result, false, 'repeated report-position keyword must not become a directive');
+  assert.ok(elapsed < 2000, 'scan must stay linear; took ' + elapsed + 'ms');
+});
+
+test('isDirectiveUse — directive found late in long text still triggers', () => {
+  const text = 'context line. '.repeat(2000) + 'fix the gate now';
+  assert.equal(isDirectiveUse(text, 'fix'), true);
 });
