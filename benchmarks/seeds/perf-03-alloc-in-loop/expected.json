@@ -1,0 +1,1 @@
+{"kind":"performance","severity":"error","file":"ingest/scan.go","line_approx":22,"bug_class":"alloc-in-loop","description":"regexp.MustCompile inside the per-line loop recompiles the pattern on every iteration — at 1M log lines this is 1M compiles and allocations instead of one hoisted package-level regex"}

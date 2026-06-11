@@ -1,0 +1,1 @@
+{"kind":"performance","severity":"error","file":"report/dedupe.go","line_approx":16,"bug_class":"quadratic-on-unbounded-input","description":"Nested linear scan over accumulator makes dedupe O(n^2) on unbounded audit trail — at 10K events this is ~50M comparisons instead of a map lookup per event"}

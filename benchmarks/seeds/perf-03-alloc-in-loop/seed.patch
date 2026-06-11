@@ -1,0 +1,31 @@
+--- /dev/null
++++ b/ingest/scan.go
+@@ -0,0 +1,28 @@
++package ingest
++
++import (
++	"bufio"
++	"os"
++	"regexp"
++)
++
++// ScanLines reads a log file and returns lines matching the secret pattern.
++// Log files are large — millions of lines in a day's audit trail.
++func ScanLines(path string) ([]string, error) {
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	defer f.Close()
++
++	var matches []string
++	sc := bufio.NewScanner(f)
++	for sc.Scan() {
++		// BUG: regex compiled fresh on every line of the file
++		re := regexp.MustCompile(`(?i)(api[_-]?key|token)\s*[:=]\s*\S+`)
++		if re.MatchString(sc.Text()) {
++			matches = append(matches, sc.Text())
++		}
++	}
++	return matches, sc.Err()
++}
