@@ -88,7 +88,7 @@ func run(t *testing.T, event *hookevent.Event, level string, stale ...int) strin
 		s = stale[0]
 	}
 	var buf bytes.Buffer
-	if err := Run(event, &buf, level, s); err != nil {
+	if err := Run(event, nil, &buf, level, s); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()
