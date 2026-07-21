@@ -5,7 +5,7 @@ GO     ?= go
 BIN    := bin/pakka-core
 PKG    := ./cmd/pakka-core
 
-.PHONY: help build cross test test-js bench self-report clean
+.PHONY: help build cross test test-js bench bench-latency self-report clean
 
 # Compression levels measured by `make bench`. Override: make bench BENCH_LEVELS=ultra
 BENCH_LEVELS ?= lite strict ultra super-ultra
@@ -19,6 +19,7 @@ help:
 	@echo "  test          Run Go unit tests.                          (Pass 1)"
 	@echo "  test-js       Run JS hook tests (node --test)."
 	@echo "  bench         Run A/B benchmark via claude -p OAuth.      (issue #13)"
+	@echo "  bench-latency Measure hook hot-path latency (p50/p95).    (v0.12.0)"
 	@echo "  self-report   Emit RECEIPTS.md from pakka's own audit.    (Pass 5)"
 	@echo "  clean         Remove built binaries."
 
@@ -61,6 +62,19 @@ bench: build
 			--level=$$lvl --verbose || exit 1; \
 	done; \
 	echo "Results: benchmarks/results/$$stamp-*.json — commit them and update claim numbers."
+
+# bench-latency — hook hot-path wall-clock latency (spec: v0.12.0 consolidation
+# acceptance 5+6). Builds a fresh binary, feeds each hook realistic event JSON
+# on stdin, reports p50/p95 vs budget. Writes benchmarks/latency-v0.12.0.md.
+# Script exit: 0 = all budgets pass, 1 = a budget is over (report still
+# written — commit-gate <5ms is a documented miss deferred to #17), 2 = broken
+# harness (numbers stopped varying with input). Only 2 fails the target.
+bench-latency:
+	@python3 benchmarks/latency_bench.py --runs 50 --out benchmarks/latency-v0.12.0.md; \
+	ec=$$?; \
+	if [ $$ec -eq 2 ]; then echo "bench-latency: harness broken — see above"; exit 1; fi; \
+	if [ $$ec -eq 1 ]; then echo "bench-latency: report written; a budget is over (documented in report)"; fi; \
+	exit 0
 
 self-report:
 	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') report \
