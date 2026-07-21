@@ -1,7 +1,7 @@
 {
   "name": "pakka",
   "displayName": "pakka",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Claude Code harness — fewer tokens, fewer bugs, audit-ready. Apache-2.0.",
   "author": { "name": "Amar Gautam", "email": "hello@amargautam.com" },
   "homepage": "https://pakka.dev",
