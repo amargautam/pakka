@@ -164,6 +164,14 @@ type metrics struct {
 	savedUSD      float64 // estimated USD saved (input + output sides, using pricing.Default)
 	bugsCaught    int
 	staleCompress int // orchestrator entries with validatorPasses=false
+
+	// Context-window usage, sourced from the CC 2.1 native statusLine payload
+	// (context_window.current_usage). hasCtx is false on pre-2.1 payloads and
+	// in the documented null states (before first API call, right after
+	// /compact) — the ctx segment is then omitted entirely, never blank.
+	hasCtx    bool
+	ctxTokens int64 // input + cache_creation + cache_read (docs' input-only formula)
+	ctxPct    int64
 }
 
 // pctRound returns round(num*100/denom) as int64. Returns 0 when denom <= 0.
@@ -201,7 +209,12 @@ func resolveRepoKey(cwd string) string {
 //
 // stale is the pre-computed orchestrator stale count, supplied by the caller
 // (main.go) to keep statusline free of compress/orchestrator coupling.
-func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
+//
+// native carries the CC 2.1 statusLine payload fields (nil on pre-2.1 hooks
+// and for Summary's commit-trailer path). When context_window.current_usage
+// is present it supplies the context-usage segment; the transcript scan stays
+// as the fallback for everything it cannot replace (see compute body).
+func compute(event *hookevent.Event, native *NativePayload, outputLevel string, stale int) metrics {
 	outputLevel = resolveLevel(outputLevel)
 
 	cwd := event.CWD
@@ -215,10 +228,32 @@ func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
 	projectsDir := filepath.Join(home, ".claude", "projects")
 
 	// Cumulative meter savings across all sessions for this repo.
+	// pakka-specific — no native statusLine field carries this; always read.
 	savedTokens := readAllMeter(meterDir, repo)
 
-	// Cumulative transcript input/output across all sessions for this repo.
-	inTokens, cacheCreation, cacheRead, outTokens := readAllTranscripts(projectsDir, repo)
+	// Token usage. CC 2.1 statusLine payloads carry the live context-window
+	// usage natively (context_window.current_usage) — when present, use it
+	// and skip the per-render transcript JSONL rescan entirely (the perf
+	// point of the migration; the status line renders on every turn).
+	//
+	// Semantics note: the native values are context-window-scoped, so on 2.1+
+	// the in/out figures (and the $ estimate's output side) describe the live
+	// session, not the cumulative repo history. Repo-cumulative reporting
+	// lives in internal/report (RECEIPTS), which is unchanged. The transcript
+	// scan below stays as the fallback for pre-2.1 payloads and for Summary
+	// (commit trailer), which never receives a native payload.
+	var inTokens, cacheCreation, cacheRead, outTokens int64
+	if hasNativeUsage(native) {
+		u := native.ContextWindow.CurrentUsage
+		inTokens = u.InputTokens
+		cacheCreation = u.CacheCreationInputTokens
+		cacheRead = u.CacheReadInputTokens
+		outTokens = u.OutputTokens
+	} else {
+		// Fallback: cumulative transcript input/output across all sessions
+		// for this repo, via the mtime+size-cached JSONL scan.
+		inTokens, cacheCreation, cacheRead, outTokens = readAllTranscripts(projectsDir, repo)
+	}
 
 	// Cost-weighted input denominator = actual spend only. savedTokens is the
 	// numerator (savings) and must not appear in the denominator, otherwise
@@ -257,7 +292,12 @@ func compute(event *hookevent.Event, outputLevel string, stale int) metrics {
 	outputSavedUSD := float64(outTokens) * calibratedRatio / 1_000_000 * prices.Output
 	totalSavedUSD := inputSavedUSD + outputSavedUSD
 
+	hasCtx, ctxTokens, ctxPct := nativeContextUsage(native)
+
 	return metrics{
+		hasCtx:    hasCtx,
+		ctxTokens: ctxTokens,
+		ctxPct:    ctxPct,
 		outputLevel:   outputLevel,
 		inSavedTokens: savedTokens,
 		inCostUnits:   costUnits,
@@ -353,16 +393,26 @@ func formatLine(m metrics, inArrow, outArrow, sep string) string {
 // Replace the "(est)" qualifier with a measured ratio when the baseline bench
 // lands (DECISIONS.md "Bench methodology").
 // Stale segment appended only when staleCompress > 0.
-// ANSI 24-bit color: savings in green (111,208,140), bugs in red (232,99,74).
+// ANSI 24-bit color: ctx in cyan (94,193,255), savings in green (111,208,140),
+// bugs in red (232,99,74).
+//
+// Ctx segment: "ctx <abs> (<pct>%)" — context-window usage from the CC 2.1
+// native payload, absolute tokens AND percent together (hard rule: never
+// percent alone). Omitted entirely — never blank — when the payload carries
+// no usable context_window data (pre-2.1 CC, pre-first-API-call, post-/compact).
 func formatRunLine(m metrics, sep string) string {
+	ctxSeg := ""
+	if m.hasCtx {
+		ctxSeg = fmt.Sprintf("\033[38;2;94;193;255mctx %s (%d%%)\033[0m %s ", humanize(m.ctxTokens), m.ctxPct, sep)
+	}
 	staleSeg := ""
 	if m.staleCompress > 0 {
 		staleSeg = fmt.Sprintf(" %s ! %d stale", sep, m.staleCompress)
 	}
 	savedStr := fmt.Sprintf("\033[38;2;111;208;140m~%s saved (est)\033[0m", pricing.FormatUSD(m.savedUSD))
 	bugsStr := fmt.Sprintf("\033[38;2;232;99;74m%d bugs caught\033[0m", m.bugsCaught)
-	return fmt.Sprintf("\033[38;2;245;158;11m[%s]\033[0m %s %s %s %s%s",
-		m.outputLevel, sep, savedStr, sep, bugsStr, staleSeg)
+	return fmt.Sprintf("\033[38;2;245;158;11m[%s]\033[0m %s %s%s %s %s%s",
+		m.outputLevel, sep, ctxSeg, savedStr, sep, bugsStr, staleSeg)
 }
 
 // resolveLevel returns a valid compression level from the supplied string.
@@ -380,7 +430,11 @@ func resolveLevel(outputLevel string) string {
 
 // Run prints the compact pakka status line to w, with ANSI colour on the "pakka" label.
 //
-// Format: pakka [<level>] · ~$X.XX saved (est) · N bugs caught
+// Format: pakka [<level>] · ctx <abs> (<pct>%) · ~$X.XX saved (est) · N bugs caught
+//
+// The ctx segment is sourced from the CC 2.1 native statusLine payload
+// (context_window.current_usage) — pass native=nil for pre-2.1 hooks; the
+// segment is then omitted and the line matches the pre-2.1 format.
 //
 // Replaces the old ↑/↓ token-arrow format with a dollar-savings estimate.
 // Separator (· or |) follows UTF-8 locale detection. No token arrows emitted.
@@ -393,8 +447,8 @@ func resolveLevel(outputLevel string) string {
 //
 // Purpose: Emit compact dollar-savings line for Claude Code's statusLine display.
 // Errors: Returns error only on write failure to w.
-func Run(event *hookevent.Event, w io.Writer, outputLevel string, stale int) error {
-	m := compute(event, outputLevel, stale)
+func Run(event *hookevent.Event, native *NativePayload, w io.Writer, outputLevel string, stale int) error {
+	m := compute(event, native, outputLevel, stale)
 	var sep string
 	if utf8Capable() {
 		sep = "·"
@@ -410,8 +464,13 @@ func Run(event *hookevent.Event, w io.Writer, outputLevel string, stale int) err
 //
 // stale is the pre-computed orchestrator stale count. Callers obtain it via
 // orchestrator.CountStaleFromDisk so statusline stays free of compress coupling.
+//
+// Summary always uses the transcript-scan path (native=nil): its callers are
+// hook events (commit trailer) that carry no CC 2.1 statusLine payload, and
+// its cumulative-per-repo semantics must not silently narrow to one context
+// window.
 func Summary(event *hookevent.Event, outputLevel string, stale int) string {
-	m := compute(event, outputLevel, stale)
+	m := compute(event, nil, outputLevel, stale)
 	utf8 := utf8Capable()
 
 	var inArrow, outArrow, sep string
