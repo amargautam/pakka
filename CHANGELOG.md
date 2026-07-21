@@ -2,6 +2,11 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.12.1] — 2026-07-21
+
+### Fixed
+- **statusline**: `$` saved figure is repo-cumulative again on CC 2.1 native payloads. #30 sourced the in/out token figures — and thus the `$`-saved output side and savings-% denominator — from the session-scoped `context_window.current_usage`, regressing the figure from cumulative-per-repo to live-session. The native payload now feeds only the ctx segment; all cumulative figures come from the cached transcript scan (#34)
+
 ## [v0.12.0] — 2026-07-21
 
 ### Added

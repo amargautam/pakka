@@ -211,9 +211,10 @@ func resolveRepoKey(cwd string) string {
 // (main.go) to keep statusline free of compress/orchestrator coupling.
 //
 // native carries the CC 2.1 statusLine payload fields (nil on pre-2.1 hooks
-// and for Summary's commit-trailer path). When context_window.current_usage
-// is present it supplies the context-usage segment; the transcript scan stays
-// as the fallback for everything it cannot replace (see compute body).
+// and for Summary's commit-trailer path). It supplies ONLY the context-usage
+// segment (context_window.current_usage); all cumulative figures — $ estimate,
+// savings %, in/out tokens — always come from the transcript scan, never the
+// session-scoped payload (see compute body; #34).
 func compute(event *hookevent.Event, native *NativePayload, outputLevel string, stale int) metrics {
 	outputLevel = resolveLevel(outputLevel)
 
@@ -231,29 +232,15 @@ func compute(event *hookevent.Event, native *NativePayload, outputLevel string, 
 	// pakka-specific — no native statusLine field carries this; always read.
 	savedTokens := readAllMeter(meterDir, repo)
 
-	// Token usage. CC 2.1 statusLine payloads carry the live context-window
-	// usage natively (context_window.current_usage) — when present, use it
-	// and skip the per-render transcript JSONL rescan entirely (the perf
-	// point of the migration; the status line renders on every turn).
-	//
-	// Semantics note: the native values are context-window-scoped, so on 2.1+
-	// the in/out figures (and the $ estimate's output side) describe the live
-	// session, not the cumulative repo history. Repo-cumulative reporting
-	// lives in internal/report (RECEIPTS), which is unchanged. The transcript
-	// scan below stays as the fallback for pre-2.1 payloads and for Summary
-	// (commit trailer), which never receives a native payload.
-	var inTokens, cacheCreation, cacheRead, outTokens int64
-	if hasNativeUsage(native) {
-		u := native.ContextWindow.CurrentUsage
-		inTokens = u.InputTokens
-		cacheCreation = u.CacheCreationInputTokens
-		cacheRead = u.CacheReadInputTokens
-		outTokens = u.OutputTokens
-	} else {
-		// Fallback: cumulative transcript input/output across all sessions
-		// for this repo, via the mtime+size-cached JSONL scan.
-		inTokens, cacheCreation, cacheRead, outTokens = readAllTranscripts(projectsDir, repo)
-	}
+	// Token usage feeding the $ estimate, savings-% denominator, and in/out
+	// figures is ALWAYS repo-cumulative: summed across every transcript for
+	// this repo via the mtime+size-cached JSONL scan (the cache bounds the
+	// per-render cost). The CC 2.1 native payload is context-window-scoped and
+	// therefore feeds ONLY the ctx segment (nativeContextUsage below) — never
+	// these cumulative figures. Repo-cumulative is the locked decision
+	// (DECISIONS.md #11, v0.10.0); #34 was a #30 regression that sourced these
+	// from the session-scoped native payload.
+	inTokens, cacheCreation, cacheRead, outTokens := readAllTranscripts(projectsDir, repo)
 
 	// Cost-weighted input denominator = actual spend only. savedTokens is the
 	// numerator (savings) and must not appear in the denominator, otherwise
