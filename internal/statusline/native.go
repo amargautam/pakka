@@ -43,12 +43,6 @@ type ContextUsage struct {
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
-// hasNativeUsage reports whether the payload carries usable
-// context_window.current_usage data (present and non-null).
-func hasNativeUsage(p *NativePayload) bool {
-	return p != nil && p.ContextWindow != nil && p.ContextWindow.CurrentUsage != nil
-}
-
 // nativeContextUsage extracts the context-usage segment values from a native
 // payload. Returns ok=false when the payload (or any required member) is
 // absent or null — the caller then omits the segment.

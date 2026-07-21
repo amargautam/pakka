@@ -112,66 +112,128 @@ func TestRunWithoutNative_NoContextSegment(t *testing.T) {
 	}
 }
 
+// extractDollar pulls the "~$X.XX" token out of a rendered run line, from the
+// "~$" marker up to (excluding) " saved". Returns "" when absent.
+func extractDollar(s string) string {
+	i := strings.Index(s, "~$")
+	if i < 0 {
+		return ""
+	}
+	rest := s[i:]
+	end := strings.Index(rest, " saved")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// TestRunNativeDollarRepoCumulative locks the #34 fix: the $ estimate is
+// repo-cumulative (from the cached transcript scan), NEVER session-scoped from
+// the native payload. The native payload feeds ONLY the ctx segment.
+//
+// Three behavioral assertions:
+//  1. $ VARIES with transcript history (repo-cumulative source).
+//  2. $ does NOT vary with the payload's session output tokens.
+//  3. the ctx segment DOES vary with the payload.
+func TestRunNativeDollarRepoCumulative(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	home := t.TempDir()
+	useFakeHome(t, home)
+	useFakeRepoKey(t, map[string]string{"/repo/A": "/repo/A", "/repo/B": "/repo/B"})
+
+	// Two repos with different cumulative output history.
+	writeTranscriptDir(t, home, "-repo-A", "a.jsonl", []map[string]int64{
+		{"input_tokens": 0, "output_tokens": 100_000},
+	})
+	writeTranscriptDir(t, home, "-repo-B", "b.jsonl", []map[string]int64{
+		{"input_tokens": 0, "output_tokens": 500_000},
+	})
+	eventA := &hookevent.Event{SessionID: "sessA", CWD: "/repo/A"}
+	eventB := &hookevent.Event{SessionID: "sessB", CWD: "/repo/B"}
+
+	// Two payloads with very different session output tokens and ctx usage.
+	payloadSmall := nativeCtx(1000, 2000, 0, 0, 200000, 1)
+	payloadLarge := nativeCtx(50000, 200_000, 0, 0, 200000, 25)
+
+	// (1) $ VARIES with transcript history — same payload, different repo history.
+	dA := extractDollar(runNative(t, eventA, payloadSmall, "super-ultra"))
+	dB := extractDollar(runNative(t, eventB, payloadSmall, "super-ultra"))
+	if dA == "" || dB == "" {
+		t.Fatalf("missing $ segment: A=%q B=%q", dA, dB)
+	}
+	if dA == dB {
+		t.Errorf("$ must vary with transcript history: A=%q B=%q", dA, dB)
+	}
+
+	// (2) $ does NOT vary with payload session usage — same repo, different payload.
+	dSmallPayload := extractDollar(runNative(t, eventA, payloadSmall, "super-ultra"))
+	dLargePayload := extractDollar(runNative(t, eventA, payloadLarge, "super-ultra"))
+	if dSmallPayload != dLargePayload {
+		t.Errorf("$ must NOT vary with payload session usage: small=%q large=%q", dSmallPayload, dLargePayload)
+	}
+
+	// (3) ctx segment DOES vary with payload — 1.0K vs 50.0K tokens.
+	renSmall := runNative(t, eventA, payloadSmall, "super-ultra")
+	renLarge := runNative(t, eventA, payloadLarge, "super-ultra")
+	if !strings.Contains(renSmall, "ctx 1.0K") {
+		t.Errorf("small payload ctx segment want ctx 1.0K, got %q", renSmall)
+	}
+	if !strings.Contains(renLarge, "ctx 50.0K") {
+		t.Errorf("large payload ctx segment want ctx 50.0K, got %q", renLarge)
+	}
+}
+
 // --- CC 2.1 native statusLine payload parsing ---
 
-// TestRunNativeSkipsTranscriptScan — the migration's point: with native
-// context data present, Run must not rescan transcript JSONL under
-// ~/.claude/projects. Behavioral probes:
-//  1. the transcript cache file is only written by the scan path — it must
-//     not appear after a native render, and must appear after a fallback one;
-//  2. the $ estimate's output side must track the NATIVE output tokens (vary
-//     across two native payloads) and must NOT reflect the huge token counts
-//     planted in the transcript fixture.
-func TestRunNativeSkipsTranscriptScan(t *testing.T) {
+// TestRunNativeUsesCumulativeScanForDollar — the #34 contract: even with a CC
+// 2.1 native payload present, the $ estimate derives from the repo-cumulative
+// transcript scan, never the session-scoped payload. Behavioral probes:
+//  1. the transcript cache IS written (the scan runs) on a native render;
+//  2. $ reflects the transcript fixture (~$4.9x) regardless of the payload's
+//     output tokens, and two different payloads yield the SAME $;
+//  3. a native render and a fallback (nil-native) render yield the same $.
+func TestRunNativeUsesCumulativeScanForDollar(t *testing.T) {
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
 	useFakeHome(t, home)
 	useFakeRepoKey(t, map[string]string{"/repo/A": "/repo/A"})
 	event := &hookevent.Event{SessionID: "abc12345", CWD: "/repo/A"}
 
-	// Transcript fixture with an enormous output-token count: scanned, it
-	// yields ~$4.94 saved on super-ultra; unscanned it contributes nothing.
+	// Transcript fixture: 500K cumulative output → ~$4.9x saved on super-ultra.
 	writeTranscriptDir(t, home, "-repo-A", "t.jsonl", []map[string]int64{
 		{"input_tokens": 0, "output_tokens": 500_000},
 	})
-	// Pre-create ~/.pakka: the scan's cache save is a silent no-op when the
-	// dir is missing, which would blind the cache-file probe below.
+	// Pre-create ~/.pakka so the scan's cache save is not a silent no-op.
 	if err := os.MkdirAll(filepath.Join(home, ".pakka"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	cachePath := filepath.Join(home, ".pakka", "transcript-cache.json")
 
+	// Two native payloads with very different session output tokens.
 	small := runNative(t, event, nativeCtx(1000, 2000, 0, 0, 200000, 1), "super-ultra")
 	large := runNative(t, event, nativeCtx(1000, 200_000, 0, 0, 200000, 1), "super-ultra")
 
-	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
-		t.Errorf("native render must not touch transcript scan (cache written at %s, stat err=%v)", cachePath, err)
-	}
-
-	// $ varies with native output tokens: 2000 vs 200000 output tokens at
-	// super-ultra (ratio 1.94/2.94 ≈ 0.66) × $15/M → ~$0.02 vs ~$1.98.
-	if small == large {
-		t.Errorf("$ estimate must vary with native output tokens:\nsmall=%q\nlarge=%q", small, large)
-	}
-	if !strings.Contains(small, "~$0.02 saved") {
-		t.Errorf("small native render want ~$0.02 saved, got %q", small)
-	}
-	if !strings.Contains(large, "~$1.98 saved") {
-		t.Errorf("large native render want ~$1.98 saved, got %q", large)
-	}
-	// Transcript fixture (500K out → ~$4.94) must NOT leak into native render.
-	if strings.Contains(small, "$4.9") || strings.Contains(large, "$4.9") {
-		t.Errorf("transcript-scan tokens leaked into native render: small=%q large=%q", small, large)
-	}
-
-	// Fallback render (no native): scan path runs — cache appears, $ reflects
-	// the transcript fixture.
-	fallback := runNative(t, event, nil, "super-ultra")
+	// (1) The scan runs → cache written even on a native render.
 	if _, err := os.Stat(cachePath); err != nil {
-		t.Errorf("fallback render must use transcript scan (no cache at %s: %v)", cachePath, err)
+		t.Errorf("native render must use transcript scan (no cache at %s: %v)", cachePath, err)
 	}
-	if !strings.Contains(fallback, "~$4.9") {
-		t.Errorf("fallback render must derive $ from transcripts (~$4.9x), got %q", fallback)
+	// (2) $ reflects the transcript fixture, NOT the native output tokens.
+	if !strings.Contains(small, "~$4.9") {
+		t.Errorf("native render $ must derive from transcripts (~$4.9x), got %q", small)
+	}
+	if extractDollar(small) != extractDollar(large) {
+		t.Errorf("$ must NOT vary with native payload output: small=%q large=%q", extractDollar(small), extractDollar(large))
+	}
+	// The session-scoped figure the old (buggy) path produced for 200K native
+	// output was ~$1.98 — it must not appear.
+	if strings.Contains(large, "~$1.98") {
+		t.Errorf("session-scoped native output leaked into $: %q", large)
+	}
+
+	// (3) Fallback render (nil native) uses the same scan → same $.
+	fallback := runNative(t, event, nil, "super-ultra")
+	if extractDollar(fallback) != extractDollar(small) {
+		t.Errorf("fallback and native $ must match (both cumulative): fallback=%q native=%q", extractDollar(fallback), extractDollar(small))
 	}
 }
 
