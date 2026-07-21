@@ -2,6 +2,20 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.12.0] — 2026-07-21
+
+### Added
+- **statusline**: Claude Code 2.1 native `statusLine` payload support — context-window usage read from hook stdin (cost parsed for future use), zero transcript IO on the render hot path; transcript-scan fallback retained for older Claude Code (#30)
+- **plugin**: `displayName` field in `plugin.json` (#30)
+- **bench**: hook hot-path latency benchmark harness (`make bench-latency`) + `benchmarks/latency-v0.12.0.md` (#31)
+
+### Fixed
+- **compress**: compression level fallbacks converged on a single source (`semantic.ParseLevel` via `resolveOutputLevel`) — the configured level now applies uniformly across the pipeline (#28, #29)
+- **output-rules**: runtime ruleset + command docs corrected to the `super-ultra` default (first release carrying the fix) (#26, #27)
+
+### Known
+- **commitgate**: non-commit passthrough p95 9.2ms vs 5ms budget — shared binary startup floor (SQLite via recall); documented, fix tracked in #17
+
 ## [v0.11.0] — 2026-06-11
 
 ### Added
