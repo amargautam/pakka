@@ -317,12 +317,13 @@ func TestValidator_EmptyOriginal(t *testing.T) {
 	}
 }
 
-// ParseLevel maps known strings unchanged; defaults unknown to LevelUltra.
+// ParseLevel maps known strings unchanged; defaults unknown to LevelSuperUltra.
 //
-// Pass 4.4 flipped the default from strict to ultra (see DECISIONS.md
-// "Default output level: ultra"). The legal-values rows below confirm that
-// every known level — lite, strict, ultra, super-ultra — round-trips
-// unchanged. Only empty/garbage input picks up the new ultra default.
+// super-ultra is the brand default (decided v0.2.0, 2026-05-02; the older
+// "ultra 2026-04-29" default is SUPERSEDED). The legal-values rows below
+// confirm every known level — lite, strict, ultra, super-ultra — round-trips
+// unchanged. Empty/garbage/legacy ("audit") input picks up super-ultra. This is
+// the convergence target every other fallback must match (issue #28).
 func TestParseLevel(t *testing.T) {
 	cases := map[string]Level{
 		// Legal values pass through unchanged. strict is still legal — only
@@ -331,9 +332,11 @@ func TestParseLevel(t *testing.T) {
 		"strict":      LevelStrict,
 		"ultra":       LevelUltra,
 		"super-ultra": LevelSuperUltra,
-		// Empty + unknown fall back to the brand default (super-ultra).
-		"":      LevelSuperUltra,
-		"weird": LevelSuperUltra,
+		// Empty + unknown + legacy values fall back to the brand default.
+		"":        LevelSuperUltra,
+		"weird":   LevelSuperUltra,
+		"garbage": LevelSuperUltra,
+		"audit":   LevelSuperUltra,
 	}
 	for in, want := range cases {
 		if got := ParseLevel(in); got != want {

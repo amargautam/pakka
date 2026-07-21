@@ -116,9 +116,12 @@ func RunSemantic(input string, opts SemanticOptions) (*Result, error) {
 	}
 	level := opts.Level
 	if level == "" {
-		// LevelUltra is the brand default — see memory/DECISIONS.md.
-		// Callers that want a softer tier must pass Level explicitly.
-		level = semantic.LevelUltra
+		// super-ultra is the brand default (decided v0.2.0, 2026-05-02; the
+		// older "ultra 2026-04-29" decision is SUPERSEDED). Route the empty
+		// string through semantic.ParseLevel — the single source of truth — so
+		// this fallback can never diverge from output rules / orchestration.
+		// See issue #28. Callers that want a softer tier must pass Level.
+		level = semantic.ParseLevel("")
 	}
 	ctx := opts.Context
 	if ctx == nil {

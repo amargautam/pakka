@@ -64,6 +64,57 @@ func TestRunSemantic_NilRewriterFallsBackToStrict(t *testing.T) {
 	}
 }
 
+// levelEchoRewriter records the Level it was invoked with and bakes it into
+// the output so the resolved tier is observable through RunSemantic's Result.
+type levelEchoRewriter struct{ seen semantic.Level }
+
+func (r *levelEchoRewriter) Rewrite(_ context.Context, _ string, level semantic.Level) (string, error) {
+	r.seen = level
+	return "out-" + string(level), nil
+}
+
+// TestRunSemantic_EmptyLevelResolvesSuperUltra is the issue #28 regression
+// guard for the RunSemantic fallback. With opts.Level=="" the runner must
+// resolve to the brand default super-ultra — NOT legacy ultra.
+//
+// Behavioral, not constant: the rewriter echoes the level it actually saw into
+// its output, so the assertion measures the level that flowed through, and the
+// empty-level Output must MATCH the explicit-super-ultra Output and DIFFER from
+// the explicit-ultra Output. This would fail if the fallback were still ultra.
+func TestRunSemantic_EmptyLevelResolvesSuperUltra(t *testing.T) {
+	in := "Some prose long enough that the rewriter output is strictly shorter than this."
+
+	empty := &levelEchoRewriter{}
+	resEmpty, err := RunSemantic(in, SemanticOptions{Rewriter: empty}) // no Level
+	if err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+
+	su := &levelEchoRewriter{}
+	resSU, err := RunSemantic(in, SemanticOptions{Rewriter: su, Level: semantic.LevelSuperUltra})
+	if err != nil {
+		t.Fatalf("super-ultra: %v", err)
+	}
+
+	ultra := &levelEchoRewriter{}
+	resUltra, err := RunSemantic(in, SemanticOptions{Rewriter: ultra, Level: semantic.LevelUltra})
+	if err != nil {
+		t.Fatalf("ultra: %v", err)
+	}
+
+	if empty.seen != semantic.LevelSuperUltra {
+		t.Errorf("empty Level must resolve to super-ultra, rewriter saw %q", empty.seen)
+	}
+	if resEmpty.Output != resSU.Output {
+		t.Errorf("empty-level output %q must match explicit super-ultra output %q",
+			resEmpty.Output, resSU.Output)
+	}
+	if resEmpty.Output == resUltra.Output {
+		t.Errorf("empty-level output must DIFFER from ultra output (proves not silently ultra); both=%q",
+			resEmpty.Output)
+	}
+}
+
 // TestParseMode_Semantic — semantic must round-trip through ParseMode.
 func TestParseMode_Semantic(t *testing.T) {
 	if got := ParseMode("semantic"); got != ModeSemantic {

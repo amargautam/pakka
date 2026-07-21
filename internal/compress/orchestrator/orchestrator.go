@@ -71,11 +71,13 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 	level := o.Level
 	if level == "" {
-		// "ultra" is pakka's brand default — see memory/DECISIONS.md
-		// "Default output level: ultra (decided 2026-04-29)". An Orchestrator
-		// constructed without an explicit Level falls back to ultra so the
-		// auto-orchestrator stays consistent with loadOutputLevel().
-		level = "ultra"
+		// super-ultra is pakka's brand default (decided v0.2.0, 2026-05-02;
+		// the older "ultra 2026-04-29" decision is SUPERSEDED). An Orchestrator
+		// constructed without an explicit Level routes the empty string through
+		// semantic.ParseLevel — the single source of truth — so every vector
+		// (output rules, file compression, orchestration) collapses to the
+		// SAME tier. See issue #28.
+		level = string(semantic.ParseLevel(""))
 	}
 	targets := o.Targets
 	if len(targets) == 0 {

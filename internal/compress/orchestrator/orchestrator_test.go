@@ -789,6 +789,47 @@ func TestOrchestratorCleanRewriteWithToolMentionsStillCompresses(t *testing.T) {
 	}
 }
 
+// TestOrchestratorEmptyLevelResolvesSuperUltra is the issue #28 regression
+// guard: an Orchestrator constructed without an explicit Level must fall back
+// to the brand default super-ultra — NOT the legacy "ultra". The resolved level
+// is observed via the level recorded in state (state.Get(abs).Level), which
+// processOne writes verbatim. The test would PASS with the old "ultra" fallback
+// only if super-ultra==ultra, which it never is — so it is a true behavioral
+// guard, not a constant assertion.
+func TestOrchestratorEmptyLevelResolvesSuperUltra(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, "CLAUDE.md")
+	body := "# Title\n\nSome filler text that is definitely longer than the rewrite output."
+	writeFile(t, src, body)
+
+	rew := &stubRewriter{out: "# Title\nshort"}
+	o := &Orchestrator{
+		Repo:      repo,
+		Targets:   []string{"CLAUDE.md"},
+		Level:     "", // no explicit level — must resolve to the brand default
+		SessionID: "emptyLvl1",
+		Rewriter:  rew,
+		LogWriter: &bytes.Buffer{},
+	}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	st, _ := LoadState(repo)
+	abs, _ := filepath.Abs(src)
+	e, ok := st.Get(abs)
+	if !ok {
+		t.Fatalf("state must record an entry for %s", abs)
+	}
+	want := string(semantic.ParseLevel("")) // single source of truth → super-ultra
+	if e.Level != want {
+		t.Errorf("empty Level must resolve to %q (brand default), got %q", want, e.Level)
+	}
+	if e.Level == string(semantic.LevelUltra) {
+		t.Errorf("empty Level wrongly resolved to legacy ultra; want %q", want)
+	}
+}
+
 // TestSavedStateJSON ensures the on-disk format matches the documented spec.
 func TestSavedStateJSON(t *testing.T) {
 	repo := t.TempDir()

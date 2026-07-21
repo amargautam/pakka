@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/hookevent"
 )
 
@@ -103,16 +104,15 @@ func loadOutputLevel() string {
 // unchanged; everything else — empty, garbage, legacy values like "audit" or
 // "fast" — collapses to the brand default `super-ultra`.
 //
-// Purpose: Single source of truth for the "what's the active level" question.
+// It delegates to semantic.ParseLevel — the single source of truth for level
+// defaulting — rather than duplicating the switch, so this string-typed
+// resolver and every other fallback (compress.go, orchestrator.go,
+// compress_cmd.go) can never diverge. See issue #28.
+//
+// Purpose: String-typed adapter over the single-source level resolver.
 // Errors: Never errors; invalid values map to "super-ultra".
 func resolveOutputLevel(raw string) string {
-	switch raw {
-	case "lite", "strict", "ultra", "super-ultra":
-		return raw
-	default:
-		// super-ultra is the intentional default — see DECISIONS.md.
-		return "super-ultra"
-	}
+	return string(semantic.ParseLevel(raw))
 }
 
 // isOutputEnabled returns whether output compression is enabled.

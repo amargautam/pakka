@@ -25,6 +25,19 @@ func (c *CompressCmd) Run(args []string) error {
 	return nil
 }
 
+// semanticDefaultLevel resolves the --level value for a --semantic invocation.
+// It delegates to semantic.ParseLevel — the single source of truth — so the
+// compress entry point applies the brand default (super-ultra) for empty/invalid
+// input exactly as resolveOutputLevel and the orchestrator do. No entry point
+// may hard-code its own fallback (issue #28). Explicit legal levels pass through
+// unchanged; the result is idempotent under a second ParseLevel downstream.
+//
+// Purpose: Single defaulting seam for the semantic CLI level flag.
+// Errors: Never errors.
+func semanticDefaultLevel(levelStr string) string {
+	return string(semantic.ParseLevel(levelStr))
+}
+
 func runCompress() {
 	mode := "strict"
 	phase := ""
@@ -60,12 +73,13 @@ func runCompress() {
 		return
 	}
 
-	// Default level when --semantic is set without --level.
-	// "ultra" is pakka's brand default — fewer tokens by default.
-	if semanticFlag && levelStr == "" {
-		levelStr = "ultra"
-	}
+	// Default level when --semantic is set without --level. semanticDefaultLevel
+	// resolves it through semantic.ParseLevel — the single source of truth —
+	// which yields the brand default super-ultra. Do NOT hard-code a level here:
+	// doing so (it was "ultra" pre-#28) diverges the output vector from
+	// file-compression/orchestration intensity. See issue #28.
 	if semanticFlag {
+		levelStr = semanticDefaultLevel(levelStr)
 		mode = "semantic"
 	}
 
