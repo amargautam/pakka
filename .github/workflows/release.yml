@@ -48,8 +48,8 @@ jobs:
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/pakka-core -output dist/sbom.cdx.json .
-          # Cover the SBOM with SHA256SUMS too, so `shasum -c` verifies it.
-          ( cd dist && shasum -a 256 sbom.cdx.json >> SHA256SUMS )
+          # Cover the SBOM with SHA256SUMS too, so the checksum check verifies it.
+          ( cd dist && sha256sum sbom.cdx.json >> SHA256SUMS )
 
       - name: Verify release artifacts
         run: |
@@ -67,7 +67,7 @@ jobs:
               exit 1
             fi
           done
-          ( cd dist && shasum -a 256 -c SHA256SUMS )
+          ( cd dist && sha256sum -c SHA256SUMS )
           echo "All release artifacts present; SHA256SUMS valid."
 
       - name: Verify tree still clean
@@ -83,14 +83,8 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: |
-            dist/pakka-core-darwin-arm64
-            dist/pakka-core-darwin-amd64
-            dist/pakka-core-linux-arm64
-            dist/pakka-core-linux-amd64
-            dist/pakka-core-windows-amd64.exe
-            dist/SHA256SUMS
-            dist/sbom.cdx.json
+          # dist/ holds exactly the five binaries + SHA256SUMS + sbom.cdx.json.
+          subject-path: 'dist/*'
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
