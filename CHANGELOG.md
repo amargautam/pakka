@@ -2,6 +2,19 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.14.0] — 2026-07-22
+
+Closes the remaining enterprise-feedback promise (measured output reduction) and fixes a data-loss bug the release-drift audit surfaced live.
+
+### Added
+- **meter**: measured output-reduction ratios — `make bench` A/B runs persist per-repo+model+level reduction ratios (`~/.pakka/bench-ratios.json`, lock-guarded running-mean merge); statusline and RECEIPTS resolve measured ratios first (mtime+size-cached off the render hot path), calibrated constant as fallback, provenance disclosed as "measured, n=K" or "default calibration" (42dfb29)
+
+### Fixed
+- **compress**: state entries with empty `outputSHA` (prior validator failure) no longer clobber user edits — the live file is adopted as source of truth and the `.original.md` snapshot refreshed before any rewrite. Previously the first successful rewrite after a failure streak replaced the live file with content compressed from a months-old snapshot; this destroyed six weeks of edits to the monorepo root CLAUDE.md before being caught in the v0.13.0 release drift audit (9feeb20)
+
+### Changed
+- **docs**: README leads with gates/audit; compression positioned as cost bonus, with explicit cached-environment guidance (bec6bc4)
+
 ## [v0.13.0] — 2026-07-22
 
 Enterprise-feedback release: honest savings accounting, input compression made opt-in, verifiable supply chain. Driver: external audit of pakka in a heavily cached (Bedrock) environment.
