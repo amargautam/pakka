@@ -33,9 +33,10 @@ function makeTmpDir() {
 // file resolves correctly (compress-start.js uses __dirname/../rules, so the
 // real project rules file is loaded). Any additional env overrides go in env.
 // ---------------------------------------------------------------------------
-function spawnStart(pluginRoot, env = {}) {
+function spawnStart(pluginRoot, env = {}, stdin = '') {
   const result = spawnSync(process.execPath, [SCRIPT], {
     encoding: 'utf8',
+    input: stdin,
     env: {
       ...process.env,
       CLAUDE_PLUGIN_ROOT: pluginRoot,
@@ -46,7 +47,12 @@ function spawnStart(pluginRoot, env = {}) {
     timeout: 5000,
   });
   if (result.error) throw result.error;
-  return result.stdout || '';
+  return result;
+}
+
+// stdoutOf — convenience wrapper returning just stdout (most tests only need it).
+function stdoutOf(pluginRoot, env = {}, stdin = '') {
+  return spawnStart(pluginRoot, env, stdin).stdout || '';
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +70,7 @@ test('Cycle1: stdout contains "Verification discipline" when level is active', (
       'PAKKA COMPRESSION ACTIVE — level: ultra\n\n## Rules\nDrop filler.\n',
     );
 
-    const stdout = spawnStart(tmp.dir);
+    const stdout = stdoutOf(tmp.dir);
     assert.ok(
       stdout.includes('Verification discipline'),
       'stdout should contain "Verification discipline"',
@@ -84,7 +90,7 @@ test('Cycle1: stdout contains the full verification rule text', () => {
       'PAKKA COMPRESSION ACTIVE — level: ultra\n\n## Rules\nDrop filler.\n',
     );
 
-    const stdout = spawnStart(tmp.dir);
+    const stdout = stdoutOf(tmp.dir);
     assert.ok(
       stdout.includes('Exit 0 = evidence'),
       'stdout should contain "Exit 0 = evidence" from the verification rule',
@@ -111,7 +117,7 @@ test('Cycle2: compress-start does NOT inject skill-check (moved to skill-check-s
       'PAKKA COMPRESSION ACTIVE — level: ultra\n\n## Rules\nDrop filler.\n',
     );
 
-    const stdout = spawnStart(tmp.dir);
+    const stdout = stdoutOf(tmp.dir);
     assert.ok(
       !stdout.includes('Skill-check discipline'),
       'skill-check injection belongs to skill-check-start.js, not compress-start.js',
@@ -146,7 +152,7 @@ test('Cycle2: skill-check-start.js mentions /pakka:plan, /pakka:build, /pakka:re
 test('Cycle3: level=off — stdout is exactly "OK" (no behaviors injected)', () => {
   const tmp = makeTmpDir();
   try {
-    const stdout = spawnStart(tmp.dir, { PAKKA_DEFAULT_LEVEL: 'off' });
+    const stdout = stdoutOf(tmp.dir, { PAKKA_DEFAULT_LEVEL: 'off' });
     assert.equal(stdout, 'OK', 'level=off should output exactly "OK"');
   } finally {
     tmp.cleanup();
@@ -156,7 +162,7 @@ test('Cycle3: level=off — stdout is exactly "OK" (no behaviors injected)', () 
 test('Cycle3: level=off — stdout does NOT contain "Verification discipline"', () => {
   const tmp = makeTmpDir();
   try {
-    const stdout = spawnStart(tmp.dir, { PAKKA_DEFAULT_LEVEL: 'off' });
+    const stdout = stdoutOf(tmp.dir, { PAKKA_DEFAULT_LEVEL: 'off' });
     assert.ok(
       !stdout.includes('Verification discipline'),
       'level=off should not inject Verification discipline',
@@ -169,7 +175,7 @@ test('Cycle3: level=off — stdout does NOT contain "Verification discipline"', 
 test('Cycle3: level=off — stdout does NOT contain "Skill-check discipline"', () => {
   const tmp = makeTmpDir();
   try {
-    const stdout = spawnStart(tmp.dir, { PAKKA_DEFAULT_LEVEL: 'off' });
+    const stdout = stdoutOf(tmp.dir, { PAKKA_DEFAULT_LEVEL: 'off' });
     assert.ok(
       !stdout.includes('Skill-check discipline'),
       'level=off should not inject Skill-check discipline',
@@ -187,7 +193,7 @@ test('Fallback: when rules file absent, stdout still contains "Verification disc
   const tmp = makeTmpDir();
   try {
     // No rules file created — compress-start.js falls back to hardcoded minimal ruleset
-    const stdout = spawnStart(tmp.dir);
+    const stdout = stdoutOf(tmp.dir);
     assert.ok(
       stdout.includes('Verification discipline'),
       'fallback path should also inject Verification discipline',
@@ -200,7 +206,7 @@ test('Fallback: when rules file absent, stdout still contains "Verification disc
 test('Fallback: when rules file absent, skill-check is still NOT injected here', () => {
   const tmp = makeTmpDir();
   try {
-    const stdout = spawnStart(tmp.dir);
+    const stdout = stdoutOf(tmp.dir);
     assert.ok(
       !stdout.includes('Skill-check discipline'),
       'fallback path must not inject skill-check (moved to skill-check-start.js)',
@@ -208,4 +214,38 @@ test('Fallback: when rules file absent, skill-check is still NOT injected here',
   } finally {
     tmp.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Compaction re-injection guard (spec 2026-07-22-compaction-survival)
+//
+// After a compaction, Claude Code 2.1 fires SessionStart with source:"compact"
+// (PostCompact itself is side-effects only and CANNOT inject context — verified
+// against code.claude.com/docs/en/hooks.md). So the disciplines survive a
+// compaction ONLY because compress-start.js is a SessionStart hook whose matcher
+// also matches the "compact" source. This test pins that: narrowing the
+// SessionStart matcher (e.g. to "startup") — which would silently drop
+// re-injection after every compaction — turns this red.
+// ---------------------------------------------------------------------------
+
+test('SessionStart matcher covers compaction source — compaction re-injection depends on this', () => {
+  const hooks = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'hooks.json'), 'utf8'),
+  );
+  const entries = hooks.hooks && hooks.hooks.SessionStart;
+  assert.ok(Array.isArray(entries) && entries.length > 0, 'SessionStart must be registered');
+
+  // The entry that runs compress-start.js is the one that re-injects the ruleset.
+  const injector = entries.find(
+    (e) =>
+      Array.isArray(e.hooks) &&
+      e.hooks.some((h) => typeof h.command === 'string' && h.command.includes('compress-start.js')),
+  );
+  assert.ok(injector, 'a SessionStart entry must run compress-start.js');
+
+  // Its matcher regex must match both a normal startup and a post-compaction
+  // start, or compaction re-injection breaks.
+  const re = new RegExp(injector.matcher);
+  assert.ok(re.test('compact'), `SessionStart matcher ${injector.matcher} must match source "compact"`);
+  assert.ok(re.test('startup'), `SessionStart matcher ${injector.matcher} must match source "startup"`);
 });
