@@ -362,29 +362,28 @@ func gatherReviewState(cfg *commitgate.Config, cmd string) *commitgate.State {
 		root = repoRoot()
 	}
 
-	// Diff size via git
-	diffArgs := []string{}
-	if root != "" {
-		diffArgs = append(diffArgs, "-C", root)
-	}
-	diffArgs = append(diffArgs, "diff", "--cached")
-	out, err := exec.Command("git", diffArgs...).Output()
-	if err == nil {
-		state.DiffBytes = len(out)
+	// Diff size + hash via git. The hash binds a review pass to the exact
+	// staged diff: the gate authorizes only when the marker's diffSHA256 still
+	// matches. Writer (review-pass) and gate must invoke git identically.
+	diff, diffErr := stagedDiff(root)
+	diffHash := ""
+	if diffErr == nil {
+		state.DiffBytes = len(diff)
+		diffHash = sha256Hex(diff)
 	}
 
-	// Recent pass check — support both unix epoch (int64) and RFC3339 formats.
+	// Pass-marker check: fresh JSON marker whose diffSHA256 matches the current
+	// staged diff authorizes the commit. Stale/mismatched/legacy markers do not
+	// — the gate blocks and names the reason.
 	data, err := os.ReadFile(filepath.Join(reviewsDir, "last-pass-ts"))
 	if err == nil {
-		raw := strings.TrimSpace(string(data))
-		var passTime time.Time
-		if ts, err2 := strconv.ParseInt(raw, 10, 64); err2 == nil {
-			passTime = time.Unix(ts, 0)
-		} else if t, err2 := time.Parse(time.RFC3339, raw); err2 == nil {
-			passTime = t
-		}
-		if !passTime.IsZero() && time.Since(passTime) < 300*time.Second {
+		switch commitgate.ClassifyMarker(string(data), diffHash, time.Now().Unix(), 300) {
+		case commitgate.MarkerPass:
 			state.HasRecentPass = true
+		case commitgate.MarkerMismatch:
+			state.MarkerDiffMismatch = true
+		case commitgate.MarkerLegacy:
+			state.MarkerLegacy = true
 		}
 	}
 

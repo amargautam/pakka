@@ -26,13 +26,29 @@ PASS_FILE=".pakka/reviews/last-pass-ts"
 MAX_AGE=300
 
 if [ ! -f "$PASS_FILE" ]; then exit 0; fi
-PASS_TS=$(cat "$PASS_FILE" 2>/dev/null)
-case "$PASS_TS" in
-  ''|*[!0-9]*) exit 0 ;;
-esac
+PASS_RAW=$(cat "$PASS_FILE" 2>/dev/null)
+# Marker is JSON {"ts":N,"diffSHA256":"...","verdict":"passed"} since the
+# diff-bound pass release. Extract ts and diffSHA256.
+PASS_TS=$(printf '%s' "$PASS_RAW" | sed -n 's/.*"ts"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+PASS_SHA=$(printf '%s' "$PASS_RAW" | sed -n 's/.*"diffSHA256"[[:space:]]*:[[:space:]]*"\([0-9a-f][0-9a-f]*\)".*/\1/p')
+# Legacy bare-epoch markers carry no diffSHA256 — they cannot be verified
+# against the staged diff, so never stamp a trailer from one.
+if [ -z "$PASS_SHA" ]; then exit 0; fi
+if [ -z "$PASS_TS" ]; then exit 0; fi
 NOW=$(date +%s)
 AGE=$(( NOW - PASS_TS ))
 if [ "$AGE" -gt "$MAX_AGE" ]; then exit 0; fi
+# Bind the trailer to the exact reviewed diff: recompute the staged-diff hash
+# and stamp only on an exact match. Self-contained shell — prefer shasum,
+# fall back to sha256sum. Silent no-trailer if neither is available.
+if command -v shasum >/dev/null 2>&1; then
+  CUR_SHA=$(git diff --cached | shasum -a 256 | awk '{print $1}')
+elif command -v sha256sum >/dev/null 2>&1; then
+  CUR_SHA=$(git diff --cached | sha256sum | awk '{print $1}')
+else
+  exit 0
+fi
+if [ "$CUR_SHA" != "$PASS_SHA" ]; then exit 0; fi
 if grep -qF "$TRAILER" "$COMMIT_MSG_FILE" 2>/dev/null; then exit 0; fi
 printf '\n%s\n' "$TRAILER" >> "$COMMIT_MSG_FILE"
 `

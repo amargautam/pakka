@@ -46,9 +46,39 @@ func DefaultConfig() *Config {
 
 // State captures external state needed for gate decisions.
 type State struct {
-	HasRecentPass bool      // last-pass-ts within threshold (300s)
+	HasRecentPass bool      // fresh last-pass-ts whose diffSHA256 matches staged diff
 	DiffBytes     int       // byte size of git diff --cached
 	ErrorFindings []Finding // severity=error findings above confidence threshold
+
+	// MarkerLegacy: a last-pass-ts marker exists but is in the pre-JSON
+	// bare-epoch format, so it cannot be diff-bound. Gate blocks with an
+	// upgrade message.
+	MarkerLegacy bool
+	// MarkerDiffMismatch: a fresh JSON marker exists but its diffSHA256 does
+	// not match the current staged diff — the review covered other changes.
+	MarkerDiffMismatch bool
+}
+
+// Stderr messages for the no-pass gate branches. Shared by the fast-path
+// Evaluate and the AST path so a blocked commit reads identically regardless
+// of command shape.
+const (
+	stderrNoPass       = "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass."
+	stderrLegacyMarker = "pakka: review marker format outdated — re-run /pakka:review to bind the pass to the current staged diff."
+	stderrDiffMismatch = "pakka: staged diff changed since review (diff mismatch) — the pass marker covers a different diff. Re-run /pakka:review on the current staged changes."
+)
+
+// noPassStderr returns the stderr message for a blocked commit that has no
+// authorizing pass, selecting the most specific explanation available.
+func noPassStderr(state *State) string {
+	switch {
+	case state.MarkerDiffMismatch:
+		return stderrDiffMismatch
+	case state.MarkerLegacy:
+		return stderrLegacyMarker
+	default:
+		return stderrNoPass
+	}
 }
 
 // Finding represents a review finding above threshold.
@@ -710,10 +740,67 @@ func HasSkipMarker(cmd string) bool {
 // Errors: None.
 func InjectTrailer(cmd, trailer string) string {
 	// For all three recognized shapes, the segment runs to end-of-line
-	// (chains are rejected by extractCommitSegment), so a plain append works.
-	// We still call extractCommitSegment to validate, but the splice point
-	// for currently-supported shapes is always end-of-string.
-	return cmd + ` --trailer ` + shellQuote(trailer)
+	// (chains are rejected by extractCommitSegment). A plain append is correct
+	// UNLESS the command carries a `--` pathspec separator: `git commit -m x
+	// -- file`. Appending after `--` makes git parse `--trailer <value>` as
+	// pathspecs ("error: pathspec '--trailer' did not match"). Splice the
+	// trailer BEFORE the separator so it stays in the option section.
+	flag := ` --trailer ` + shellQuote(trailer)
+	if sep := pathspecSepIndex(cmd); sep >= 0 {
+		// cmd[:sep] ends just before the `--` token (its leading whitespace is
+		// included), so prefix + "--trailer '...' " + "-- file" is well formed.
+		return cmd[:sep] + strings.TrimLeft(flag, " ") + " " + cmd[sep:]
+	}
+	return cmd + flag
+}
+
+// pathspecSepIndex returns the byte offset of a standalone `--` pathspec
+// separator token in cmd (a token that is exactly "--", quote-aware), or -1 if
+// none is present. Used to splice trailers before the separator.
+func pathspecSepIndex(cmd string) int {
+	i := 0
+	n := len(cmd)
+	for i < n {
+		for i < n && isWS(cmd[i]) {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		start := i
+		// Read one whitespace-delimited token, honoring single/double quotes.
+		for i < n && !isWS(cmd[i]) {
+			switch cmd[i] {
+			case '\'':
+				i++
+				for i < n && cmd[i] != '\'' {
+					i++
+				}
+				if i < n {
+					i++
+				}
+			case '"':
+				i++
+				for i < n {
+					if cmd[i] == '\\' && i+1 < n {
+						i += 2
+						continue
+					}
+					if cmd[i] == '"' {
+						i++
+						break
+					}
+					i++
+				}
+			default:
+				i++
+			}
+		}
+		if cmd[start:i] == "--" {
+			return start
+		}
+	}
+	return -1
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quote
@@ -822,7 +909,7 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 		return &Decision{
 			Allow:    false,
 			IsCommit: true,
-			Stderr:   "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass.",
+			Stderr:   noPassStderr(state),
 		}
 	}
 

@@ -350,7 +350,21 @@ func appendTrailerToCall(call *syntax.CallExpr, value string) {
 	valueWord := &syntax.Word{Parts: []syntax.WordPart{
 		&syntax.SglQuoted{Value: value},
 	}}
-	call.Args = append(call.Args, flagWord, valueWord)
+	// Splice before a `--` pathspec separator if present, so the trailer stays
+	// in the option section and git does not parse it as a pathspec. Otherwise
+	// append at the end.
+	sep := len(call.Args)
+	for i, arg := range call.Args {
+		if lit, ok := wordToLiteral(arg); ok && lit == "--" {
+			sep = i
+			break
+		}
+	}
+	newArgs := make([]*syntax.Word, 0, len(call.Args)+2)
+	newArgs = append(newArgs, call.Args[:sep]...)
+	newArgs = append(newArgs, flagWord, valueWord)
+	newArgs = append(newArgs, call.Args[sep:]...)
+	call.Args = newArgs
 }
 
 // formatAstRejectStderr produces a stderr message naming the cause of an AST
@@ -475,7 +489,7 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 		return &Decision{
 			Allow:    false,
 			IsCommit: true,
-			Stderr:   "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass.",
+			Stderr:   noPassStderr(state),
 		}
 	}
 

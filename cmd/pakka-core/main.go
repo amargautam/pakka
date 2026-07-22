@@ -38,6 +38,8 @@ func main() {
 		_ = (&GuardCmd{}).Run(os.Args[2:])
 	case "commit-gate":
 		_ = (&CommitGateCmd{}).Run(os.Args[2:])
+	case "review-pass":
+		_ = (&ReviewPassCmd{}).Run(os.Args[2:])
 	case "help":
 		_ = (&HelpCmd{}).Run(os.Args[2:])
 	case "install-git-hook":
