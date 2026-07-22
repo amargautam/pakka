@@ -2,6 +2,17 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.15.0] — 2026-07-22
+
+Gate integrity release. One day of dogfooding v0.13.0/v0.14.0 showed the review gate's pass-marker was a bare timestamp any process could stamp — five deliberate stamps in a single day, none verifiable against what was reviewed. The gate now proves what it claims to prove.
+
+### Added
+- **gate**: diff-bound review pass markers — `pakka-core review-pass` (with `--repo-root`) writes JSON `{ts, diffSHA256, verdict}` hashing the exact staged diff; the commit gate recomputes and requires a fresh match, so a pass for one diff can never authorize another. Legacy bare-epoch markers are rejected with an upgrade message (8f8237a)
+
+### Fixed
+- **gate**: `Reviewed-by-pakka` attestation trailer (prepare-commit-msg hook) now verifies diffSHA256 before stamping — unreviewed commits inside a pass window no longer receive the reviewed trailer (8f8237a)
+- **gate**: injected `--trailer` flags splice before a user `--` pathspec separator instead of being parsed as pathspecs — `git commit -- <paths>` works under the gate (8f8237a)
+
 ## [v0.14.0] — 2026-07-22
 
 Closes the remaining enterprise-feedback promise (measured output reduction) and fixes a data-loss bug the release-drift audit surfaced live.
