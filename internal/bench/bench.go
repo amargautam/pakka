@@ -41,6 +41,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/amargautam/pakka/internal/benchratio"
+	"github.com/amargautam/pakka/internal/meter"
 )
 
 // ValidLevels are the output-compression levels accepted by --level.
@@ -98,11 +101,16 @@ type Finding struct {
 }
 
 // Usage is the token usage reported by one `claude -p` invocation.
+//
+// Model is not part of the usage JSON object; parseClaudeResult copies it here
+// from the result wrapper's top-level `model` field so the caller can key the
+// measured ratio by model without threading a separate return value.
 type Usage struct {
-	InputTokens              int `json:"input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
+	InputTokens              int    `json:"input_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	Model                    string `json:"-"`
 }
 
 // Total sums all usage components (input + cache creation + cache read +
@@ -119,6 +127,7 @@ type EntryResult struct {
 	Hit          bool   `json:"hit"`
 	FPCount      int    `json:"fp_count"`
 	Findings     int    `json:"findings"`
+	Model        string `json:"model,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -174,6 +183,12 @@ type Options struct {
 	Timeout    time.Duration
 	Verbose    bool
 	Stderr     io.Writer
+
+	// RecordRatios persists the measured output-reduction ratio to
+	// ~/.pakka/bench-ratios.json (keyed by repo+model+level) after a "both"-arm
+	// run. Off by default so unit tests that construct Options directly never
+	// touch the user's home; the CLI turns it on.
+	RecordRatios bool
 }
 
 // runner abstracts the `claude -p` invocation so tests can swap a fake
@@ -253,6 +268,7 @@ func run(opts Options, r runner) error {
 		out.Summary[m] = &ArmSummary{}
 	}
 
+	model := ""
 	for i, e := range entries {
 		if opts.Verbose {
 			fmt.Fprintf(opts.Stderr, "[%d/%d] %s (%s)\n", i+1, len(entries), e.ID, e.Kind)
@@ -264,6 +280,9 @@ func run(opts Options, r runner) error {
 		for _, m := range modes {
 			res, findings := runOneWithFindings(r, m, input, opts.Timeout)
 			classifyResult(res, findings, e, expected)
+			if model == "" && res.Model != "" {
+				model = res.Model
+			}
 			switch m {
 			case "raw":
 				pe.Raw = res
@@ -283,6 +302,10 @@ func run(opts Options, r runner) error {
 	}
 
 	setMeasuredRatio(out)
+
+	if opts.RecordRatios {
+		recordMeasuredRatio(out, corpusDir, model, opts.Level, opts.Stderr)
+	}
 
 	if err := writeOutput(opts.OutPath, out); err != nil {
 		return fmt.Errorf("write %s: %w", opts.OutPath, err)
@@ -311,6 +334,34 @@ func setMeasuredRatio(out *Output) {
 	savings := (1 - ratio) * 100
 	out.MeasuredOutputRatio = &ratio
 	out.OutputSavingsPct = &savings
+}
+
+// recordMeasuredRatio persists the run's measured output-reduction fraction to
+// ~/.pakka/bench-ratios.json, keyed by repo+model+level. It is a no-op unless
+// setMeasuredRatio produced a ratio (both arms ran, raw arm emitted output).
+//
+// The stored ratio is the reduction FRACTION 1 - pakka_out/raw_out, clamped to
+// [0,1). repo is the canonical key of the corpus's repo (matching the key the
+// status line resolves). level is the pinned pakka-arm level; empty pins fall
+// back to the brand-default super-ultra so the key matches the status line's
+// default resolution. Best-effort: load/save errors are logged, never fatal.
+func recordMeasuredRatio(out *Output, corpusDir, model, level string, stderr io.Writer) {
+	if out.MeasuredOutputRatio == nil {
+		return
+	}
+	reduction := benchratio.Clamp(1 - *out.MeasuredOutputRatio)
+	if level == "" {
+		level = "super-ultra"
+	}
+	repo := meter.RepoKey(corpusDir)
+
+	// Locked load-modify-save: concurrent bench runs serialize so neither drops
+	// the other's sample.
+	if err := benchratio.Update(func(s *benchratio.Store) {
+		s.Record(repo, model, level, reduction, out.TS)
+	}); err != nil && stderr != nil {
+		fmt.Fprintf(stderr, "bench: record bench-ratios: %v\n", err)
+	}
 }
 
 // validateLevel checks the --level value. Empty means "inherit the session
@@ -569,6 +620,7 @@ func runOneWithFindings(r runner, mode, input string, timeout time.Duration) (*E
 	res.LatencyMs = time.Since(start).Milliseconds()
 	res.Tokens = usage.Total()
 	res.OutputTokens = usage.OutputTokens
+	res.Model = usage.Model
 	if err != nil {
 		res.Error = err.Error()
 		return res, nil
@@ -676,16 +728,21 @@ func armEnv(mode, level string) []string {
 type claudeResult struct {
 	Result string `json:"result"`
 	Usage  Usage  `json:"usage"`
+	Model  string `json:"model"`
 }
 
 // parseClaudeResult parses the JSON wrapper emitted by
-// `claude -p --output-format json`, returning the result text and usage.
+// `claude -p --output-format json`, returning the result text and usage. The
+// wrapper's top-level `model` field (absent on older CLIs) is copied onto the
+// usage so the measured ratio can be keyed by model.
 func parseClaudeResult(out []byte) (string, Usage, error) {
 	var wrap claudeResult
 	if err := json.Unmarshal(out, &wrap); err != nil {
 		return string(out), Usage{}, fmt.Errorf("parse claude json: %w", err)
 	}
-	return wrap.Result, wrap.Usage, nil
+	usage := wrap.Usage
+	usage.Model = wrap.Model
+	return wrap.Result, usage, nil
 }
 
 // Run shells out to `claude -p --output-format json` with the inherited

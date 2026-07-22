@@ -44,12 +44,14 @@ func (c *BenchCmd) Run(args []string) error {
 //	--claude-bin=PATH   claude binary (default "claude")
 //	--claude-arg=ARG    extra argv appended to every claude call (repeatable)
 //	--timeout=SECONDS   per-call timeout (default 180)
+//	--no-record         do not persist the measured ratio to bench-ratios.json
 //	--verbose
 func parseBenchArgs(args []string) (bench.Options, error) {
 	opts := bench.Options{
-		Mode:      "both",
-		ClaudeBin: "claude",
-		Timeout:   180 * time.Second,
+		Mode:         "both",
+		ClaudeBin:    "claude",
+		Timeout:      180 * time.Second,
+		RecordRatios: true,
 	}
 	for _, a := range args {
 		switch {
@@ -77,6 +79,8 @@ func parseBenchArgs(args []string) (bench.Options, error) {
 			}
 		case a == "--verbose":
 			opts.Verbose = true
+		case a == "--no-record":
+			opts.RecordRatios = false
 		}
 	}
 

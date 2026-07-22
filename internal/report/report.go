@@ -12,11 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amargautam/pakka/internal/benchratio"
 	"github.com/amargautam/pakka/internal/data"
 	"github.com/amargautam/pakka/internal/meter"
 	"github.com/amargautam/pakka/internal/pricing"
 	"github.com/amargautam/pakka/internal/statusline"
 )
+
+// receiptsLevel is the compression level RECEIPTS reports against — pakka's
+// brand-default super-ultra. Used to resolve the measured output ratio.
+const receiptsLevel = "super-ultra"
 
 // Stats holds aggregated metrics from meter and audit data.
 type Stats struct {
@@ -40,6 +45,13 @@ type Stats struct {
 	BugsCaught          int // error findings above threshold
 	FirstSession        time.Time
 	LastSession         time.Time
+
+	// Output-reduction provenance, resolved from ~/.pakka/bench-ratios.json in
+	// Gather. When OutputRatioMeasured is false the report falls back to the
+	// per-level calibrated constant and discloses "default calibration".
+	OutputRatioMeasured bool
+	OutputReduction     float64 // measured reduction fraction, [0,1)
+	OutputRatioSamples  int
 }
 
 // meterEntry mirrors one line in a meter JSONL file.
@@ -103,6 +115,18 @@ func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 	if repoRoot != "" && repoRoot != "." {
 		if in, cc, cr, err := statusline.RepoCacheMix("", repoRoot); err == nil {
 			s.InputTokens, s.CacheCreationTokens, s.CacheReadTokens = in, cc, cr
+		}
+	}
+
+	// Resolve the output-reduction ratio from measured bench data. RECEIPTS
+	// reports the brand-default super-ultra level; the model is unknown here so
+	// it is a wildcard (repo+level, then level). Absence leaves the report on
+	// the calibrated constant. Best-effort: a load error is non-fatal.
+	if store, err := benchratio.Load(); err == nil {
+		if r, n, ok := store.Resolve(canonRepo, "", receiptsLevel); ok {
+			s.OutputRatioMeasured = true
+			s.OutputReduction = r
+			s.OutputRatioSamples = n
 		}
 	}
 
@@ -271,9 +295,17 @@ func FormatMarkdown(s *Stats, version string) string {
 
 	// Output compression savings section.
 	outputTokensEst := s.OutputTokensTotal
+	// Resolve the reduction fraction most-specific-first: a measured bench
+	// ratio (repo+level) when present, else the super-ultra calibrated constant
+	// mult/(1+mult). ratioSource discloses provenance per spec AC3.
 	mult := 1.94 // super-ultra calibrated multiplier (matches statusline.go)
-	calibratedRatio := mult / (1 + mult)
-	outputTokensAvoided := int64(float64(outputTokensEst) * calibratedRatio)
+	reduction := mult / (1 + mult)
+	ratioSource := "default calibration"
+	if s.OutputRatioMeasured {
+		reduction = s.OutputReduction
+		ratioSource = fmt.Sprintf("measured, n=%d", s.OutputRatioSamples)
+	}
+	outputTokensAvoided := int64(float64(outputTokensEst) * reduction)
 	// Output is never cached — price it at the flat output rate.
 	outputDollarSavings := float64(outputTokensAvoided) / 1_000_000 * pricing.Default.Output
 	// Input savings are priced at the base input rate scaled by the session's
@@ -296,7 +328,8 @@ func FormatMarkdown(s *Stats, version string) string {
 	b.WriteString("\nAt Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.\n\n")
 	b.WriteString("**Estimated total output savings across this build:**\n")
 	b.WriteString(fmt.Sprintf("- Output tokens measured across %d sessions: %s\n", s.SessionCount, fmtInt(outputTokensEst)))
-	b.WriteString(fmt.Sprintf("- At super-ultra 66%% reduction: ~%s tokens avoided\n", fmtInt(outputTokensAvoided)))
+	b.WriteString(fmt.Sprintf("- Output-ratio source: %s\n", ratioSource))
+	b.WriteString(fmt.Sprintf("- At %.0f%% output reduction (%s): ~%s tokens avoided\n", reduction*100, ratioSource, fmtInt(outputTokensAvoided)))
 	b.WriteString(fmt.Sprintf("- At $15/MTok: **~$%.2f saved on output tokens alone**\n", outputDollarSavings))
 	b.WriteString(fmt.Sprintf("- Input savings (V2+V3+V4, bytes_saved÷3.5 × $%.2f/MTok × %.2f blended cache rate): ~$%.2f\n", pricing.Default.Input, effInput, inputDollarSavings))
 	b.WriteString(fmt.Sprintf("- **Total estimated savings: ~$%.2f**\n", totalDollarSavings))

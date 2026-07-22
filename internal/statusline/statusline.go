@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/amargautam/pakka/internal/benchratio"
 	"github.com/amargautam/pakka/internal/hookevent"
 	"github.com/amargautam/pakka/internal/meter"
 	"github.com/amargautam/pakka/internal/pricing"
@@ -280,10 +281,13 @@ func compute(event *hookevent.Event, native *NativePayload, outputLevel string, 
 	))
 	inPct := pctRound(savedTokens, costUnits)
 
-	// outPct is a level-derived placeholder until v0.2.0 measurement lands.
-	// See package doc + outputMultiplier comment.
-	mult := outputMultiplier[outputLevel]
-	outPct := int64(math.Round(mult / (1 + mult) * 100))
+	// Output-reduction fraction. Resolved most-specific-first from measured
+	// bench data (~/.pakka/bench-ratios.json, repo+level; model wildcard since
+	// the status line does not know the session model), falling back to the
+	// per-level calibrated constant when no measurement exists. See
+	// resolveOutputReduction + benchratio.
+	outReduction := resolveOutputReduction(home, repo, outputLevel)
+	outPct := int64(math.Round(outReduction * 100))
 
 	// All-time bug count across the repo's review findings (root + sub-repos).
 	bugs := countAllBugsCaught(repo)
@@ -300,19 +304,18 @@ func compute(event *hookevent.Event, native *NativePayload, outputLevel string, 
 	// 1.0 and this reduces to the old flat-rate figure.
 	// inputSavedUSD = savedTokens / 1M * Input_price * effInput
 	//
-	// Output savings: calibrated reduction fraction applied to observed output
-	// volume. Output is never cached, so it stays priced at the flat output rate.
-	// calibratedRatio = mult / (1 + mult) — see outputMultiplier doc.
-	// outputSavedUSD = outTokens * calibratedRatio / 1M * Output_price
+	// Output savings: reduction fraction (measured or calibrated, see
+	// outReduction above) applied to observed output volume. Output is never
+	// cached, so it stays priced at the flat output rate.
+	// outputSavedUSD = outTokens * outReduction / 1M * Output_price
 	//
 	// Note: outTokens is the observed/compressed value; the formula treats it as
 	// baseline per the spec. This yields a conservative (under) estimate of savings
-	// by factor (1+mult) — see spec comment in task brief.
+	// by factor 1/(1-outReduction) — see spec comment in task brief.
 	prices := pricing.Default
 	effInput := BlendedInputMultiplier(inTokens, cacheCreation, cacheRead)
 	inputSavedUSD := float64(savedTokens) / 1_000_000 * prices.Input * effInput
-	calibratedRatio := mult / (1 + mult)
-	outputSavedUSD := float64(outTokens) * calibratedRatio / 1_000_000 * prices.Output
+	outputSavedUSD := float64(outTokens) * outReduction / 1_000_000 * prices.Output
 	totalSavedUSD := inputSavedUSD + outputSavedUSD
 
 	hasCtx, ctxTokens, ctxPct := nativeContextUsage(native)
@@ -436,6 +439,30 @@ func formatRunLine(m metrics, sep string) string {
 	bugsStr := fmt.Sprintf("\033[38;2;232;99;74m%d bugs caught\033[0m", m.bugsCaught)
 	return fmt.Sprintf("\033[38;2;245;158;11m[%s]\033[0m %s %s%s %s %s%s",
 		m.outputLevel, sep, ctxSeg, savedStr, sep, bugsStr, staleSeg)
+}
+
+// resolveOutputReduction returns the output-reduction fraction used for the
+// savings % and the output side of the $ estimate.
+//
+// Resolution order (spec "Measured output reduction"):
+//  1. measured bench ratio for repo+level (model wildcard — the status line
+//     does not know the session model),
+//  2. the per-level calibrated constant mult/(1+mult) (legacy behavior).
+//
+// A missing/corrupt bench-ratios.json degrades silently to the constant.
+func resolveOutputReduction(home, repo, level string) float64 {
+	mult := outputMultiplier[level]
+	constant := mult / (1 + mult)
+	// LoadCached memoizes the parse by mtime+size — resolveOutputReduction is on
+	// the status-line hot path.
+	store, err := benchratio.LoadCached(home)
+	if err != nil || store == nil {
+		return constant
+	}
+	if r, _, ok := store.Resolve(repo, "", level); ok {
+		return r
+	}
+	return constant
 }
 
 // resolveLevel returns a valid compression level from the supplied string.
