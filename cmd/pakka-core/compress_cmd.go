@@ -98,26 +98,24 @@ func runCompress() {
 			runCompressSubagentReturn(event)
 			return
 		case "session-start":
-			// Per-vector gate: skip entirely if input compression disabled.
-			if !isInputEnabled() {
-				return
-			}
-			// Auto-compress CLAUDE.md, DESIGN.md, BUILD.md in CWD + one level deep.
+			// Input-file compression is opt-in (default OFF). When the vector
+			// is disabled, SessionStart performs no automatic context-file
+			// rewriting at all -- neither the deterministic pass nor the
+			// semantic orchestrator fork. See isInputEnabled for rationale.
 			cwd := event.CWD
 			if cwd == "" {
 				cwd, _ = os.Getwd()
 			}
 			debugLogf("compress cwd=%s event.cwd=%s", cwd, event.CWD)
-			// session-start auto-compress always uses deterministic strict —
-			// LLM calls during SessionStart hooks would block the editor.
-			autoCompressContextFiles(cwd, "strict", sessionID)
-			// Pass 4.3: when semantic auto-orchestration is enabled, fork a
-			// detached child to walk the allowlist with the LLM rewriter.
-			// The fork is intentionally fire-and-forget — the SessionStart
-			// hook MUST return in <50ms.
+			if !maybeCompressInputFiles(cwd, sessionID) {
+				return
+			}
+			// Input compression opted in -- also fork the detached semantic
+			// orchestrator to walk the allowlist with the LLM rewriter, when
+			// semantic auto-orchestration is enabled. Fire-and-forget: the
+			// SessionStart hook MUST return in <50ms.
 			if orchestratorEnabled() {
-				repo := meter.RepoKey(cwd)
-				forkOrchestrator(repo, loadOutputLevel(), sessionID)
+				forkOrchestrator(meter.RepoKey(cwd), loadOutputLevel(), sessionID)
 			}
 			return
 		}
@@ -249,6 +247,28 @@ func trustedFallbackDir(dir string) bool {
 	return false
 }
 
+// maybeCompressInputFiles runs SessionStart deterministic context-file
+// compression only when input-file compression is opted in (isInputEnabled).
+// It reports whether compression ran. When the vector is off -- the default --
+// it no-ops: no context file is read, rewritten, or backed up, and the caller
+// (session-start) treats a false return as a full skip, suppressing the
+// semantic orchestrator fork too.
+//
+// Manual /pakka:compress invocation does not pass through here -- it runs the
+// --orchestrator-run path, which is unaffected by this gate.
+//
+// Purpose: Gate the SessionStart deterministic input-file rewrite behind opt-in.
+// Errors: Never errors.
+func maybeCompressInputFiles(cwd, sessionID string) bool {
+	if !isInputEnabled() {
+		return false
+	}
+	// session-start auto-compress always uses deterministic strict -- LLM calls
+	// during SessionStart hooks would block the editor.
+	autoCompressContextFiles(cwd, "strict", sessionID)
+	return true
+}
+
 // autoCompressContextFiles finds CLAUDE.md, DESIGN.md, BUILD.md in dir and
 // one level of subdirectories. For each file without an existing .original.md
 // backup, it compresses in place, writes the backup, and records savings.
@@ -362,17 +382,43 @@ func isToolResultEnabled() bool {
 	return *s.Pakka.Compress.ToolResult
 }
 
-// isInputEnabled returns whether input-file compression is enabled.
-// Defaults to true if not explicitly set.
+// isInputEnabled reports whether automatic SessionStart compression of input /
+// context files (CLAUDE.md, DESIGN.md, BUILD.md, and the semantic orchestrator
+// allowlist) is enabled. It defaults to OFF.
 //
-// Purpose: Per-vector gate for SessionStart auto-compression of context files.
+// Rationale: input-file compression saves near-zero tokens on already-terse
+// files, rewrites version-controlled files in place, and -- on the semantic
+// path -- sends their contents to the model provider. Those costs outweigh the
+// benefit as a default, so automatic rewriting is opt-in. Explicit
+// /pakka:compress invocation is unaffected; it runs the --orchestrator-run
+// path, which never consults this gate.
+//
+// Opt-in -- either source enables it:
+//   - env PAKKA_INPUT_COMPRESS set to 1/true/yes/on
+//   - settings.json pakka.compress.input = true
+//
+// Purpose: Per-vector opt-in gate for SessionStart input-file compression.
 // Errors: Never errors.
 func isInputEnabled() bool {
-	s := loadSettings()
-	if s.Pakka.Compress.Input == nil {
+	if envEnabled(os.Getenv("PAKKA_INPUT_COMPRESS")) {
 		return true
 	}
-	return *s.Pakka.Compress.Input
+	s := loadSettings()
+	return s.Pakka.Compress.Input != nil && *s.Pakka.Compress.Input
+}
+
+// envEnabled reports whether an environment-variable value is a truthy opt-in
+// flag (1/true/yes/on, case-insensitive). Empty, unset, or anything else is
+// false.
+//
+// Purpose: Shared truthiness check for env-var opt-in flags.
+// Errors: Never errors.
+func envEnabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // runCompressToolResult truncates large tool results from PostToolUse events.

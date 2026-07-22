@@ -24,6 +24,18 @@ Check `additionalContext` for a line starting with `PAKKA HOOK HANDLED:`.
 - `status` → show current compression stats.
 - No argument → same as `status`.
 
+### Input-file compression (context files) — opt-in, default OFF
+
+Automatic SessionStart rewriting of context files (`CLAUDE.md`, `DESIGN.md`, `BUILD.md`, and the semantic-orchestrator allowlist) is **off by default**. It saves near-zero tokens on already-terse files, rewrites version-controlled files in place, and on the semantic path sends their contents to the model provider — so it must be turned on deliberately.
+
+Enable it (either source):
+- env `PAKKA_INPUT_COMPRESS=1` (also accepts `true`/`yes`/`on`), or
+- `pakka.compress.input: true` in `${CLAUDE_PLUGIN_ROOT}/settings.json`.
+
+When off, SessionStart does no context-file rewriting at all — neither the deterministic pass nor the semantic orchestrator fork.
+
+Running this command explicitly to re-compress input files (`lite|strict|ultra|super-ultra`, which drives the `--orchestrator-run` path) is **unaffected** by this gate — a manual invocation always works. The opt-in only governs the *automatic* session-start rewrite.
+
 ### Switch output level (`lite|strict|ultra|super-ultra`)
 
 1. Validate the argument is exactly one of: `lite`, `strict`, `ultra`, `super-ultra`. If not, report invalid level and stop.
@@ -54,6 +66,7 @@ Level effects:
 3. Report:
    - Output level: `lite` | `strict` | `ultra` | `super-ultra`
    - Semantic mode: `on` | `off` (derived: super-ultra=always on, ultra=on unless explicit false, lite/strict=off unless explicit true)
+   - Input-file auto-compression: `on` | `off` (default `off`; `on` only when `PAKKA_INPUT_COMPRESS` is truthy or `pakka.compress.input` is `true`)
    - Input bytes saved this session
    - Estimated input tokens saved (bytes_saved / 3.5)
 
