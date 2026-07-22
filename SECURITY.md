@@ -50,3 +50,34 @@ Threats considered:
 ## Out-of-Band Keep-List
 
 For v0.1.0-dev, the review-fix pass introduced **no new** telemetry, no new outbound network calls, and no new write paths outside `~/.claude/pakka/`. This is a guarantee of the pass, not a forward commitment — future passes that change it must be called out in `CHANGELOG.md` under `### Security`.
+
+## Verifying Releases
+
+Shipped binaries in `bin/` are built reproducibly. `make release` refuses to run on a dirty working tree, builds with `-trimpath` and `CGO_ENABLED=0`, writes `SHA256SUMS` into the release dir (`bin/` by default; `RELEASE_DIR=dist` in CI), and prints each binary's `go version -m` provenance. On every `v*` tag the `release` CI workflow rebuilds the assets fresh at the tag into a gitignored dir, verifies the build mutates no tracked files, and uploads them; it does not byte-compare against the committed in-tree binaries (which embed their own build commit, not the tag).
+
+**Check integrity** — from the `bin/` directory:
+
+```
+cd bin && shasum -a 256 -c SHA256SUMS
+```
+
+Every line must report `OK`.
+
+**Check provenance** — a shipped binary must be built from a clean, committed tree:
+
+```
+go version -m bin/pakka-core-darwin-arm64 | grep vcs
+```
+
+Require `vcs.modified=false`. `vcs.revision` is the commit the binary was built at: for the committed in-tree binaries that is the parent of the "regenerate binaries" commit (a binary cannot embed the hash of the commit that carries it); for the CI-uploaded release assets it is the tag commit. `vcs.modified=true` means the binary was built from an uncommitted tree — do not trust it.
+
+**Reproduce from source** — reproduce a binary at the exact revision it reports, using the same Go toolchain (version pinned in `go.mod`):
+
+```
+rev=$(go version -m bin/pakka-core-darwin-arm64 | awk '/vcs.revision/{print $2}')
+git checkout "$rev"
+make release RELEASE_DIR=/tmp/pakka-repro
+shasum -a 256 /tmp/pakka-repro/pakka-core-darwin-arm64   # compare against bin/SHA256SUMS
+```
+
+Because builds use `-trimpath` and `CGO_ENABLED=0`, the same Go toolchain at that revision yields byte-identical binaries. Reproduce the release assets the same way, checking out the tag (their embedded `vcs.revision`) instead.

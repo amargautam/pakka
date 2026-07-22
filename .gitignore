@@ -17,6 +17,14 @@ coverage.*
 .pakka/
 .claude/settings.local.json
 
+# bungu local index/scratch under docs/specs (per-user, not committed).
+# Also keeps `make release` clean-tree gate + Go vcs stamping from tripping on it.
+docs/specs/.bungu/
+
+# CI release-asset staging dir (make release RELEASE_DIR=dist). Never committed;
+# in-tree release binaries live in bin/ instead.
+/dist/
+
 # Benchmark results are committed deliberately as provenance artifacts
 # (issue #13) — benchmarks/results/ is intentionally NOT ignored.
 

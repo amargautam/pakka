@@ -5,7 +5,7 @@ GO     ?= go
 BIN    := bin/pakka-core
 PKG    := ./cmd/pakka-core
 
-.PHONY: help build cross test test-js bench bench-latency self-report clean
+.PHONY: help build cross release test test-js bench bench-latency self-report clean
 
 # Compression levels measured by `make bench`. Override: make bench BENCH_LEVELS=ultra
 BENCH_LEVELS ?= lite strict ultra super-ultra
@@ -16,6 +16,7 @@ help:
 	@echo "Targets:"
 	@echo "  build         Build pakka-core for current arch.         (Pass 1)"
 	@echo "  cross         Build pakka-core for all release arches.   (Pass 5)"
+	@echo "  release       Reproducible cross-build (clean tree only) + SHA256SUMS."
 	@echo "  test          Run Go unit tests.                          (Pass 1)"
 	@echo "  test-js       Run JS hook tests (node --test)."
 	@echo "  bench         Run A/B benchmark via claude -p OAuth.      (issue #13)"
@@ -27,11 +28,59 @@ build:
 	$(GO) build -o $(BIN) $(PKG)
 
 cross:
-	GOOS=darwin GOARCH=arm64 $(GO) build -o bin/pakka-core-darwin-arm64 $(PKG)
-	GOOS=darwin GOARCH=amd64 $(GO) build -o bin/pakka-core-darwin-amd64 $(PKG)
-	GOOS=linux GOARCH=arm64 $(GO) build -o bin/pakka-core-linux-arm64 $(PKG)
-	GOOS=linux GOARCH=amd64 $(GO) build -o bin/pakka-core-linux-amd64 $(PKG)
-	GOOS=windows GOARCH=amd64 $(GO) build -o bin/pakka-core-windows-amd64.exe $(PKG)
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-darwin-arm64 $(PKG)
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-darwin-amd64 $(PKG)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-linux-arm64 $(PKG)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-linux-amd64 $(PKG)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-windows-amd64.exe $(PKG)
+
+# release — reproducible cross-build with provenance stamping.
+#
+# Output dir defaults to bin/ (RELEASE_DIR=dist in CI — see below). Refuses to
+# run on a dirty working tree so every binary stamps vcs.modified=false and
+# vcs.revision=<HEAD-at-build> (see `go version -m`). Binaries are built to a
+# temp dir *outside* the repo — that keeps the source tree clean while Go reads
+# git status for each build, so binary N landing in the output dir never taints
+# binary N+1's stamp. All five are moved in at once, then SHA256SUMS is written
+# and provenance printed.
+#
+# Reproducibility: -trimpath strips local paths, CGO_ENABLED=0 removes the C
+# toolchain. Same Go toolchain + same commit => byte-identical binaries. A
+# verifier reproduces a shipped binary by checking out the *revision the binary
+# reports* (`go version -m`), not necessarily the tag — the committed in-tree
+# binaries embed the commit they were built at (the parent of the commit that
+# carries them; a binary cannot embed its own carrying commit's hash). CI builds
+# fresh assets at the tag into a gitignored dir, so its vcs.revision is the tag
+# commit and `git status` stays clean.
+RELEASE_DIR ?= bin
+
+release:
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "release: working tree not clean — commit or stash first:"; \
+		git status --porcelain; \
+		exit 1; \
+	fi
+	@rev=$$(git rev-parse HEAD); \
+	mkdir -p "$(RELEASE_DIR)"; \
+	tmp=$$(mktemp -d); \
+	echo "Building reproducible binaries at $$rev -> $(RELEASE_DIR)/ ..."; \
+	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-darwin-arm64     $(PKG) || exit 1; \
+	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-darwin-amd64     $(PKG) || exit 1; \
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-linux-arm64      $(PKG) || exit 1; \
+	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-linux-amd64      $(PKG) || exit 1; \
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-windows-amd64.exe $(PKG) || exit 1; \
+	mv $$tmp/pakka-core-* "$(RELEASE_DIR)"/; \
+	rmdir $$tmp; \
+	( cd "$(RELEASE_DIR)" && shasum -a 256 \
+		pakka-core-darwin-arm64 pakka-core-darwin-amd64 \
+		pakka-core-linux-arm64 pakka-core-linux-amd64 \
+		pakka-core-windows-amd64.exe > SHA256SUMS ); \
+	echo ""; echo "$(RELEASE_DIR)/SHA256SUMS:"; cat "$(RELEASE_DIR)/SHA256SUMS"; \
+	echo ""; echo "Provenance (want vcs.modified=false, vcs.revision=$$rev):"; \
+	for b in pakka-core-darwin-arm64 pakka-core-darwin-amd64 pakka-core-linux-arm64 pakka-core-linux-amd64 pakka-core-windows-amd64.exe; do \
+		echo "== $$b =="; \
+		$(GO) version -m "$(RELEASE_DIR)/$$b" | grep -E 'vcs.revision|vcs.modified'; \
+	done
 
 test:
 	$(GO) test ./...

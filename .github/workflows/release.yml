@@ -1,0 +1,57 @@
+name: release
+
+# Reproducible release build. Triggered by pushing a v* tag. Builds the five
+# cross binaries fresh from the tagged source with -trimpath + CGO_ENABLED=0
+# (stamped vcs.modified=false, vcs.revision=<tag commit>), then publishes them
+# with SHA256SUMS as release assets.
+#
+# Assets are built into a gitignored dir (RELEASE_DIR=dist) rather than bin/, so
+# the "verify tree still clean" step is a genuine guard that the release build
+# mutates no tracked files — not a byte-identity assertion against the committed
+# in-tree binaries (which embed their own build commit and cannot be rebuilt at
+# the tag; see SECURITY.md "Verifying Releases").
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build release assets
+        run: make release RELEASE_DIR=dist
+
+      - name: Verify tree still clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "make release mutated tracked files — release build is not hermetic:"
+            git status --porcelain
+            git diff --stat
+            exit 1
+          fi
+          echo "Tree clean — release build touched no tracked files."
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/pakka-core-darwin-arm64
+            dist/pakka-core-darwin-amd64
+            dist/pakka-core-linux-arm64
+            dist/pakka-core-linux-amd64
+            dist/pakka-core-windows-amd64.exe
+            dist/SHA256SUMS
