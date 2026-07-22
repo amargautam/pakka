@@ -46,19 +46,19 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **Skill-check:** before each response — pakka checks whether the message calls for `/pakka:plan`, `/pakka:build`, or `/pakka:review`. Catches cases that explicit invocation misses.
 
-**4-vector compression:** output tokens · input context · tool results · subagent returns — all compressed independently.
+**4-vector compression:** output tokens · input context · tool results · subagent returns — all compressed independently. Input-context auto-compression is **opt-in, default off** — it rewrites version-controlled context files and sends them to your model provider for near-zero token gain. Enable with env `PAKKA_INPUT_COMPRESS=1` or `pakka.compress.input: true` in `settings.json`; the other three vectors are always on. Manual `/pakka:compress` re-compression is unaffected by the gate.
 
 **Review gate:** reviewer + security + architect + performance subagents run in parallel on every Claude-authored commit. Confidence threshold ≥ 80. Blocks on `severity=error` findings.
 
 **Deny-by-default permissions:** secrets, destructive git, shell-fetched-then-executed commands blocked at the permission layer. Guard covers secret reads **and writes** — the hook matches `Read|Write|Edit|MultiEdit|Bash` (was `Read|Bash` before v0.11.0). Repeated overrides teach a per-repo allowlist (`.pakka/guard-allowlist.json`) with override-count decay; secret categories are never allowlistable.
 
-**Audit trail:** every tool call appended to `~/.pakka/audit/<session>.jsonl`. No dial-home.
+**Audit trail:** every tool call appended to `~/.pakka/audit/<session>.jsonl`. No telemetry to pakka — nothing is sent to us, ever. One egress path exists: semantic input compression rewrites context files by calling **your configured model provider** — the same provider your session already sends full context to. Disable with `PAKKA_DISABLED=1`, or undo with `/pakka:compress restore`, if that matters in your environment.
 
 **recall:** `/pakka:recall` searches your audit trail. cross-session memory backed by local FTS5 index (SQLite). no remote storage.
 
 **skill-check:** `UserPromptSubmit` hook keyword-scans every message. if a build/plan/review signal matches, targeted alert fires before the model responds. no more relying on model memory.
 
-**Status line:** `pakka [super-ultra] · ~$72.47 saved · 21 bugs caught` — compression level, token savings, and bugs caught, always visible. Savings priced per model — Fable 5, Mythos 5, and Opus 4.x covered; dated model IDs resolve by prefix.
+**Status line:** `pakka [super-ultra] · ~$72.47 saved · 21 bugs caught` — compression level, token savings, and bugs caught, always visible. Savings priced per model — Fable 5, Mythos 5, and Opus 4.x covered; dated model IDs resolve by prefix. Input-side savings are priced **cache-aware** — a blended fresh/cache-write/cache-read rate from session telemetry, not the flat fresh-input rate (which overstated cached environments ~10x); falls back to the flat rate when telemetry is absent.
 
 **Kill-switch:** `PAKKA_DISABLED=1` turns off every pakka hook for the session. Used by `make bench` to isolate the raw arm; works anywhere.
 
