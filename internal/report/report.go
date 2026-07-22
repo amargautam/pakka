@@ -14,6 +14,8 @@ import (
 
 	"github.com/amargautam/pakka/internal/data"
 	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/pricing"
+	"github.com/amargautam/pakka/internal/statusline"
 )
 
 // Stats holds aggregated metrics from meter and audit data.
@@ -23,13 +25,21 @@ type Stats struct {
 	OutputTokensTotal int64
 	TotalBytesSaved   int64
 	TokensSavedEst    int64
-	AuditEventCount   int
-	ToolUseCounts     map[string]int // tool_name -> count
-	GateVerdicts      int            // count of verdict files
-	GatePassCount     int
-	BugsCaught        int // error findings above threshold
-	FirstSession      time.Time
-	LastSession       time.Time
+
+	// Cache mix for the repo, from Claude Code transcripts. Used to price
+	// input-side savings at the session's blended cache-aware rate rather than
+	// a flat fresh-input rate. All zero when no transcript telemetry is found,
+	// in which case input savings fall back to the flat fresh-input rate.
+	InputTokens         int64
+	CacheCreationTokens int64
+	CacheReadTokens     int64
+	AuditEventCount     int
+	ToolUseCounts       map[string]int // tool_name -> count
+	GateVerdicts        int            // count of verdict files
+	GatePassCount       int
+	BugsCaught          int // error findings above threshold
+	FirstSession        time.Time
+	LastSession         time.Time
 }
 
 // meterEntry mirrors one line in a meter JSONL file.
@@ -85,6 +95,16 @@ func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 	meterErr := gatherMeter(s, meterDir, canonRepo)
 	auditErr := gatherAudit(s, auditDir)
 	gatherVerdicts(s)
+
+	// Cache mix from transcripts, so input-side savings can be priced at the
+	// same blended cache-aware rate the status line uses. Best-effort: absence
+	// (no repo, no transcripts, error) leaves the counts at zero and input
+	// savings fall back to the flat fresh-input rate.
+	if repoRoot != "" && repoRoot != "." {
+		if in, cc, cr, err := statusline.RepoCacheMix("", repoRoot); err == nil {
+			s.InputTokens, s.CacheCreationTokens, s.CacheReadTokens = in, cc, cr
+		}
+	}
 
 	// If both dirs are unreadable, report an error.
 	if meterErr != nil && auditErr != nil {
@@ -254,8 +274,15 @@ func FormatMarkdown(s *Stats, version string) string {
 	mult := 1.94 // super-ultra calibrated multiplier (matches statusline.go)
 	calibratedRatio := mult / (1 + mult)
 	outputTokensAvoided := int64(float64(outputTokensEst) * calibratedRatio)
-	outputDollarSavings := float64(outputTokensAvoided) / 1_000_000 * 15.0
-	inputDollarSavings := float64(s.TokensSavedEst) / 1_000_000 * 3.0
+	// Output is never cached — price it at the flat output rate.
+	outputDollarSavings := float64(outputTokensAvoided) / 1_000_000 * pricing.Default.Output
+	// Input savings are priced at the base input rate scaled by the session's
+	// blended cache-aware multiplier: in a heavily cached repo most re-sent
+	// tokens bill at the 0.1× cache-read rate, so a flat fresh-input rate
+	// overstated input savings ~10×. With no transcript telemetry the multiplier
+	// is 1.0 and this reduces to the old flat base-input-rate figure.
+	effInput := statusline.BlendedInputMultiplier(s.InputTokens, s.CacheCreationTokens, s.CacheReadTokens)
+	inputDollarSavings := float64(s.TokensSavedEst) / 1_000_000 * pricing.Default.Input * effInput
 	totalDollarSavings := outputDollarSavings + inputDollarSavings
 
 	b.WriteString("\n## output compression savings (V1 — calibrated bench)\n\n")
@@ -271,7 +298,7 @@ func FormatMarkdown(s *Stats, version string) string {
 	b.WriteString(fmt.Sprintf("- Output tokens measured across %d sessions: %s\n", s.SessionCount, fmtInt(outputTokensEst)))
 	b.WriteString(fmt.Sprintf("- At super-ultra 66%% reduction: ~%s tokens avoided\n", fmtInt(outputTokensAvoided)))
 	b.WriteString(fmt.Sprintf("- At $15/MTok: **~$%.2f saved on output tokens alone**\n", outputDollarSavings))
-	b.WriteString(fmt.Sprintf("- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3/MTok): ~$%.2f\n", inputDollarSavings))
+	b.WriteString(fmt.Sprintf("- Input savings (V2+V3+V4, bytes_saved÷3.5 × $%.2f/MTok × %.2f blended cache rate): ~$%.2f\n", pricing.Default.Input, effInput, inputDollarSavings))
 	b.WriteString(fmt.Sprintf("- **Total estimated savings: ~$%.2f**\n", totalDollarSavings))
 
 	// Tool usage table.

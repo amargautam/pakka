@@ -553,9 +553,9 @@ func TestBugsAllTimeNoTimeFilter(t *testing.T) {
 	lo := `{"severity":"error","confidence":50}`
 	warn := `{"severity":"warn","confidence":99}`
 
-	mk("a.jsonl", []string{hi, lo, warn}) // 1 hi
-	mk("b.jsonl", []string{hi})           // 1 hi
-	mk("c.jsonl", []string{hi, hi})       // 2 hi
+	mk("a.jsonl", []string{hi, lo, warn})         // 1 hi
+	mk("b.jsonl", []string{hi})                   // 1 hi
+	mk("c.jsonl", []string{hi, hi})               // 2 hi
 	mk("verdict-001.jsonl", []string{hi, hi, hi}) // ignored
 
 	// Backdate `a.jsonl` to 2020 to confirm no time filter applies.
@@ -594,9 +594,9 @@ func TestHumanize(t *testing.T) {
 	}{
 		{0, "0"},
 		{1, "1"},
-		{999, "999"},        // boundary: still raw
-		{1000, "1.0K"},      // boundary: enters K
-		{1099, "1.0K"},      // floor: doesn't bump to 1.1K
+		{999, "999"},   // boundary: still raw
+		{1000, "1.0K"}, // boundary: enters K
+		{1099, "1.0K"}, // floor: doesn't bump to 1.1K
 		{1100, "1.1K"},
 		{12450, "12.4K"},    // explicit spec example
 		{999_999, "999.9K"}, // boundary: just below M
@@ -1003,5 +1003,54 @@ func writeTranscriptWithCWD(t *testing.T, home, encodedName, transcriptName, cwd
 	}
 	if err := os.WriteFile(filepath.Join(dir, transcriptName), []byte(sb.String()), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBlendedInputMultiplierVariesWithCacheMix asserts the cache-aware input
+// rate is behavioral on the telemetry: a cache-heavy mix must price saved
+// input tokens strictly cheaper than an all-fresh mix, and an all-fresh mix
+// must reproduce the flat fresh-input rate (multiplier 1.0). Absent telemetry
+// falls back to 1.0. Assertions are on the varying measurement, never on a
+// bare constant.
+func TestBlendedInputMultiplierVariesWithCacheMix(t *testing.T) {
+	// All-fresh input: multiplier must be exactly 1.0 (old flat behavior).
+	fresh := BlendedInputMultiplier(1_000_000, 0, 0)
+	if fresh != 1.0 {
+		t.Fatalf("all-fresh multiplier = %v, want 1.0 (flat fresh-input rate)", fresh)
+	}
+
+	// No telemetry (zero denominator) must fall back to 1.0.
+	if fallback := BlendedInputMultiplier(0, 0, 0); fallback != 1.0 {
+		t.Fatalf("no-telemetry multiplier = %v, want 1.0 fallback", fallback)
+	}
+
+	// 90%-cache-read mix: 100k fresh, 0 cache-write, 900k cache-read.
+	//   (100000*1.0 + 0*1.25 + 900000*0.1) / 1000000 = 0.19
+	cacheHeavy := BlendedInputMultiplier(100_000, 0, 900_000)
+	if cacheHeavy >= fresh {
+		t.Fatalf("cache-heavy multiplier %v must be strictly below all-fresh %v", cacheHeavy, fresh)
+	}
+	if want := 0.19; cacheHeavy < want-1e-9 || cacheHeavy > want+1e-9 {
+		t.Errorf("cache-heavy multiplier = %v, want %v", cacheHeavy, want)
+	}
+
+	// A cache-write-heavy mix bills ABOVE the fresh rate (1.25×), so more
+	// cache-write must raise the multiplier — the measure moves with input.
+	writeHeavy := BlendedInputMultiplier(0, 1_000_000, 0)
+	if writeHeavy <= fresh {
+		t.Fatalf("cache-write-heavy multiplier %v must exceed all-fresh %v", writeHeavy, fresh)
+	}
+
+	// Priced savings must inherit the ordering: for a fixed TokensSavedEst, the
+	// cache-heavy $ figure is strictly lower than the all-fresh $ figure.
+	const savedTok, baseInput = 500_000, 3.0
+	freshUSD := float64(savedTok) / 1_000_000 * baseInput * fresh
+	cacheUSD := float64(savedTok) / 1_000_000 * baseInput * cacheHeavy
+	if cacheUSD >= freshUSD {
+		t.Fatalf("cache-heavy $ %.6f must be strictly below all-fresh $ %.6f", cacheUSD, freshUSD)
+	}
+	// All-fresh $ reproduces the old flat-rate value exactly.
+	if want := float64(savedTok) / 1_000_000 * baseInput; freshUSD != want {
+		t.Errorf("all-fresh $ = %.6f, want flat-rate %.6f", freshUSD, want)
 	}
 }

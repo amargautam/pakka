@@ -3,6 +3,8 @@ package report
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +58,6 @@ func TestGatherMeter(t *testing.T) {
 		t.Errorf("LastSession = %v, want 2026-04-22", stats.LastSession)
 	}
 }
-
 
 func TestGatherMeterOutputTokens(t *testing.T) {
 	tmp := t.TempDir()
@@ -394,4 +395,61 @@ func TestFmtInt(t *testing.T) {
 
 func parseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
+}
+
+// totalSavingsFromMarkdown extracts the "~$X.XX" total-savings dollar figure
+// from a rendered RECEIPTS.md.
+func totalSavingsFromMarkdown(t *testing.T, md string) float64 {
+	t.Helper()
+	re := regexp.MustCompile(`Total estimated savings: ~\$([0-9]+\.[0-9]+)`)
+	m := re.FindStringSubmatch(md)
+	if m == nil {
+		t.Fatalf("no total-savings line in markdown:\n%s", md)
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		t.Fatalf("parse total savings %q: %v", m[1], err)
+	}
+	return v
+}
+
+// TestFormatMarkdownInputSavingsVariesWithCacheMix asserts the reported $
+// savings are behavioral on the cache mix: for an identical TokensSavedEst and
+// identical output volume, a cache-heavy session reports strictly LOWER total
+// savings than an all-fresh session (input tokens re-billed at the ~0.1×
+// cache-read rate), and the all-fresh session reproduces the old flat
+// fresh-input-rate figure. Only the input side varies; output is unchanged.
+func TestFormatMarkdownInputSavingsVariesWithCacheMix(t *testing.T) {
+	base := Stats{
+		SessionCount:      5,
+		OutputTokensTotal: 400_000,
+		TotalBytesSaved:   3400,
+		TokensSavedEst:    971_000,
+	}
+
+	fresh := base
+	fresh.InputTokens = 1_000_000 // all fresh → multiplier 1.0
+
+	cacheHeavy := base
+	cacheHeavy.InputTokens = 100_000
+	cacheHeavy.CacheReadTokens = 900_000 // 90% cache read → multiplier 0.19
+
+	noTelemetry := base // all cache fields zero → fallback 1.0
+
+	freshTotal := totalSavingsFromMarkdown(t, FormatMarkdown(&fresh, "0.1.0-dev"))
+	cacheTotal := totalSavingsFromMarkdown(t, FormatMarkdown(&cacheHeavy, "0.1.0-dev"))
+	noTelTotal := totalSavingsFromMarkdown(t, FormatMarkdown(&noTelemetry, "0.1.0-dev"))
+
+	if cacheTotal >= freshTotal {
+		t.Fatalf("cache-heavy total $%.2f must be strictly below all-fresh $%.2f", cacheTotal, freshTotal)
+	}
+	// No-telemetry must match all-fresh (both multiplier 1.0) — unchanged behavior.
+	if noTelTotal != freshTotal {
+		t.Errorf("no-telemetry total $%.2f must equal all-fresh $%.2f (flat-rate fallback)", noTelTotal, freshTotal)
+	}
+	// The gap is purely the input side; sanity-check its direction and size.
+	// Input side fresh = 0.971M * $3 = ~$2.913; cache-heavy = *0.19 = ~$0.553.
+	if gap := freshTotal - cacheTotal; gap < 2.0 {
+		t.Errorf("input-side savings gap $%.2f too small — blending not applied", gap)
+	}
 }

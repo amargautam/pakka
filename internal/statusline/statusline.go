@@ -10,8 +10,11 @@
 //   - Output tokens are summed across the same transcripts. Output savings
 //     ARE rendered as a percentage Y%, derived from the level's
 //     outputMultiplier as round(mult/(1+mult)*100). Y% reflects calibrated
-//     bench measurements (2026-05-02, Sonnet 4.6 + Opus 4.5) and will be
-//     replaced with a per-session measured ratio when v0.3.0 $ tracking lands.
+//     bench measurements (2026-05-02, Sonnet 4.6 + Opus 4.5). The output % is
+//     still level-derived pending the baseline-vs-compressed bench; the input
+//     side of the $ estimate is now per-session measured — saved input tokens
+//     are priced at the session's blended cache-aware rate (see
+//     BlendedInputMultiplier), not a flat fresh-input rate.
 //     Decision: memory/DECISIONS.md "Status-line format (decided 2026-04-29 by user)".
 //   - tokensSavedEst is summed across every meter file with matching repo tag.
 //   - bugsCaught is an all-time count across the repo's review findings.
@@ -41,10 +44,33 @@ import (
 // cache_creation 1.25×; cache_read 0.1×. Numerator (tokensSavedEst) is 1×
 // because truncated tool result bytes would have been fresh input.
 const (
-	costWeightInput          = 1.0
-	costWeightCacheCreation  = 1.25
-	costWeightCacheRead      = 0.1
+	costWeightInput         = 1.0
+	costWeightCacheCreation = 1.25
+	costWeightCacheRead     = 0.1
 )
+
+// BlendedInputMultiplier returns the cache-aware effective input-rate
+// multiplier for a session, given its actual telemetry: fresh input,
+// cache-creation, and cache-read token counts. It is the token-weighted mean
+// of the three cost weights:
+//
+//	(in×1.0 + cc×1.25 + cr×0.1) / (in + cc + cr)
+//
+// Pricing saved input tokens at base_input_price × this multiplier makes the
+// reported $ figure reflect what a cached environment actually pays: ~0.19× in
+// a 90%-cache-read env (0.9×0.1 + 0.1×1.0), ~1× in an all-fresh env. When the
+// denominator is zero
+// (no telemetry — e.g. no transcript found) it falls back to 1.0, i.e. flat
+// fresh-input pricing, preserving the pre-cache-aware behavior.
+func BlendedInputMultiplier(in, cacheCreation, cacheRead int64) float64 {
+	denom := float64(in + cacheCreation + cacheRead)
+	if denom <= 0 {
+		return 1.0
+	}
+	return (float64(in)*costWeightInput +
+		float64(cacheCreation)*costWeightCacheCreation +
+		float64(cacheRead)*costWeightCacheRead) / denom
+}
 
 // OverrideHome, when non-empty, substitutes for os.UserHomeDir(). Used by
 // tests to redirect ~/.pakka/meter and ~/.claude/projects lookups.
@@ -59,7 +85,9 @@ var OverrideRepoKey func(cwd string) string
 // Calibrated 2026-05-02 against Sonnet 4.6 + Opus 4.5 on
 // benchmarks/compress-samples/subagent-return.txt. Reduction measured as
 // (baseline_output_tokens - compressed_output_tokens) / baseline_output_tokens.
-// Replace with per-session measured ratio when v0.3.0 $ tracking lands.
+// Output-side only: replace with a per-session measured ratio when the
+// baseline-vs-compressed output bench lands. (The input side of the $ estimate
+// is already per-session measured — see BlendedInputMultiplier.)
 //
 // TODO(issue #13): this constant table MUST be replaced by the measured
 // per-level output ratio from a full `make bench` run (A/B via claude -p
@@ -264,9 +292,16 @@ func compute(event *hookevent.Event, native *NativePayload, outputLevel string, 
 	// know the model from meter/transcripts.
 	//
 	// Input savings: truncated bytes that would have been fresh input tokens.
-	// inputSavedUSD = savedTokens / 1M * Input_price
+	// Priced cache-aware: base input price × the session's blended effective
+	// input rate (BlendedInputMultiplier over the observed fresh/cache-write/
+	// cache-read mix). In a heavily cached session most re-sent tokens bill at
+	// the 0.1× cache-read rate, so pricing every saved token at the full fresh
+	// rate overstated input savings ~10×. With no telemetry the multiplier is
+	// 1.0 and this reduces to the old flat-rate figure.
+	// inputSavedUSD = savedTokens / 1M * Input_price * effInput
 	//
-	// Output savings: calibrated reduction fraction applied to observed output volume.
+	// Output savings: calibrated reduction fraction applied to observed output
+	// volume. Output is never cached, so it stays priced at the flat output rate.
 	// calibratedRatio = mult / (1 + mult) — see outputMultiplier doc.
 	// outputSavedUSD = outTokens * calibratedRatio / 1M * Output_price
 	//
@@ -274,7 +309,8 @@ func compute(event *hookevent.Event, native *NativePayload, outputLevel string, 
 	// baseline per the spec. This yields a conservative (under) estimate of savings
 	// by factor (1+mult) — see spec comment in task brief.
 	prices := pricing.Default
-	inputSavedUSD := float64(savedTokens) / 1_000_000 * prices.Input
+	effInput := BlendedInputMultiplier(inTokens, cacheCreation, cacheRead)
+	inputSavedUSD := float64(savedTokens) / 1_000_000 * prices.Input * effInput
 	calibratedRatio := mult / (1 + mult)
 	outputSavedUSD := float64(outTokens) * calibratedRatio / 1_000_000 * prices.Output
 	totalSavedUSD := inputSavedUSD + outputSavedUSD
@@ -282,9 +318,9 @@ func compute(event *hookevent.Event, native *NativePayload, outputLevel string, 
 	hasCtx, ctxTokens, ctxPct := nativeContextUsage(native)
 
 	return metrics{
-		hasCtx:    hasCtx,
-		ctxTokens: ctxTokens,
-		ctxPct:    ctxPct,
+		hasCtx:        hasCtx,
+		ctxTokens:     ctxTokens,
+		ctxPct:        ctxPct,
 		outputLevel:   outputLevel,
 		inSavedTokens: savedTokens,
 		inCostUnits:   costUnits,
@@ -660,6 +696,25 @@ func RepoOutputTokens(projectsDir, repoRoot string) (int64, error) {
 	repo := meter.RepoKey(repoRoot)
 	_, _, _, outTokens := readAllTranscripts(projectsDir, repo)
 	return outTokens, nil
+}
+
+// RepoCacheMix returns the fresh-input, cache-creation, and cache-read token
+// counts summed across all Claude Code transcripts for the given repo root.
+// It exposes the same telemetry compute() uses so callers outside this package
+// (e.g. internal/report) can price saved input tokens at the identical
+// cache-aware blended rate via BlendedInputMultiplier.
+// projectsDir defaults to ~/.claude/projects if empty.
+func RepoCacheMix(projectsDir, repoRoot string) (in, cacheCreation, cacheRead int64, err error) {
+	if projectsDir == "" {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return 0, 0, 0, herr
+		}
+		projectsDir = filepath.Join(home, ".claude", "projects")
+	}
+	repo := meter.RepoKey(repoRoot)
+	in, cacheCreation, cacheRead, _ = readAllTranscripts(projectsDir, repo)
+	return in, cacheCreation, cacheRead, nil
 }
 
 // decodeProjectDir converts a Claude Code project subdir name back into a
