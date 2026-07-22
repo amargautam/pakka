@@ -197,7 +197,6 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 		}
 		// Detect user edits: compare live file against last compression output.
 		// If they differ, the user edited the live file — adopt it as new baseline.
-		// Skip when outputSHA is empty (legacy entries or prior validator failure).
 		if outputSHA := state.GetOutputSHA(abs); outputSHA != "" {
 			if live, liveErr := os.ReadFile(abs); liveErr == nil {
 				if sha256Hex(live) != outputSHA {
@@ -210,6 +209,20 @@ func (o *Orchestrator) processOne(ctx context.Context, rel, level string, state 
 						return
 					}
 				}
+			}
+		} else if live, liveErr := os.ReadFile(abs); liveErr == nil && sha256Hex(live) != sha256Hex(origBytes) {
+			// Empty outputSHA (legacy entry or prior validator failure): pakka
+			// never successfully wrote the live file, so a live file that
+			// differs from the snapshot is the user's truth — NOT a stale
+			// snapshot to compress from. Refresh the snapshot from live and use
+			// live as origBytes; otherwise a later successful rewrite would
+			// clobber every edit made since the snapshot (data loss).
+			if writeErr := atomicWrite(originalPath, live); writeErr == nil {
+				o.logf("snapshot refreshed (no prior output SHA): %s", abs)
+				origBytes = live
+			} else {
+				o.logf("skip: snapshot refresh failed for %s (%v) — preserving user edits", abs, writeErr)
+				return
 			}
 		}
 	}
@@ -488,4 +501,3 @@ func openAppend(path string) (*os.File, error) {
 	}
 	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 }
-

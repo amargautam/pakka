@@ -279,10 +279,10 @@ func TestAsyncCommandConstruction(t *testing.T) {
 		t.Fatalf("AsyncCommand returned nil")
 	}
 	wantArgs := map[string]bool{
-		"compress":           true,
-		"--orchestrator-bg":  true,
-		"--level=ultra":      true,
-		"--repo=" + repo:     true,
+		"compress":          true,
+		"--orchestrator-bg": true,
+		"--level=ultra":     true,
+		"--repo=" + repo:    true,
 	}
 	for _, a := range cmd.Args[1:] {
 		if !wantArgs[a] {
@@ -485,9 +485,18 @@ func TestNoEditNoSnapshotRefresh(t *testing.T) {
 	}
 }
 
-// TestLegacyStateNoOutputSHA verifies that entries without an outputSHA field
-// (legacy state) do NOT trigger a snapshot refresh — empty outputSHA is a safe
-// no-op fallback.
+// TestLegacyStateNoOutputSHA verifies the corrected behavior for entries
+// without an outputSHA (legacy state OR prior validator failure): when the live
+// file has diverged from the snapshot, the live bytes are the user's truth and
+// MUST be adopted. Empty outputSHA means pakka never confirmed a write, so the
+// snapshot is refreshed from live and live is fed to the rewriter — never the
+// stale snapshot (which would clobber user edits; see
+// TestEmptyOutputSHADoesNotClobberUserEdits).
+//
+// NOTE: prior to the data-loss fix this test asserted the OPPOSITE (empty
+// outputSHA = no-op, snapshot stays original). That assertion encoded the bug:
+// leaving the snapshot as truth is exactly what let a later rewrite destroy
+// user edits.
 func TestLegacyStateNoOutputSHA(t *testing.T) {
 	repo := t.TempDir()
 	src := filepath.Join(repo, "CLAUDE.md")
@@ -511,8 +520,8 @@ func TestLegacyStateNoOutputSHA(t *testing.T) {
 	userEdited := "# Title\n\nUser added something important here."
 	writeFile(t, src, userEdited)
 
-	// Run at a new level. Legacy entry (outputSHA="") must NOT cause refresh.
-	// Because outputSHA is empty, detection is skipped → snapshot stays original.
+	// Run at a new level. Empty outputSHA + live≠snapshot → snapshot refreshed
+	// from live, and the rewriter must see the user-edited content as input.
 	rewB := &stubRewriter{out: "# Title\ncompressed-B"}
 	var logBuf bytes.Buffer
 	o := &Orchestrator{
@@ -527,13 +536,106 @@ func TestLegacyStateNoOutputSHA(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	// Snapshot must remain as original (no refresh triggered by legacy entry).
+	// Snapshot must be refreshed to the user-edited live content.
 	snapAfter, err := os.ReadFile(origPath)
 	if err != nil {
 		t.Fatalf("read snapshot: %v", err)
 	}
-	if string(snapAfter) != original {
-		t.Errorf("legacy state caused spurious snapshot refresh: got %q, want %q", snapAfter, original)
+	if string(snapAfter) != userEdited {
+		t.Errorf("snapshot must be refreshed to live user edits: got %q, want %q", snapAfter, userEdited)
+	}
+
+	// The rewriter must have compressed the user-edited content, not the stale
+	// snapshot.
+	rewB.mu.Lock()
+	seen := rewB.lastSeen
+	rewB.mu.Unlock()
+	if seen != userEdited {
+		t.Errorf("rewriter input: got %q, want user-edited content %q", seen, userEdited)
+	}
+	if !strings.Contains(logBuf.String(), "snapshot refreshed (no prior output SHA)") {
+		t.Errorf("expected no-prior-output-SHA refresh log line; got %q", logBuf.String())
+	}
+}
+
+// echoRewriter returns its input unchanged (a no-op "compress" that always
+// passes the validator). Used to isolate the origBytes-selection logic in
+// processOne from any rewrite delta: whatever bytes the orchestrator feeds in
+// are exactly what lands on the live file.
+type echoRewriter struct{ calls atomic.Int64 }
+
+func (e *echoRewriter) Rewrite(_ context.Context, input string, _ semantic.Level) (string, error) {
+	e.calls.Add(1)
+	return input, nil
+}
+
+var _ semantic.Rewriter = (*echoRewriter)(nil)
+
+// TestEmptyOutputSHADoesNotClobberUserEdits is the regression guard for the
+// data-loss bug: when a state entry has an empty outputSHA (prior validator
+// failure OR legacy entry) and the live file has diverged from a stale
+// .original.md snapshot, processOne previously SKIPPED user-edit detection,
+// used the stale snapshot as origBytes, and let atomicWrite clobber the live
+// file with snapshot-derived output — destroying every edit made since the
+// snapshot.
+//
+// The fix: an empty outputSHA means pakka never successfully wrote the live
+// file, so a live file that differs from the snapshot is the user's truth.
+// The snapshot is refreshed from live and live is used as origBytes.
+func TestEmptyOutputSHADoesNotClobberUserEdits(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, "CLAUDE.md")
+
+	// Live file = user-edited content B (weeks of edits since the snapshot).
+	liveB := "# Title\n\nUser-edited content B: six weeks of important edits live here."
+	writeFile(t, src, liveB)
+
+	// Stale snapshot = content A (what the file looked like before the edits).
+	origPath := strings.TrimSuffix(src, ".md") + ".original.md"
+	snapA := "# Title\n\nStale snapshot A from 2026-05-02, long superseded by edits."
+	writeFile(t, origPath, snapA)
+
+	// State entry: outputSHA "" + validatorPasses false (a prior validator
+	// failure) + matching level → Stale() is true, edit-detection was skipped.
+	abs, _ := filepath.Abs(src)
+	s := NewState()
+	s.Record(abs, "strict", sha256Hex([]byte(snapA)), "", "2026-06-01T00:00:00Z", false)
+	if err := s.Save(repo); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	// Echo rewriter: output == whatever origBytes the orchestrator selects.
+	// If the bug is present, origBytes = snapA → live is clobbered to snapA.
+	rew := &echoRewriter{}
+	var logBuf bytes.Buffer
+	o := &Orchestrator{
+		Repo:      repo,
+		Targets:   []string{"CLAUDE.md"},
+		Level:     "strict",
+		SessionID: "clobber1",
+		Rewriter:  rew,
+		LogWriter: &logBuf,
+	}
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// The live file must still reflect the user's baseline B — never snapshot A.
+	got, _ := os.ReadFile(src)
+	if string(got) == snapA {
+		t.Fatalf("DATA LOSS: live file clobbered with stale snapshot A: %q", got)
+	}
+	if string(got) != liveB {
+		t.Fatalf("live file must remain user baseline B; got %q", got)
+	}
+
+	// The snapshot must have been refreshed to the live baseline B.
+	snapAfter, err := os.ReadFile(origPath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if string(snapAfter) != liveB {
+		t.Errorf("snapshot must be refreshed to live baseline B; got %q", snapAfter)
 	}
 }
 
