@@ -2,14 +2,18 @@ name: release
 
 # Reproducible release build. Triggered by pushing a v* tag. Builds the five
 # cross binaries fresh from the tagged source with -trimpath + CGO_ENABLED=0
-# (stamped vcs.modified=false, vcs.revision=<tag commit>), then publishes them
-# with SHA256SUMS as release assets.
+# (stamped vcs.modified=false, vcs.revision=<tag commit>), generates a CycloneDX
+# SBOM, gates on artifact presence + checksum validity, attests SLSA build
+# provenance, then publishes binaries + SHA256SUMS + SBOM as release assets.
 #
 # Assets are built into a gitignored dir (RELEASE_DIR=dist) rather than bin/, so
 # the "verify tree still clean" step is a genuine guard that the release build
 # mutates no tracked files — not a byte-identity assertion against the committed
 # in-tree binaries (which embed their own build commit and cannot be rebuilt at
 # the tag; see SECURITY.md "Verifying Releases").
+#
+# SBOM + attestation are CI-only. Local `make release` just builds + checksums;
+# it has no gh / attestation / SBOM dependency.
 
 on:
   push:
@@ -17,7 +21,9 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: write       # create release, upload assets
+  id-token: write       # OIDC token for provenance signing
+  attestations: write   # store the build-provenance attestation
 
 jobs:
   release:
@@ -35,15 +41,56 @@ jobs:
       - name: Build release assets
         run: make release RELEASE_DIR=dist
 
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          # NOTE: @latest is unpinned — pin to an exact cyclonedx-gomod tag once
+          # chosen to fully harden this supply-chain step.
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/pakka-core -output dist/sbom.cdx.json .
+          # Cover the SBOM with SHA256SUMS too, so `shasum -c` verifies it.
+          ( cd dist && shasum -a 256 sbom.cdx.json >> SHA256SUMS )
+
+      - name: Verify release artifacts
+        run: |
+          set -e
+          for f in \
+            dist/pakka-core-darwin-arm64 \
+            dist/pakka-core-darwin-amd64 \
+            dist/pakka-core-linux-arm64 \
+            dist/pakka-core-linux-amd64 \
+            dist/pakka-core-windows-amd64.exe \
+            dist/SHA256SUMS \
+            dist/sbom.cdx.json; do
+            if [ ! -s "$f" ]; then
+              echo "release gate: missing or empty artifact: $f"
+              exit 1
+            fi
+          done
+          ( cd dist && shasum -a 256 -c SHA256SUMS )
+          echo "All release artifacts present; SHA256SUMS valid."
+
       - name: Verify tree still clean
         run: |
           if [ -n "$(git status --porcelain)" ]; then
-            echo "make release mutated tracked files — release build is not hermetic:"
+            echo "make release / SBOM mutated tracked files — release build is not hermetic:"
             git status --porcelain
             git diff --stat
             exit 1
           fi
           echo "Tree clean — release build touched no tracked files."
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/pakka-core-darwin-arm64
+            dist/pakka-core-darwin-amd64
+            dist/pakka-core-linux-arm64
+            dist/pakka-core-linux-amd64
+            dist/pakka-core-windows-amd64.exe
+            dist/SHA256SUMS
+            dist/sbom.cdx.json
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
@@ -55,3 +102,4 @@ jobs:
             dist/pakka-core-linux-amd64
             dist/pakka-core-windows-amd64.exe
             dist/SHA256SUMS
+            dist/sbom.cdx.json
