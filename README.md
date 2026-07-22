@@ -1,6 +1,8 @@
 # pakka
 
-Claude Code harness — fewer tokens, fewer bugs, audit-ready. Apache-2.0.
+Claude Code harness — fewer bugs, audit-ready, fewer tokens. Apache-2.0.
+
+**What carries the value:** review gates, secrets guard, audit trail, cross-session recall — enforcement no prompt paragraph can do. Compression is the cost bonus, not the pitch. If your traffic caches heavily (Bedrock/enterprise), input-side token savings approach zero — that's why input compression is off by default and the meter prices savings at your real cache mix. Output compression still pays everywhere: output tokens are never cached and cost 5× input.
 
 ## Install
 
