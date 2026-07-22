@@ -2,6 +2,14 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.15.1] — 2026-07-22
+
+### Fixed
+- **spec-generate**: output anchors to the git toplevel (`--repo-root` to override); outside a repo it errors without writing. Previously CWD-relative — a drifted shell CWD silently filed a spec into a sibling repo (86a8a3e)
+
+### Added
+- **hooks**: regression test pinning that the SessionStart matcher covers source `"compact"` — post-compaction re-injection of the discipline block depends on it. Investigated and rejected PostCompact-as-injector: CC 2.1 PostCompact is side-effects-only, its output discarded; registering it would have shipped a silent no-op (86a8a3e)
+
 ## [v0.15.0] — 2026-07-22
 
 Gate integrity release. One day of dogfooding v0.13.0/v0.14.0 showed the review gate's pass-marker was a bare timestamp any process could stamp — five deliberate stamps in a single day, none verifiable against what was reviewed. The gate now proves what it claims to prove.
