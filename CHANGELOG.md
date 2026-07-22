@@ -2,6 +2,23 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.13.0] — 2026-07-22
+
+Enterprise-feedback release: honest savings accounting, input compression made opt-in, verifiable supply chain. Driver: external audit of pakka in a heavily cached (Bedrock) environment.
+
+### Added
+- **build**: reproducible release pipeline — `make release` refuses a dirty tree, builds with `-trimpath` + `CGO_ENABLED=0`, emits `SHA256SUMS`; tag-triggered CI workflow (`release.yml`) builds from source, verifies the tree stays clean, and publishes assets (e25edd4)
+- **build**: SLSA build-provenance attestation on every release asset (verify: `gh attestation verify <asset> -R amargautam/pakka`) + CycloneDX SBOM (`sbom.cdx.json`); CI fails hard if any artifact or checksum is missing (4062318, f4e9960)
+- **security**: SECURITY.md "Verifying Releases" — checksum validation, attestation verification, SBOM location, reproduce-at-tag instructions; release checklist gains a mandatory supply-chain gate
+
+### Changed
+- **compress**: input-file (context-file) compression is now **opt-in, default off** — enable with `PAKKA_INPUT_COMPRESS=1` or settings `pakka.compress.input: true`; manual `/pakka:compress` is unchanged. Rationale: near-zero savings on terse files against the cost of rewriting version-controlled files and sending their contents to the model provider. Output, tool-result, and subagent-return vectors unchanged (21fdf65)
+- **build**: shipped binaries regenerated from committed source — `vcs.modified=false`, `vcs.revision` matches HEAD; previously built from an uncommitted working tree (f1cd4fa)
+
+### Fixed
+- **meter**: input-side `$` savings now priced at a blended cache-aware rate — fresh 1×, cache-write 1.25×, cache-read 0.1×, weighted by the session's actual telemetry; falls back to the flat fresh-input rate when telemetry is absent. Previously every saved input token was priced at the full fresh-input rate with no concept of prompt caching, overstating input savings by ~10× in heavily cached environments (a0dddc7)
+- **docs**: README "no dial-home" claim made precise — no telemetry to pakka ever; the one egress path (semantic input compression → your configured model provider) is named, with kill-switch and restore documented (7cf1fed)
+
 ## [v0.12.1] — 2026-07-21
 
 ### Fixed
