@@ -2,6 +2,13 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.16.0] — 2026-07-23
+
+Completes the gate-integrity arc: v0.15.0 proved what diff was reviewed; v0.16.0 proves what the review found.
+
+### Added
+- **gate**: review provenance — `pakka-core review-pass --findings <verdict.jsonl>` binds the findings file's SHA-256 and severity counts into the pass marker; the gate re-hashes at commit time and blocks swapped or mutated evidence; the `Reviewed-by-pakka` trailer permanently carries `diff:<8hex>` and `findings:<8hex> (<E> errors, <W> warnings)`; each bound pass writes a `review-verdict` audit entry whose rationale text is searchable via `/pakka:recall` — no recall schema change (9fbd17c)
+
 ## [v0.15.1] — 2026-07-22
 
 ### Fixed
