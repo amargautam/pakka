@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestReviewPassRun_repoRootFlagWritesTargetRepo(t *testing.T) {
 		t.Fatalf("marker in target repo did not classify as pass: %q", raw)
 	}
 	// And gatherReviewState for a commit against target authorizes it.
-	state := gatherReviewState(commitgate.DefaultConfig(), commitCmd(target))
+	state, _ := gatherReviewState(commitgate.DefaultConfig(), commitCmd(target))
 	if !state.HasRecentPass {
 		t.Fatalf("gate did not see the --repo-root marker; state=%+v", state)
 	}
@@ -50,7 +51,7 @@ func TestReviewPassRun_repoRootFlagWritesTargetRepo(t *testing.T) {
 // AC1: review-pass on an empty staged diff errors and writes no marker.
 func TestRecordReviewPass_emptyDiffErrors(t *testing.T) {
 	repo := initTestRepo(t)
-	if _, err := recordReviewPass(repo); err == nil {
+	if _, err := recordReviewPass(repo, ""); err == nil {
 		t.Fatal("expected error on empty staged diff")
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".pakka", "reviews", "last-pass-ts")); err == nil {
@@ -63,7 +64,7 @@ func TestRecordReviewPass_writesJSONMarker(t *testing.T) {
 	repo := initTestRepo(t)
 	stage(t, repo, "a.txt", "hello\n")
 
-	marker, err := recordReviewPass(repo)
+	marker, err := recordReviewPass(repo, "")
 	if err != nil {
 		t.Fatalf("recordReviewPass: %v", err)
 	}
@@ -84,11 +85,11 @@ func TestRecordReviewPass_writesJSONMarker(t *testing.T) {
 func TestGate_freshMatchingMarkerPasses(t *testing.T) {
 	repo := initTestRepo(t)
 	stage(t, repo, "a.txt", "hello\n")
-	if _, err := recordReviewPass(repo); err != nil {
+	if _, err := recordReviewPass(repo, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	state := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
+	state, _ := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
 	if !state.HasRecentPass {
 		t.Fatalf("expected HasRecentPass; state=%+v", state)
 	}
@@ -102,13 +103,13 @@ func TestGate_freshMatchingMarkerPasses(t *testing.T) {
 func TestGate_diffChangedAfterMarkerBlocks(t *testing.T) {
 	repo := initTestRepo(t)
 	stage(t, repo, "a.txt", "hello\n")
-	if _, err := recordReviewPass(repo); err != nil {
+	if _, err := recordReviewPass(repo, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Stage an additional file — diff no longer matches the marker.
 	stage(t, repo, "b.txt", "world\n")
 
-	state := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
+	state, _ := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
 	if state.HasRecentPass {
 		t.Fatal("stale-diff marker wrongly authorized")
 	}
@@ -125,14 +126,14 @@ func TestGate_diffChangedAfterMarkerBlocks(t *testing.T) {
 func TestGate_identicalRestagePasses(t *testing.T) {
 	repo := initTestRepo(t)
 	stage(t, repo, "a.txt", "hello\n")
-	if _, err := recordReviewPass(repo); err != nil {
+	if _, err := recordReviewPass(repo, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Unstage and restage the identical content.
 	runGit(t, repo, "reset", "-q")
 	stage(t, repo, "a.txt", "hello\n")
 
-	state := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
+	state, _ := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
 	if !state.HasRecentPass {
 		t.Fatalf("identical restage did not pass; state=%+v", state)
 	}
@@ -152,7 +153,7 @@ func TestGate_legacyEpochMarkerBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
+	state, _ := gatherReviewState(commitgate.DefaultConfig(), commitCmd(repo))
 	if state.HasRecentPass {
 		t.Fatal("legacy marker wrongly authorized")
 	}
@@ -163,6 +164,120 @@ func TestGate_legacyEpochMarkerBlocks(t *testing.T) {
 	if d.Allow || !strings.Contains(d.Stderr, "outdated") {
 		t.Fatalf("expected legacy block; allow=%v stderr=%q", d.Allow, d.Stderr)
 	}
+}
+
+// AC1: review-pass --findings records findingsSHA256 + a severity tally on the
+// marker matching the file's contents.
+func TestRecordReviewPass_bindsFindings(t *testing.T) {
+	repo := initTestRepo(t)
+	stage(t, repo, "a.txt", "hello\n")
+
+	findings := writeFindings(t, repo, []string{
+		`{"kind":"security","severity":"error","file":"a.txt","line":1,"confidence":90,"rationale":"unsanitized shell interpolation"}`,
+		`{"kind":"correctness","severity":"warn","file":"a.txt","line":2,"confidence":70,"rationale":"nil deref risk"}`,
+		`{"kind":"style","severity":"info","file":"a.txt","line":3,"confidence":50,"rationale":"rename variable"}`,
+		`{"kind":"misc","severity":"nit","file":"a.txt","line":4,"confidence":40,"rationale":"unknown severity counts toward total only"}`,
+	})
+
+	marker, err := recordReviewPass(repo, findings)
+	if err != nil {
+		t.Fatalf("recordReviewPass: %v", err)
+	}
+	raw, _ := os.ReadFile(findings)
+	if marker.FindingsSHA256 != sha256Hex(raw) {
+		t.Fatalf("findingsSHA256 mismatch: got %q want %q", marker.FindingsSHA256, sha256Hex(raw))
+	}
+	if marker.FindingsCounts == nil {
+		t.Fatal("FindingsCounts nil")
+	}
+	got := *marker.FindingsCounts
+	if got.Error != 1 || got.Warning != 1 || got.Info != 1 || got.Total != 4 {
+		t.Fatalf("bad counts: %+v", got)
+	}
+	if marker.FindingsPath == "" {
+		t.Fatal("FindingsPath empty; gate cannot re-resolve the findings file")
+	}
+	// Path stored repo-relative so the gate resolves it from the repo root.
+	if filepath.IsAbs(marker.FindingsPath) {
+		t.Fatalf("FindingsPath should be repo-relative, got absolute: %q", marker.FindingsPath)
+	}
+}
+
+// AC1: tallyFindings buckets the reviewer agents' actual vocabulary. Agents
+// emit "warn" (agents/*.md); "warning" is accepted as an alias. Unknown/absent
+// severities count toward Total only; unparseable lines are ignored.
+func TestTallyFindings_severityVocabulary(t *testing.T) {
+	blob := strings.Join([]string{
+		`{"severity":"error"}`,
+		`{"severity":"warn"}`,    // agents' real vocabulary
+		`{"severity":"warning"}`, // legacy/hand-written alias
+		`{"severity":"info"}`,
+		`{"severity":"nit"}`, // unknown → total only
+		`{"kind":"x"}`,       // absent severity → total only
+		`not json`,           // ignored entirely
+		``,                   // blank → skipped
+	}, "\n")
+
+	got := tallyFindings([]byte(blob))
+	want := commitgate.FindingsCounts{Error: 1, Warning: 2, Info: 1, Total: 6}
+	if got != want {
+		t.Fatalf("tallyFindings = %+v; want %+v", got, want)
+	}
+}
+
+// AC1: an unreadable --findings path errors and writes no marker.
+func TestRecordReviewPass_unreadableFindingsErrors(t *testing.T) {
+	repo := initTestRepo(t)
+	stage(t, repo, "a.txt", "hello\n")
+
+	_, err := recordReviewPass(repo, filepath.Join(repo, "does-not-exist.jsonl"))
+	if err == nil {
+		t.Fatal("expected error for unreadable findings path")
+	}
+	if _, statErr := os.Stat(filepath.Join(repo, ".pakka", "reviews", "last-pass-ts")); statErr == nil {
+		t.Fatal("marker written despite unreadable findings")
+	}
+}
+
+// AC2: a marker recorded WITHOUT --findings is byte-shape identical to the
+// v0.15 marker — no findings fields leak in via non-omitempty tags.
+func TestPassMarker_v015ByteShapeUnchanged(t *testing.T) {
+	// Frozen v0.15 fixture: exactly {ts, diffSHA256, verdict}.
+	const v015 = `{"ts":1780439832,"diffSHA256":"abc123","verdict":"passed"}`
+	m := commitgate.PassMarker{TS: 1780439832, DiffSHA256: "abc123", Verdict: "passed"}
+	got, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != v015 {
+		t.Fatalf("marker byte shape drifted from v0.15\n got: %s\nwant: %s", got, v015)
+	}
+
+	// And the on-disk marker from recordReviewPass(root, "") carries no findings keys.
+	repo := initTestRepo(t)
+	stage(t, repo, "a.txt", "hello\n")
+	if _, err := recordReviewPass(repo, ""); err != nil {
+		t.Fatal(err)
+	}
+	raw := readMarker(t, repo)
+	if strings.Contains(raw, "findings") {
+		t.Fatalf("marker without --findings leaked findings keys: %q", raw)
+	}
+}
+
+// writeFindings writes JSONL lines to <repo>/.pakka/reviews/verdict-test.jsonl
+// and returns the absolute path.
+func writeFindings(t *testing.T, repo string, lines []string) string {
+	t.Helper()
+	dir := filepath.Join(repo, ".pakka", "reviews")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "verdict-test.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // --- helpers ---

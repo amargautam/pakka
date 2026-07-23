@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	trailerKeyA      = "Reviewed-by-pakka:"
+	trailerKeyA        = "Reviewed-by-pakka:"
 	coAuthorPakkaEmail = "279024857+pakka-bot@users.noreply.github.com"
 )
 
@@ -57,21 +57,36 @@ type State struct {
 	// MarkerDiffMismatch: a fresh JSON marker exists but its diffSHA256 does
 	// not match the current staged diff — the review covered other changes.
 	MarkerDiffMismatch bool
+	// MarkerFindingsMismatch: a fresh diff-matching marker binds a findings
+	// file (findingsSHA256), but the file changed or is missing at commit time
+	// — the review evidence was swapped after the pass. Gate blocks.
+	MarkerFindingsMismatch bool
+
+	// DiffSHA256 is the hex sha256 of the current staged diff, carried so the
+	// authorized trailer can advertise the reviewed diff's provenance.
+	DiffSHA256 string
+	// BoundFindingsSHA256 / BoundCounts carry the findings binding from a
+	// verified pass marker so the trailer can advertise findings provenance.
+	BoundFindingsSHA256 string
+	BoundCounts         *FindingsCounts
 }
 
 // Stderr messages for the no-pass gate branches. Shared by the fast-path
 // Evaluate and the AST path so a blocked commit reads identically regardless
 // of command shape.
 const (
-	stderrNoPass       = "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass."
-	stderrLegacyMarker = "pakka: review marker format outdated — re-run /pakka:review to bind the pass to the current staged diff."
-	stderrDiffMismatch = "pakka: staged diff changed since review (diff mismatch) — the pass marker covers a different diff. Re-run /pakka:review on the current staged changes."
+	stderrNoPass           = "pakka: review gate active. No passing review found.\nRun /pakka:review on staged changes, or add [skip pakka] to bypass."
+	stderrLegacyMarker     = "pakka: review marker format outdated — re-run /pakka:review to bind the pass to the current staged diff."
+	stderrDiffMismatch     = "pakka: staged diff changed since review (diff mismatch) — the pass marker covers a different diff. Re-run /pakka:review on the current staged changes."
+	stderrFindingsMismatch = "pakka: review findings changed since review (findings mismatch) — the findings file bound to the pass was modified or removed after approval. Re-run /pakka:review to re-bind evidence to the current staged diff."
 )
 
 // noPassStderr returns the stderr message for a blocked commit that has no
 // authorizing pass, selecting the most specific explanation available.
 func noPassStderr(state *State) string {
 	switch {
+	case state.MarkerFindingsMismatch:
+		return stderrFindingsMismatch
 	case state.MarkerDiffMismatch:
 		return stderrDiffMismatch
 	case state.MarkerLegacy:
@@ -79,6 +94,40 @@ func noPassStderr(state *State) string {
 	default:
 		return stderrNoPass
 	}
+}
+
+// decorateProvenance appends diff/findings digest provenance to a
+// Reviewed-by-pakka trailer value. The reviewed diff's 8-hex prefix is always
+// appended when known; the findings digest and error/warning counts are
+// appended only when the pass is bound to a verified findings file. Values with
+// an empty DiffSHA256 (e.g. hand-built State in unit tests) are left untouched,
+// preserving the pre-provenance trailer shape.
+func decorateProvenance(base string, state *State) string {
+	if state == nil {
+		return base
+	}
+	out := base
+	if h := first8(state.DiffSHA256); h != "" {
+		out += " diff:" + h
+	}
+	if h := first8(state.BoundFindingsSHA256); h != "" {
+		e, w := 0, 0
+		if state.BoundCounts != nil {
+			e = state.BoundCounts.Error
+			w = state.BoundCounts.Warning
+		}
+		out += fmt.Sprintf(" findings:%s (%d errors, %d warnings)", h, e, w)
+	}
+	return out
+}
+
+// first8 returns the first 8 characters of s, or all of s when shorter. Empty
+// input returns "".
+func first8(s string) string {
+	if len(s) >= 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // Finding represents a review finding above threshold.
@@ -804,7 +853,7 @@ func pathspecSepIndex(cmd string) int {
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quote
-// via the standard '\'' sequence. Result is safe for direct interpolation
+// via the standard '\” sequence. Result is safe for direct interpolation
 // into a Bash command line; the shell will see exactly s as one argument.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
@@ -892,14 +941,14 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	if cfg.AutoGate {
 		// Oversize diff — skip gate.
 		if cfg.MaxDiffBytes > 0 && state.DiffBytes > cfg.MaxDiffBytes {
-			d := maybeRewrite(BaselineTrailer(cfg.Version, cfg.SessionID))
+			d := maybeRewrite(decorateProvenance(BaselineTrailer(cfg.Version, cfg.SessionID), state))
 			d.AuditNote = "review_skipped=oversize"
 			return d
 		}
 
 		// Recent passing review — strong trailer.
 		if state.HasRecentPass {
-			return maybeRewrite(StrongTrailer(cfg.Version, cfg.SessionID))
+			return maybeRewrite(decorateProvenance(StrongTrailer(cfg.Version, cfg.SessionID), state))
 		}
 
 		// No recent pass — block.
@@ -914,7 +963,7 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	}
 
 	// No gate — baseline Trailer A (if needed) + Trailer B (if needed).
-	return maybeRewrite(BaselineTrailer(cfg.Version, cfg.SessionID))
+	return maybeRewrite(decorateProvenance(BaselineTrailer(cfg.Version, cfg.SessionID), state))
 }
 
 // FormatFindings formats error findings for stderr output.

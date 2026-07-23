@@ -27,7 +27,7 @@ func TestInstallGitHookCmdImplementsCommand(t *testing.T) {
 func TestPrepareCommitMsgHook_stampsOnlyOnDiffMatch(t *testing.T) {
 	repo := initTestRepo(t)
 	stage(t, repo, "a.txt", "hello\n")
-	if _, err := recordReviewPass(repo); err != nil {
+	if _, err := recordReviewPass(repo, ""); err != nil {
 		t.Fatal(err)
 	}
 	hookPath := writeHook(t)

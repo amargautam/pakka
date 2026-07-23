@@ -467,14 +467,14 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 
 	gateBlocks := false
 	auditNote := ""
-	trailerA := BaselineTrailer(cfg.Version, cfg.SessionID)
+	trailerA := decorateProvenance(BaselineTrailer(cfg.Version, cfg.SessionID), state)
 
 	if cfg.AutoGate {
 		switch {
 		case cfg.MaxDiffBytes > 0 && state.DiffBytes > cfg.MaxDiffBytes:
 			auditNote = "review_skipped=oversize"
 		case state.HasRecentPass:
-			trailerA = StrongTrailer(cfg.Version, cfg.SessionID)
+			trailerA = decorateProvenance(StrongTrailer(cfg.Version, cfg.SessionID), state)
 		case len(state.ErrorFindings) > 0:
 			gateBlocks = true
 		default:

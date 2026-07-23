@@ -68,7 +68,7 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
 4. **Collect findings.** Parse JSON lines from all four agents into one list.
 
-5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed.
+5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed. Remember this path — the PASS step binds it to the marker as the review evidence via `--findings`.
 
 6. **Filter by confidence.** Drop findings where `confidence < 80` (or
    `pakka.review.confidenceThreshold`). Drop findings missing `line` field. Exception:
@@ -93,12 +93,22 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 9. **Verdict.**
    - If ADVISORY=true → append: `note: no matching spec found in docs/specs/ — review ran without spec context. Run /pakka:plan to write one.`
    - Any `severity=error` → `VERDICT: FAIL — N error(s) above threshold`. Exit 2.
-   - Otherwise → `VERDICT: PASS`. Record a diff-bound pass marker: run
-     `${CLAUDE_PLUGIN_ROOT}/bin/run review-pass`. It hashes the current staged
-     diff and writes `{ts, diffSHA256, verdict}` to `<repo-root>/.pakka/reviews/last-pass-ts`.
+   - Otherwise → `VERDICT: PASS`. Record a diff-bound pass marker AND bind the
+     review evidence: run
+     `${CLAUDE_PLUGIN_ROOT}/bin/run review-pass --findings <findings-file>`,
+     where `<findings-file>` is the full-log path written in step 5
+     (`.pakka/reviews/<short-sha-or-timestamp>.jsonl`). It hashes the current
+     staged diff and the findings file, writing
+     `{ts, diffSHA256, verdict, findingsSHA256, findingsPath, findingsCounts}`
+     to `<repo-root>/.pakka/reviews/last-pass-ts`. The gate re-hashes the
+     findings file at commit time and blocks if it changed (evidence cannot be
+     swapped after approval); it also stamps the commit trailer with
+     `diff:<8hex> findings:<8hex> (<E> errors, <W> warnings)` and records a
+     searchable `review-verdict` audit entry for `/pakka:recall`.
      When reviewing a repo that is NOT the session CWD (the same `-C <path>`/`cd <path>`
-     the commit will use), pass it explicitly so the marker lands where the gate
-     reads: `${CLAUDE_PLUGIN_ROOT}/bin/run review-pass --repo-root <repo-root>`.
+     the commit will use), also pass it explicitly so the marker lands where the gate
+     reads: `${CLAUDE_PLUGIN_ROOT}/bin/run review-pass --repo-root <repo-root> --findings <findings-file>`.
+     `--findings` is optional — omitting it keeps the v0.15 diff-only marker shape.
      Do NOT hand-write the marker or `echo $(date +%s) >` it — the gate now verifies
      the marker's `diffSHA256` against the staged diff, so a bare epoch is rejected.
      If review-pass reports "no staged changes," stage the reviewed diff first.

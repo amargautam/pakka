@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/amargautam/pakka/internal/commitgate"
@@ -38,6 +39,7 @@ func (c *ReviewPassCmd) Name() string { return "review-pass" }
 func (c *ReviewPassCmd) Run(args []string) error {
 	fs := flag.NewFlagSet("review-pass", flag.ContinueOnError)
 	repoRootFlag := fs.String("repo-root", "", "repo root whose staged diff is hashed (default: git root of CWD)")
+	findingsFlag := fs.String("findings", "", "path to the review findings JSONL to bind to the marker (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -47,7 +49,7 @@ func (c *ReviewPassCmd) Run(args []string) error {
 		root = repoRoot()
 	}
 
-	marker, err := recordReviewPass(root)
+	marker, err := recordReviewPass(root, *findingsFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pakka: review-pass: %v\n", err)
 		os.Exit(1)
@@ -60,7 +62,14 @@ func (c *ReviewPassCmd) Run(args []string) error {
 // diff-bound pass marker. Returns an error (and writes no marker) when the
 // staged diff is empty or cannot be read/written. Extracted from Run so tests
 // can exercise it without os.Exit.
-func recordReviewPass(root string) (commitgate.PassMarker, error) {
+//
+// When findingsPath is non-empty, the findings file is read and hashed before
+// the marker is written: the marker gains findingsSHA256 (sha256 of the file
+// bytes), findingsCounts (severity tally), and findingsPath (stored relative
+// to the git toplevel so the gate can re-resolve it). An unreadable findings
+// path is an error and no marker is written — a pass cannot bind to evidence
+// that does not exist.
+func recordReviewPass(root, findingsPath string) (commitgate.PassMarker, error) {
 	diff, err := stagedDiff(root)
 	if err != nil {
 		return commitgate.PassMarker{}, fmt.Errorf("cannot read staged diff: %w", err)
@@ -90,10 +99,97 @@ func recordReviewPass(root string) (commitgate.PassMarker, error) {
 		DiffSHA256: sha256Hex(diff),
 		Verdict:    "passed",
 	}
+
+	// Bind the review evidence, if supplied. Read + hash BEFORE writing the
+	// marker so an unreadable findings path leaves no marker on disk.
+	if findingsPath != "" {
+		fdata, err := os.ReadFile(findingsPath)
+		if err != nil {
+			return commitgate.PassMarker{}, fmt.Errorf("cannot read findings file %s: %w", findingsPath, err)
+		}
+		counts := tallyFindings(fdata)
+		marker.FindingsSHA256 = sha256Hex(fdata)
+		marker.FindingsCounts = &counts
+		marker.FindingsPath = relFindingsPath(top, findingsPath)
+	}
+
 	if err := writePassMarker(reviewsDir, marker); err != nil {
 		return commitgate.PassMarker{}, fmt.Errorf("cannot write marker: %w", err)
 	}
 	return marker, nil
+}
+
+// tallyFindings parses a findings JSONL blob and tallies severities. Each row
+// that parses as JSON counts toward Total; rows whose severity is "error",
+// "warn"/"warning", or "info" also increment the matching bucket. The reviewer
+// agents emit "warn" (see agents/*.md); "warning" is accepted as an alias so
+// hand-written or legacy findings tally the same. Unknown or absent severities
+// count toward Total only. Unparseable lines are ignored.
+func tallyFindings(data []byte) commitgate.FindingsCounts {
+	var c commitgate.FindingsCounts
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var row struct {
+			Severity string `json:"severity"`
+		}
+		if json.Unmarshal([]byte(line), &row) != nil {
+			continue
+		}
+		c.Total++
+		switch row.Severity {
+		case "error":
+			c.Error++
+		case "warn", "warning":
+			c.Warning++
+		case "info":
+			c.Info++
+		}
+	}
+	return c
+}
+
+// relFindingsPath renders findingsPath relative to the git toplevel top so the
+// gate can resolve it from the repo root. Falls back to the original path when
+// top is unknown or a relative path cannot be computed.
+func relFindingsPath(top, findingsPath string) string {
+	if top == "" {
+		return findingsPath
+	}
+	abs, err := filepath.Abs(findingsPath)
+	if err != nil {
+		return findingsPath
+	}
+	rel, err := filepath.Rel(top, abs)
+	if err != nil {
+		return findingsPath
+	}
+	return rel
+}
+
+// extractRationales concatenates the "rationale" text of every parsed finding
+// row into a single space-separated string, so the audit "review-verdict"
+// entry carries the findings' prose for FTS5 to match.
+func extractRationales(data []byte) string {
+	var parts []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var row struct {
+			Rationale string `json:"rationale"`
+		}
+		if json.Unmarshal([]byte(line), &row) != nil {
+			continue
+		}
+		if row.Rationale != "" {
+			parts = append(parts, row.Rationale)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // stagedDiff returns the raw bytes of `git diff --cached` for the repo rooted

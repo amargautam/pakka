@@ -99,9 +99,10 @@ func runCommitGate() {
 	mightCommit := strings.Contains(input.Command, "commit")
 	reviewsDir := ".pakka/reviews"
 	state := &commitgate.State{}
+	var verdict *commitgate.ReviewVerdict
 	if mightCommit {
 		reviewsDir = resolveReviewsDir(input.Command)
-		state = gatherReviewState(cfg, input.Command)
+		state, verdict = gatherReviewState(cfg, input.Command)
 	}
 	d := commitgate.Evaluate(input.Command, cfg, state)
 
@@ -138,6 +139,12 @@ func runCommitGate() {
 	if d.IsCommit && cfg.AutoGate {
 		writeVerdict(event.SessionID, d, reviewsDir)
 	}
+
+	// On an authorized commit whose pass is bound to verified findings, append a
+	// "review-verdict" entry to the session audit log. Recall's Index picks it
+	// up with zero schema change; the concatenated rationale text is what makes
+	// "what did reviews flag about X" answerable via /pakka:recall.
+	maybeWriteReviewVerdict(event.SessionID, d, verdict)
 
 	if !d.Allow {
 		fmt.Fprint(os.Stderr, d.Stderr)
@@ -341,8 +348,14 @@ func resolveReviewsDir(cmd string) string {
 	return ".pakka/reviews"
 }
 
-func gatherReviewState(cfg *commitgate.Config, cmd string) *commitgate.State {
+// gatherReviewState resolves the gate's view of review state for a commit
+// command. It returns the pure State that Evaluate/AST consume plus, on an
+// authorized findings-bound pass, the ReviewVerdict audit payload (nil
+// otherwise) — kept off State because no gate-decision code reads it; it is a
+// courier from this I/O layer to the audit writer in runCommitGate.
+func gatherReviewState(cfg *commitgate.Config, cmd string) (*commitgate.State, *commitgate.ReviewVerdict) {
 	state := &commitgate.State{}
+	var verdict *commitgate.ReviewVerdict
 
 	// Resolve the actual repo root: prefer -C path or cd path from the command,
 	// fall back to git rev-parse from process CWD. This matters when the hook
@@ -371,6 +384,8 @@ func gatherReviewState(cfg *commitgate.Config, cmd string) *commitgate.State {
 		state.DiffBytes = len(diff)
 		diffHash = sha256Hex(diff)
 	}
+	// Carried into the authorized trailer as diff:<8hex> provenance.
+	state.DiffSHA256 = diffHash
 
 	// Pass-marker check: fresh JSON marker whose diffSHA256 matches the current
 	// staged diff authorizes the commit. Stale/mismatched/legacy markers do not
@@ -379,13 +394,17 @@ func gatherReviewState(cfg *commitgate.Config, cmd string) *commitgate.State {
 	if err == nil {
 		switch commitgate.ClassifyMarker(string(data), diffHash, time.Now().Unix(), 300) {
 		case commitgate.MarkerPass:
-			state.HasRecentPass = true
+			verdict = bindFindingsToState(state, root, string(data), diffHash)
 		case commitgate.MarkerMismatch:
 			state.MarkerDiffMismatch = true
 		case commitgate.MarkerLegacy:
 			state.MarkerLegacy = true
 		}
 	}
+
+	// bindFindingsToState may have flagged a findings mismatch (evidence
+	// swapped after the pass) instead of authorizing — in that case
+	// HasRecentPass stays false and the gate blocks below.
 
 	// Load error findings from latest review (only if no recent pass).
 	// Filter by the changed-line set so pre-existing-code findings cannot
@@ -395,7 +414,64 @@ func gatherReviewState(cfg *commitgate.Config, cmd string) *commitgate.State {
 		state.ErrorFindings = loadLatestErrors(cfg.ConfidenceThreshold, scopeFromStagedDiff(root), reviewsDir)
 	}
 
-	return state
+	return state, verdict
+}
+
+// maybeWriteReviewVerdict appends the "review-verdict" audit entry when the
+// commit is authorized and its pass is bound to verified findings (verdict
+// non-nil). No-op otherwise. Extracted from runCommitGate so tests can drive
+// the exact production write path (audit → recall Index → FTS5).
+func maybeWriteReviewVerdict(sessionID string, d *commitgate.Decision, verdict *commitgate.ReviewVerdict) {
+	if !d.Allow || !d.IsCommit || verdict == nil {
+		return
+	}
+	content, err := json.Marshal(verdict)
+	if err != nil {
+		return
+	}
+	_ = audit.WriteNote(sessionID, "review-verdict", string(content))
+}
+
+// bindFindingsToState handles a diff-matching MarkerPass. When the marker binds
+// a findings file, it re-resolves and re-hashes that file: a hash mismatch or a
+// missing file means the evidence was swapped after approval → flag
+// MarkerFindingsMismatch (gate blocks) and do NOT authorize. On a clean match
+// (or a marker with no findings binding) it authorizes the pass and sets the
+// trailer-provenance fields on state. Returns the review-verdict audit payload
+// when findings are bound (nil otherwise) — the caller couriers it to the audit
+// writer; no gate-decision code reads it, so it stays off State.
+func bindFindingsToState(state *commitgate.State, root, markerContent, diffHash string) *commitgate.ReviewVerdict {
+	m, ok := commitgate.ParseMarker(markerContent)
+	if !ok || m.FindingsSHA256 == "" {
+		// No findings binding — a plain diff-bound pass authorizes as before.
+		state.HasRecentPass = true
+		return nil
+	}
+
+	fpath := m.FindingsPath
+	if !filepath.IsAbs(fpath) {
+		fpath = filepath.Join(root, fpath)
+	}
+	fdata, err := os.ReadFile(fpath)
+	if err != nil || sha256Hex(fdata) != m.FindingsSHA256 {
+		state.MarkerFindingsMismatch = true
+		return nil
+	}
+
+	state.HasRecentPass = true
+	state.BoundFindingsSHA256 = m.FindingsSHA256
+	state.BoundCounts = m.FindingsCounts
+
+	counts := commitgate.FindingsCounts{}
+	if m.FindingsCounts != nil {
+		counts = *m.FindingsCounts
+	}
+	return &commitgate.ReviewVerdict{
+		DiffSHA256:     diffHash,
+		FindingsSHA256: m.FindingsSHA256,
+		Counts:         counts,
+		Rationales:     extractRationales(fdata),
+	}
 }
 
 // scopeFromStagedDiff returns the (file, line) set of additions/modifications
