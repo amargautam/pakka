@@ -564,13 +564,24 @@ func resolveLevel(outputLevel string) string {
 // Errors: Returns error only on write failure to w.
 func Run(event *hookevent.Event, native *NativePayload, w io.Writer, outputLevel string, stale int) error {
 	m := compute(event, native, outputLevel, stale)
-	var sep string
-	if utf8Capable() {
-		sep = "·"
+	utf8 := utf8Capable()
+	var sep, upArrow string
+	if utf8 {
+		sep, upArrow = "·", "↑"
 	} else {
-		sep = "|"
+		sep, upArrow = "|", "^"
 	}
-	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m %s", formatRunLine(m, sep))
+	line := formatRunLine(m, sep)
+	// Additive upgrade hint: when a newer plugin version is cached beside the
+	// running one, append a compact `↑<version>` segment. Absent when current or
+	// when the signal is unavailable — the tokens/percent display above is never
+	// altered (spec AC6). Amber (245,158,11) to match the pakka label and read
+	// as "action available". Arrow glyph follows the same UTF-8 gate as sep:
+	// "↑" when capable, ASCII "^" otherwise.
+	if ver := upgradeVersion(); ver != "" {
+		line += fmt.Sprintf(" %s \033[38;2;245;158;11m%s%s\033[0m", sep, upArrow, ver)
+	}
+	_, err := fmt.Fprintf(w, "\033[38;2;245;158;11mpakka\033[0m %s", line)
 	return err
 }
 
