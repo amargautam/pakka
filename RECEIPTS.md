@@ -1,18 +1,18 @@
 # RECEIPTS.md — pakka built with pakka
 
 version: v0.5.0
-generated: 2026-07-23T16:59:39Z
+generated: 2026-07-24T17:42:47Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 1293 |
+| sessions | 1300 |
 | first session | 2026-04-24 |
-| last session | 2026-07-23 |
-| total tokens used | 62,348,786 |
-| bytes saved (V2+V3+V4 compression) | 482,691 |
-| est. tokens saved (bytes ÷ 3.5) | 138,349 |
+| last session | 2026-07-24 |
+| total tokens used | 63,170,078 |
+| bytes saved (V2+V3+V4 compression) | 484,644 |
+| est. tokens saved (bytes ÷ 3.5) | 138,922 |
 
 ## output compression savings (V1 — calibrated bench)
 
@@ -28,7 +28,7 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Output tokens measured across 1293 sessions: 1,247,918
+- Output tokens measured across 1300 sessions: 1,247,918
 - Output-ratio source: default calibration
 - At 66% output reduction (default calibration): ~823,456 tokens avoided
 - At $15/MTok: **~$12.35 saved on output tokens alone**
@@ -39,24 +39,24 @@ At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million ou
 
 | tool | calls |
 |---|---|
-| Bash | 18,180 |
-| Read | 7,669 |
-| Edit | 5,763 |
-| Write | 1,367 |
-| Agent | 1,046 |
+| Bash | 18,483 |
+| Read | 7,764 |
+| Edit | 5,838 |
+| Write | 1,391 |
+| Agent | 1,059 |
 | Grep | 600 |
-| WebFetch | 156 |
+| WebFetch | 159 |
 | Glob | 126 |
 | TodoWrite | 11 |
-| WebSearch | 5 |
+| WebSearch | 6 |
 
 ## review gate
 
 | metric | value |
 |---|---|
-| verdicts run | 140 |
-| verdicts passed | 106 |
-| pass rate | 75.7% |
+| verdicts run | 144 |
+| verdicts passed | 110 |
+| pass rate | 76.4% |
 
 ---
 
