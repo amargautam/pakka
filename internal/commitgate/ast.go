@@ -454,7 +454,9 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 	// the logic mirrors the fast-path Evaluate flow — skip-marker, then
 	// trailer/gate decisions. Every return below sets IsCommit so the caller
 	// writes a verdict / audit entry for chained and wrapped commits too.
-	if !cfg.Signature && !cfg.CoAuthor && !cfg.AutoGate {
+	// A present policy forces the gate on, so this short-circuit only applies
+	// when no policy file exists (mirrors the fast-path Evaluate flow).
+	if !cfg.Signature && !cfg.CoAuthor && !cfg.AutoGate && !state.PolicyPresent {
 		return &Decision{Allow: true, IsCommit: true}
 	}
 
@@ -469,7 +471,12 @@ func evaluateViaAST(cmd string, cfg *Config, state *State) *Decision {
 	auditNote := ""
 	trailerA := decorateProvenance(BaselineTrailer(cfg.Version, cfg.SessionID), state)
 
-	if cfg.AutoGate {
+	if cfg.AutoGate || state.PolicyPresent {
+		// Policy fail-closed takes precedence over every other gate branch,
+		// mirroring the fast-path Evaluate flow.
+		if state.PolicyError != "" {
+			return &Decision{Allow: false, IsCommit: true, Stderr: state.PolicyError}
+		}
 		switch {
 		case cfg.MaxDiffBytes > 0 && state.DiffBytes > cfg.MaxDiffBytes:
 			auditNote = "review_skipped=oversize"

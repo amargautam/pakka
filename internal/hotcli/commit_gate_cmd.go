@@ -14,8 +14,52 @@ import (
 	"github.com/amargautam/pakka/internal/commitgate"
 	"github.com/amargautam/pakka/internal/compress/cstate"
 	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/policy"
 	"github.com/amargautam/pakka/internal/statusline"
 )
+
+// resolveMarkerFreshness returns the marker-freshness window in seconds before
+// any policy clamp: the v0.19.0 default (policy.DefaultMarkerFreshnessSeconds),
+// optionally narrowed by pakka.review.markerFreshnessSeconds in settings.json. A
+// local setting is always bounded by the hard ceiling so no local config can
+// widen the window past policy.MaxMarkerFreshnessSeconds (the same ceiling a
+// policy value is parse-rejected above).
+func resolveMarkerFreshness() int {
+	s := loadSettings()
+	if v := s.Pakka.Review.MarkerFreshnessSeconds; v != nil && *v > 0 {
+		return boundFreshness(*v)
+	}
+	return policy.DefaultMarkerFreshnessSeconds
+}
+
+// boundFreshness caps a freshness window at the single-sourced hard ceiling
+// (policy.MaxMarkerFreshnessSeconds). Pure so it is directly testable.
+func boundFreshness(v int) int {
+	if v > policy.MaxMarkerFreshnessSeconds {
+		return policy.MaxMarkerFreshnessSeconds
+	}
+	return v
+}
+
+// writePolicyStateNote records one audit entry per gate run capturing whether a
+// committed policy was present, absent, or errored — so absent-policy gate runs
+// still leave a trace and drift is observable. No-op when sessionID is empty
+// (unit tests that construct State directly), which keeps it from writing to a
+// developer's real ~/.pakka during test runs.
+func writePolicyStateNote(sessionID, state string) {
+	if sessionID == "" {
+		return
+	}
+	_ = audit.WriteNote(sessionID, "policy-state", `{"state":"`+state+`"}`)
+}
+
+// logPolicyClamp records a policy floor clamp: one stderr line naming the
+// clamped key and the policy value, plus an audit entry of kind "policy-clamp"
+// so drift attempts are observable rather than silent.
+func logPolicyClamp(sessionID, key string, from, to int) {
+	fmt.Fprintf(os.Stderr, "pakka: policy floor clamped %s %d → %d\n", key, from, to)
+	_ = audit.WriteNote(sessionID, "policy-clamp", fmt.Sprintf("%s: local %d clamped to policy %d", key, from, to))
+}
 
 // CommitGateCmd implements the "commit-gate" subcommand.
 type CommitGateCmd struct{}
@@ -34,10 +78,11 @@ type settingsJSON struct {
 		Signature *bool `json:"signature"`
 		CoAuthor  *bool `json:"coAuthor"`
 		Review    struct {
-			ConfidenceThreshold *int     `json:"confidenceThreshold"`
-			AutoGate            *bool    `json:"autoGate"`
-			MaxDiffBytes        *int     `json:"maxDiffBytes"`
-			SkipPaths           []string `json:"skipPaths"`
+			ConfidenceThreshold    *int     `json:"confidenceThreshold"`
+			AutoGate               *bool    `json:"autoGate"`
+			MaxDiffBytes           *int     `json:"maxDiffBytes"`
+			MarkerFreshnessSeconds *int     `json:"markerFreshnessSeconds"`
+			SkipPaths              []string `json:"skipPaths"`
 		} `json:"review"`
 		Compress struct {
 			Input               *bool    `json:"input"`
@@ -375,6 +420,39 @@ func gatherReviewState(cfg *commitgate.Config, cmd string) (*commitgate.State, *
 		root = repoRoot()
 	}
 
+	// Policy floor (v0.19.0). Absent file → zero Policy → every clamp below is a
+	// no-op and behavior is byte-identical to pre-policy. A malformed or too-new
+	// policy file fails CLOSED: record the message on State so Evaluate blocks
+	// the commit, and short-circuit — no point gathering review state we will not
+	// use. One "policy-state" audit note per gate run records which state applied.
+	pol, perr := policy.Load(root)
+	switch {
+	case perr != nil:
+		state.PolicyPresent = true
+		state.PolicyError = perr.Error() + "\nFix or remove .pakka/policy.json, or add [skip pakka] to bypass."
+		writePolicyStateNote(cfg.SessionID, "error")
+		return state, nil
+	case pol.Present():
+		state.PolicyPresent = true
+		writePolicyStateNote(cfg.SessionID, "present")
+	default:
+		writePolicyStateNote(cfg.SessionID, "absent")
+	}
+
+	// Confidence threshold: policy caps it downward (minimum sensitivity floor).
+	if eff, clamped := pol.ClampConfidenceThreshold(cfg.ConfidenceThreshold); clamped {
+		logPolicyClamp(cfg.SessionID, "confidenceThreshold", cfg.ConfidenceThreshold, eff)
+		cfg.ConfidenceThreshold = eff
+	}
+
+	// Marker freshness window: default 1800s, a local setting may narrow it, and
+	// policy caps it downward.
+	freshness := resolveMarkerFreshness()
+	if eff, clamped := pol.ClampMarkerFreshness(freshness); clamped {
+		logPolicyClamp(cfg.SessionID, "markerFreshnessSeconds", freshness, eff)
+		freshness = eff
+	}
+
 	// Diff size + hash via git. The hash binds a review pass to the exact
 	// staged diff: the gate authorizes only when the marker's diffSHA256 still
 	// matches. Writer (review-pass) and gate must invoke git identically.
@@ -392,7 +470,7 @@ func gatherReviewState(cfg *commitgate.Config, cmd string) (*commitgate.State, *
 	// — the gate blocks and names the reason.
 	data, err := os.ReadFile(filepath.Join(reviewsDir, "last-pass-ts"))
 	if err == nil {
-		switch commitgate.ClassifyMarker(string(data), diffHash, time.Now().Unix(), 300) {
+		switch commitgate.ClassifyMarker(string(data), diffHash, time.Now().Unix(), int64(freshness)) {
 		case commitgate.MarkerPass:
 			verdict = bindFindingsToState(state, root, string(data), diffHash)
 		case commitgate.MarkerMismatch:

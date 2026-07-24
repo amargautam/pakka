@@ -183,14 +183,14 @@ func TestDualTrailer(t *testing.T) {
 	coAuthor := CoAuthorTrailer()
 
 	tests := []struct {
-		name       string
-		cmd        string
-		cfg        *Config
-		state      *State
-		wantA      bool // expect Trailer A in Command
-		wantB      bool // expect Trailer B in Command
-		wantNoOp   bool // Command must be empty
-		wantAllow  bool
+		name      string
+		cmd       string
+		cfg       *Config
+		state     *State
+		wantA     bool // expect Trailer A in Command
+		wantB     bool // expect Trailer B in Command
+		wantNoOp  bool // Command must be empty
+		wantAllow bool
 	}{
 		{
 			name:      "clean commit → both trailers",
@@ -349,6 +349,60 @@ func TestIsGitCommitEdgeCases(t *testing.T) {
 		if got := IsGitCommit(tt.cmd); got != tt.want {
 			t.Errorf("IsGitCommit(%q) = %v, want %v", tt.cmd, got, tt.want)
 		}
+	}
+}
+
+func TestPolicyErrorBlocksFastPath(t *testing.T) {
+	cfg := DefaultConfig()
+	// PolicyError set + a diff-matching pass would normally authorize.
+	state := &State{PolicyError: "pakka policy .pakka/policy.json: bad", HasRecentPass: true}
+	d := Evaluate(`git commit -m x`, cfg, state)
+	if d.Allow {
+		t.Fatal("PolicyError must block even with HasRecentPass")
+	}
+	if d.Stderr != state.PolicyError {
+		t.Fatalf("Stderr = %q, want the policy error message", d.Stderr)
+	}
+}
+
+func TestPolicyErrorBlocksASTPath(t *testing.T) {
+	cfg := DefaultConfig()
+	state := &State{PolicyError: "pakka policy .pakka/policy.json: bad", HasRecentPass: true}
+	// Chained shape routes through the AST path.
+	d := Evaluate(`git commit -m x && echo done`, cfg, state)
+	if d.Allow {
+		t.Fatal("PolicyError must block on the AST path too")
+	}
+	if d.Stderr != state.PolicyError {
+		t.Fatalf("Stderr = %q, want the policy error message", d.Stderr)
+	}
+}
+
+func TestPolicyPresentForcesGateWhenAutoGateOff(t *testing.T) {
+	// autoGate locally disabled, but a policy file is present → gate still runs
+	// and blocks a commit with no passing review.
+	cfg := &Config{Signature: true, CoAuthor: true, AutoGate: false, Version: "0.1.0"}
+	state := &State{PolicyPresent: true} // no recent pass, no policy error
+
+	// Fast path.
+	d := Evaluate(`git commit -m x`, cfg, state)
+	if d.Allow {
+		t.Fatal("policy present must force the gate on despite autoGate:false (fast path)")
+	}
+	// AST path (chained shape).
+	d = Evaluate(`git commit -m x && echo done`, cfg, state)
+	if d.Allow {
+		t.Fatal("policy present must force the gate on despite autoGate:false (AST path)")
+	}
+}
+
+func TestNoPolicyAutoGateOffStillAllows(t *testing.T) {
+	// Regression guard for AC1: no policy + autoGate off → unchanged (allow).
+	cfg := &Config{Signature: false, CoAuthor: false, AutoGate: false, Version: "0.1.0"}
+	state := &State{} // PolicyPresent false
+	d := Evaluate(`git commit -m x`, cfg, state)
+	if !d.Allow {
+		t.Fatal("no policy + autoGate off must allow as before")
 	}
 }
 
@@ -765,8 +819,8 @@ func TestInjectTrailer_behaviorVariesWithInput(t *testing.T) {
 }
 
 // TestShellQuote_unitProperties checks the quoting primitive directly.
-// Empty input yields '' (valid empty sh string). Embedded single quote is
-// escaped via the standard '\'' sequence.
+// Empty input yields ” (valid empty sh string). Embedded single quote is
+// escaped via the standard '\” sequence.
 func TestShellQuote_unitProperties(t *testing.T) {
 	cases := []struct {
 		in, want string

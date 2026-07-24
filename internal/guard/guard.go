@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/amargautam/pakka/internal/hookevent"
+	"github.com/amargautam/pakka/internal/policy"
 )
 
 // Result of a guard check.
@@ -42,6 +43,13 @@ type Result struct {
 	// AllowlistErr is non-empty when the allowlist file was malformed; the
 	// block stands (fail closed) and the caller should audit-log the error.
 	AllowlistErr string
+	// PolicyLocked is set to the matched pattern when the committed
+	// .pakka/policy.json locks the pattern's category: the learned allowlist is
+	// ignored, the block stands, and no override is offered.
+	PolicyLocked string
+	// PolicyErr is non-empty when the committed policy file was malformed or
+	// too-new; the block stands (fail closed) and the caller should audit-log it.
+	PolicyErr string
 }
 
 // Run evaluates the hook event against guard rules with default thresholds.
@@ -306,6 +314,23 @@ func checkBash(event *hookevent.Event, cfg Config) *Result {
 	if root == "" {
 		return blocked // no repo scope — plain block, no override offer
 	}
+
+	// Policy floor: a category the committed policy locks can never be
+	// overridden by the learned per-repo allowlist — the block stands and no
+	// override is offered. A malformed/too-new policy fails CLOSED the same way.
+	// Absent policy → zero Policy → no-op, preserving pre-policy behavior.
+	pol, perr := policy.Load(root)
+	if perr != nil {
+		blocked.Allowlistable = false
+		blocked.PolicyErr = perr.Error()
+		return blocked
+	}
+	if pol.IsCategoryLocked(hit.pattern) {
+		blocked.Allowlistable = false
+		blocked.PolicyLocked = hit.pattern
+		return blocked
+	}
+
 	// In auto-approving permission modes the "ask" decision would be waved
 	// through without a human — never offer the override path there.
 	if event.PermissionMode == "bypassPermissions" || event.PermissionMode == "dontAsk" {

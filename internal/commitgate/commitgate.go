@@ -62,6 +62,20 @@ type State struct {
 	// — the review evidence was swapped after the pass. Gate blocks.
 	MarkerFindingsMismatch bool
 
+	// PolicyError is non-empty when the repo's committed .pakka/policy.json is
+	// malformed or declares a newer schema version than this binary supports.
+	// The gate fails CLOSED: it blocks the commit with this message, taking
+	// precedence over every other gate branch. Empty when no policy file exists
+	// or the policy parsed cleanly (fail OPEN on absent policy).
+	PolicyError string
+
+	// PolicyPresent is true when a committed .pakka/policy.json exists (whether
+	// it parsed cleanly or errored). A present policy forces the review gate ON
+	// regardless of the local pakka.review.autoGate setting: a team's committed
+	// policy cannot be neutralized by a local autoGate:false. When no policy
+	// file exists this stays false and local autoGate wins as before.
+	PolicyPresent bool
+
 	// DiffSHA256 is the hex sha256 of the current staged diff, carried so the
 	// authorized trailer can advertise the reviewed diff's provenance.
 	DiffSHA256 string
@@ -892,8 +906,9 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 	}
 
 	// Nothing to do: no trailers and no gate. (Still a commit — flag it so the
-	// caller writes a verdict / audit entry.)
-	if !cfg.Signature && !cfg.CoAuthor && !cfg.AutoGate {
+	// caller writes a verdict / audit entry.) A present policy forces the gate
+	// on, so this short-circuit only applies when no policy file exists.
+	if !cfg.Signature && !cfg.CoAuthor && !cfg.AutoGate && !state.PolicyPresent {
 		return &Decision{Allow: true, IsCommit: true}
 	}
 
@@ -936,9 +951,19 @@ func Evaluate(cmd string, cfg *Config, state *State) *Decision {
 		return d
 	}
 
-	// Gate runs whenever AutoGate is on.
-	// Trailer injection respects Signature/CoAuthor independently.
-	if cfg.AutoGate {
+	// Gate runs whenever AutoGate is on OR a policy file is present (policy
+	// presence forces the gate on so a local autoGate:false cannot neutralize a
+	// committed team policy). Trailer injection respects Signature/CoAuthor
+	// independently.
+	if cfg.AutoGate || state.PolicyPresent {
+		// Policy fail-closed: a malformed or too-new committed policy file
+		// blocks every commit, ahead of any oversize/pass short-circuit. This
+		// only fires when a policy file is present; absent policy leaves
+		// PolicyError empty and behavior unchanged.
+		if state.PolicyError != "" {
+			return &Decision{Allow: false, IsCommit: true, Stderr: state.PolicyError}
+		}
+
 		// Oversize diff — skip gate.
 		if cfg.MaxDiffBytes > 0 && state.DiffBytes > cfg.MaxDiffBytes {
 			d := maybeRewrite(decorateProvenance(BaselineTrailer(cfg.Version, cfg.SessionID), state))

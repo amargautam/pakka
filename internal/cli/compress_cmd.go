@@ -14,7 +14,19 @@ import (
 	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/hookevent"
 	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/policy"
 )
+
+// policyForDir loads the committed policy for the repo containing dir. It
+// resolves the git repo root (falling back to dir itself) so a policy file at
+// the repo root is found even when the hook fires from a subdirectory.
+func policyForDir(dir string) (policy.Policy, error) {
+	root := repoRootAt(dir)
+	if root == "" {
+		root = dir
+	}
+	return policy.Load(root)
+}
 
 // CompressCmd implements the "compress" subcommand.
 type CompressCmd struct{}
@@ -260,6 +272,17 @@ func trustedFallbackDir(dir string) bool {
 // Purpose: Gate the SessionStart deterministic input-file rewrite behind opt-in.
 // Errors: Never errors.
 func maybeCompressInputFiles(cwd, sessionID string) bool {
+	// Policy floor: inputCompress "locked-off" (or a malformed/too-new policy,
+	// fail closed) suppresses all automatic input-file compression, ignoring the
+	// local env/settings opt-in. Absent policy → no-op.
+	if pol, err := policyForDir(cwd); err != nil || pol.InputCompressLockedOff() {
+		if err != nil {
+			debugLogf("compress: policy load error, skipping input compression: %v", err)
+		} else {
+			debugLogf("compress: input-file compression locked off by policy (cwd=%s)", cwd)
+		}
+		return false
+	}
 	if !isInputEnabled() {
 		return false
 	}

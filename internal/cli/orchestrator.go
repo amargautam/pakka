@@ -14,6 +14,7 @@ import (
 	"github.com/amargautam/pakka/internal/compress/orchestrator"
 	"github.com/amargautam/pakka/internal/compress/semantic"
 	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/policy"
 )
 
 // semanticEnabled returns whether semantic orchestration should run for the
@@ -48,10 +49,10 @@ var lookPath = exec.LookPath
 type rewriterEngine string
 
 const (
-	engineClaudeCLI    rewriterEngine = "claude-cli"
+	engineClaudeCLI     rewriterEngine = "claude-cli"
 	engineAnthropicHTTP rewriterEngine = "anthropic-http"
-	engineAuto         rewriterEngine = "auto"
-	engineNone         rewriterEngine = ""
+	engineAuto          rewriterEngine = "auto"
+	engineNone          rewriterEngine = ""
 )
 
 // orchestratorTargets returns the configured allowlist for the running
@@ -101,6 +102,18 @@ func runOrchestrator(repo, level string) {
 		repo, _ = os.Getwd()
 	}
 	repo = meter.RepoKey(repo)
+	// Policy floor: refuse to re-compress input files when the committed policy
+	// locks input compression off (or is malformed/too-new — fail closed). This
+	// covers the explicit /pakka:compress orchestrator-run path and the
+	// SessionStart bg fork alike. Absent policy → no-op.
+	if pol, err := policy.Load(repo); err != nil || pol.InputCompressLockedOff() {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pakka: %v — refusing input compression (fail closed).\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "pakka: input compression is locked off by .pakka/policy.json (inputCompress: locked-off) — refusing to re-compress input files.")
+		}
+		return
+	}
 	if level == "" {
 		level = loadOutputLevel()
 	}

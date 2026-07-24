@@ -46,6 +46,12 @@ func runGuard() {
 	if result.AllowlistErr != "" {
 		_ = audit.WriteNote(event.SessionID, "guard_allowlist_error", result.AllowlistErr)
 	}
+	if result.PolicyLocked != "" {
+		_ = audit.WriteNote(event.SessionID, "policy-clamp", "guard_category_locked="+result.PolicyLocked)
+	}
+	if result.PolicyErr != "" {
+		_ = audit.WriteNote(event.SessionID, "guard_policy_error", result.PolicyErr)
+	}
 
 	if result.Allowed {
 		switch {
