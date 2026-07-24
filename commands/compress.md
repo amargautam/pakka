@@ -26,7 +26,9 @@ Check `additionalContext` for a line starting with `PAKKA HOOK HANDLED:`.
 
 ### Input-file compression (context files) — opt-in, default OFF
 
-Automatic SessionStart rewriting of context files (`CLAUDE.md`, `DESIGN.md`, `BUILD.md`, and the semantic-orchestrator allowlist) is **off by default**. It saves near-zero tokens on already-terse files, rewrites version-controlled files in place, and on the semantic path sends their contents to the model provider — so it must be turned on deliberately.
+Automatic SessionStart rewriting of context files (`CLAUDE.md`, `DESIGN.md`, `BUILD.md`, and the semantic-orchestrator allowlist) is **off by default**.
+It saves near-zero tokens on already-terse files, rewrites version-controlled files in place,
+and on the semantic path sends their contents to the model provider — so it must be turned on deliberately.
 
 Enable it (either source):
 - env `PAKKA_INPUT_COMPRESS=1` (also accepts `true`/`yes`/`on`), or
@@ -34,7 +36,9 @@ Enable it (either source):
 
 When off, SessionStart does no context-file rewriting at all — neither the deterministic pass nor the semantic orchestrator fork.
 
-Running this command explicitly to re-compress input files (`lite|strict|ultra|super-ultra`, which drives the `--orchestrator-run` path) is **unaffected** by this gate — a manual invocation always works. The opt-in only governs the *automatic* session-start rewrite.
+Running this command explicitly to re-compress input files (`lite|strict|ultra|super-ultra`, which drives the `--orchestrator-run` path)
+is **unaffected** by this gate — a manual invocation always works.
+The opt-in only governs the *automatic* session-start rewrite.
 
 ### Switch output level (`lite|strict|ultra|super-ultra`)
 
@@ -61,7 +65,8 @@ Level effects:
 
 ### Status (default action)
 
-1. Read `~/.config/pakka/config.json` for current `defaultLevel`. Fall back to `${CLAUDE_PLUGIN_ROOT}/settings.json` `pakka.compress.outputLevel` if config.json is absent. Read `${CLAUDE_PLUGIN_ROOT}/settings.json` for semantic mode.
+1. Read `~/.config/pakka/config.json` for current `defaultLevel`. Fall back to `${CLAUDE_PLUGIN_ROOT}/settings.json` `pakka.compress.outputLevel` if config.json is absent.
+   Read `${CLAUDE_PLUGIN_ROOT}/settings.json` for semantic mode.
 2. Find the most recent meter file: `ls -t ~/.pakka/meter/*.jsonl 2>/dev/null | head -1` and read it for bytes saved.
 3. Report:
    - Output level: `lite` | `strict` | `ultra` | `super-ultra`

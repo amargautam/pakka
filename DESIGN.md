@@ -836,7 +836,9 @@ claude --resume <id> \
 Anything else not listed in §4 is out of scope for v0.
 ---
 ## 14. Next move
-Execute Pass 1 from §10 in long-running Claude Code session. Each pass has gate defined at its end. Ship `v0.1.0` when all five passes complete, `RECEIPTS.md` exists, and three claim numbers are in this repo's README.
+**[Historical — v0 build plan, completed.]** All passes shipped; v0.1.0 released 2026-05-02, current line v0.17.0. This document remains the founding design reference; living state is tracked elsewhere: `memory/LOG.md` (rolling session state), `memory/DECISIONS.md` (decisions, don't relitigate), `CHANGELOG.md` (per-release), `docs/specs/` (per-feature specs since v0.9.0). Notable post-v0 architecture not reflected above: input-file compression opt-in default-off (v0.13.0); cache-aware + measured savings accounting (v0.13–0.14); diff-bound review markers + findings provenance (v0.15–0.16); `pakka-hot` slim hook binary split (v0.17.0); reproducible attested releases (v0.13.0).
+
+Original v0 plan, for the record: Execute Pass 1 from §10 in long-running Claude Code session. Each pass has gate defined at its end. Ship `v0.1.0` when all five passes complete, `RECEIPTS.md` exists, and three claim numbers are in this repo's README.
 ---
 ## References
 - None published externally at this time.

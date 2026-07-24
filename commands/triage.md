@@ -43,11 +43,13 @@ Show counts and one-line summary per issue.
 
 ## Triage a specific issue
 
-**1. Gather context.** Read full issue (body, comments, labels, reporter, dates). Parse prior triage notes — don't re-ask resolved questions. Explore codebase using domain vocabulary. Check `.out-of-scope/` for prior rejections resembling this issue.
+**1. Gather context.** Read full issue (body, comments, labels, reporter, dates). Parse prior triage notes — don't re-ask resolved questions.
+Explore codebase using domain vocabulary. Check `.out-of-scope/` for prior rejections resembling this issue.
 
 **2. Recommend.** State category + state + reasoning + relevant codebase context. Wait for direction.
 
-**3. Reproduce (bugs only).** Trace code path, run tests or commands. Report: confirmed repro with code path, failed repro, or insufficient detail (`needs-info` signal). Confirmed repro makes stronger agent brief.
+**3. Reproduce (bugs only).** Trace code path, run tests or commands. Report: confirmed repro with code path, failed repro, or insufficient detail (`needs-info` signal).
+Confirmed repro makes stronger agent brief.
 
 **4. Challenge (if needed).** If issue needs fleshing out, run `/pakka:challenge` on open questions.
 
@@ -85,7 +87,8 @@ Stores rejected enhancement concepts (not issues — one file per concept, named
 
 ## Agent Brief Format
 
-An agent brief is posted as a comment when an issue moves to `ready-for-agent`. It is the authoritative spec an AFK agent works from. Issue body and discussion are context — the brief is the contract.
+An agent brief is posted as a comment when an issue moves to `ready-for-agent`. It is the authoritative spec an AFK agent works from.
+Issue body and discussion are context — the brief is the contract.
 
 **Durable, not precise.** Describe interfaces, types, behavioral contracts — not file paths or line numbers.
 **Behavioral, not procedural.** What the system should do, not how to implement it.

@@ -68,7 +68,8 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
 4. **Collect findings.** Parse JSON lines from all four agents into one list.
 
-5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed. Remember this path — the PASS step binds it to the marker as the review evidence via `--findings`.
+5. **Write full log (pre-filter).** Write every parsed finding to `.pakka/reviews/<short-sha-or-timestamp>.jsonl`. Create dir if needed.
+   Remember this path — the PASS step binds it to the marker as the review evidence via `--findings`.
 
 6. **Filter by confidence.** Drop findings where `confidence < 80` (or
    `pakka.review.confidenceThreshold`). Drop findings missing `line` field. Exception:

@@ -54,7 +54,11 @@ Check `additionalContext` for `PAKKA HOOK HANDLED`. If present, output verbatim 
 
 Tell the user (one short paragraph, during init):
 
-When guard blocks a Bash command on a heuristic (eval, directory traversal, pipe-to-shell), it asks instead of hard-denying. Approving records an override in `.pakka/guard-allowlist.json` for this repo — the identical command passes next time, with an audit note. Patterns overridden 5+ times in 30 days demote to warn for the repo; stale overrides decay out. Secrets rules (`.env*`, `~/.ssh`, `~/.aws`, system paths) are never overridable, and the allowlist file itself is write-protected — only the approval flow updates it. Thresholds: `pakka.guard.demoteThreshold`, `pakka.guard.decayWindowDays` in settings.json.
+When guard blocks a Bash command on a heuristic (eval, directory traversal, pipe-to-shell), it asks instead of hard-denying.
+Approving records an override in `.pakka/guard-allowlist.json` for this repo — the identical command passes next time, with an audit note.
+Patterns overridden 5+ times in 30 days demote to warn for the repo; stale overrides decay out.
+Secrets rules (`.env*`, `~/.ssh`, `~/.aws`, system paths) are never overridable, and the allowlist file itself is write-protected — only the approval flow updates it.
+Thresholds: `pakka.guard.demoteThreshold`, `pakka.guard.decayWindowDays` in settings.json.
 
 ---
 
