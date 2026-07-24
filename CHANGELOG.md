@@ -2,6 +2,19 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.18.0] — 2026-07-24
+
+Consolidation after six releases in three days: drift verified, decisions recorded, one small feature to get those releases into users' hands.
+
+### Added
+- **statusline**: upgrade visibility — `↑<version>` segment (ASCII `^` fallback) when a newer plugin version sits in the local cache beside the running one; pure readdir, mtime-cached, zero network (75b2439)
+
+### Fixed
+- **docs**: eval layer-1 clean — five command/agent docs had prose lines over the 200-char limit accumulated across v0.13–v0.17 edits; wrapped, rendering identical, 12/12 targets pass (8040ab7)
+
+### Changed
+- **docs**: DESIGN.md v0 build plan marked historical, pointing at living docs; memory/DECISIONS.md backfilled with the week's seven decision entries (8040ab7)
+
 ## [v0.17.0] — 2026-07-24
 
 Closes the v0.12.0 latency disclosure: every hook budget now passes, with the cause measured and named.
