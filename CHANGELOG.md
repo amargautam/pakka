@@ -2,6 +2,16 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.19.0] — 2026-07-24
+
+Enterprise + DX release: the gate becomes org-enforceable, and re-review follows content instead of a timer.
+
+### Added
+- **policy**: committed `.pakka/policy.json` floor enforced in-binary — confidence clamps (strict direction only), locked guard categories (unknown names fail closed), input-compress lock, and a present policy forces the gate on regardless of local `autoGate`. Malformed/newer-version policy fails closed; absent policy is exact v0.18.0 behavior with a per-run `policy-state` audit note. Git is the distribution — no server (71151cd)
+
+### Changed
+- **gate**: marker freshness is diff-bound — a findings-bound marker matching the staged diff stays valid 1800s (was flat 300s), 3600s hard ceiling, policy may lower. Content binding (v0.15.0) is the integrity mechanism; the timer stops taxing iteration (71151cd)
+
 ## [v0.18.0] — 2026-07-24
 
 Consolidation after six releases in three days: drift verified, decisions recorded, one small feature to get those releases into users' hands.
