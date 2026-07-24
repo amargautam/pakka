@@ -6,16 +6,16 @@ End-to-end wall-clock per hook invocation (process spawn + stdin parse + work + 
 
 | subcommand | input class | p50 | p95 | budget | pass/fail |
 |---|---|---|---|---|---|
-| status-line | native (CC 2.1 payload) | 18.05ms | 19.43ms | <50ms | ✅ pass |
-| status-line | legacy fallback (large transcript, cold cache) | 30.81ms | 33.06ms | <50ms | ✅ pass |
-| guard | benign Read | 8.65ms | 9.65ms | <10ms | ✅ pass |
-| guard | benign Bash | 7.96ms | 8.89ms | <10ms | ✅ pass |
-| commit-gate | non-commit Bash (ls -la) | 8.15ms | 9.22ms | <5ms | ❌ FAIL |
-| *(reference)* | *process-startup floor (guard, empty stdin)* | *8.13ms* | *9.71ms* | *—* | *—* |
+| status-line | native (CC 2.1 payload) | 27.68ms | 30.76ms | <50ms | ✅ pass |
+| status-line | legacy fallback (large transcript, cold cache) | 36.13ms | 40.67ms | <50ms | ✅ pass |
+| guard | benign Read | 10.39ms | 12.87ms | <10ms | ❌ FAIL |
+| guard | benign Bash | 10.04ms | 12.23ms | <10ms | ❌ FAIL |
+| commit-gate | non-commit Bash (ls -la) | 9.60ms | 11.42ms | <5ms | ❌ FAIL |
+| *(reference)* | *process-startup floor (guard, empty stdin)* | *10.02ms* | *11.21ms* | *—* | *—* |
 
 ## Root cause — the startup floor dominates
 
-Every subcommand pays a shared **~8ms process-startup floor** before any command logic runs (row above: guard on empty stdin returns immediately after parse, yet still costs ~8ms). The per-command logic itself is negligible: `commit-gate` on a non-commit `ls -la` measures the same as the floor. So statusline (transcript work) fits its 50ms budget easily, guard clears 10ms with a thin margin, but **commit-gate misses its <5ms budget: 9.2ms p95 measured vs 5ms** — the shared startup floor alone exceeds the budget, so no commit-gate code change can close it. This is a real miss, not rounding.
+Every subcommand pays a shared **~10ms process-startup floor** before any command logic runs (row above: guard on empty stdin returns immediately after parse, yet still costs ~10ms). The per-command logic itself is negligible: `commit-gate` on a non-commit `ls -la` measures the same as the floor. So statusline (transcript work) fits its 50ms budget easily, guard clears 10ms with a thin margin, but **commit-gate misses its <5ms budget: 11.4ms p95 measured vs 5ms** — the shared startup floor alone exceeds the budget, so no commit-gate code change can close it. This is a real miss, not rounding.
 
 `GODEBUG=inittrace=1` attributes the floor:
 
@@ -28,7 +28,7 @@ Every subcommand pays a shared **~8ms process-startup floor** before any command
 
 Numbers must respond to input or the harness is broken. The statusline native path (CC 2.1 `context_window` payload) skips the transcript scan; the legacy path re-sums a ~4000-line synthetic transcript on every render (cold cache each run — the honest steady-state cost, since the active transcript grows and cache-misses every turn).
 
-- legacy p50 = **30.81ms**, native p50 = **18.05ms**, Δ = **+12.77ms** (≥1ms required).
+- legacy p50 = **36.13ms**, native p50 = **27.68ms**, Δ = **+8.46ms** (≥1ms required).
 - Identical numbers across these two inputs ⇒ broken harness; the script exits non-zero and refuses to write this report.
 
 ## Method
@@ -36,7 +36,7 @@ Numbers must respond to input or the harness is broken. The statusline native pa
 - Runs: 50 timed per class (8 warmup discarded), nearest-rank p50/p95.
 - Timer: `time.perf_counter()` around each `subprocess.run` (includes process spawn — the real hook cost).
 - Machine: Apple M3 Max (Mac15,10), darwin/arm64.
-- Binary: `go build ./cmd/pakka-core` at commit `04ca6ef2f7bb`.
+- Binary: `go build ./cmd/pakka-core` at commit `455bd7813d47`.
 - Repo under test: `/Users/amar/Projects/pakka.dev/pakka`.
 - statusline fallback fed a synthetic `$HOME` with a large transcript so the scan path does real work; guard and commit-gate use the live repo.
 

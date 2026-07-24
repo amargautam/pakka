@@ -182,6 +182,71 @@ func saveMeterCache(path string, c *meterCache) {
 	_ = os.Rename(tmp, path)
 }
 
+// resolveCacheEntry memoizes the expensive per-project-dir resolution done by
+// readAllTranscripts — reading a transcript's embedded `cwd` (file opens) and
+// mapping it to a repo key (a `git rev-parse` exec). It is keyed by the project
+// subdir's mtime: the dir's mtime bumps when its entry set changes (a new
+// session file appears/disappears), which is exactly when a re-resolve is
+// warranted. Content appends to an existing transcript change the FILE mtime,
+// not the DIR mtime, and never change which repo the dir resolves to — so an
+// unchanged dir does zero file opens and zero execs on subsequent renders
+// (issue #36). CWD/Resolved may be "" (a dir with no discoverable cwd); the
+// empty result is cached too, so unresolvable dirs aren't re-probed every render.
+type resolveCacheEntry struct {
+	Mtime    int64  `json:"mtime"`
+	CWD      string `json:"cwd"`
+	Resolved string `json:"resolved"`
+}
+
+type resolveCache struct {
+	Entries map[string]resolveCacheEntry `json:"entries"`
+}
+
+func loadResolveCache(path string) *resolveCache {
+	c := &resolveCache{Entries: make(map[string]resolveCacheEntry)}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return c
+	}
+	_ = json.Unmarshal(data, c)
+	if c.Entries == nil {
+		c.Entries = make(map[string]resolveCacheEntry)
+	}
+	return c
+}
+
+func saveResolveCache(path string, c *resolveCache) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return
+	}
+	// Ensure ~/.pakka exists — on a fresh install (or in tests) the cache dir may
+	// not have been created yet, and a silent write failure would defeat the
+	// cache (every render would re-resolve).
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, path)
+}
+
+// resolveProbes counts, process-wide, how many project dirs were resolved from
+// scratch (readProjectCWD + resolveRepoKey) rather than served from the resolve
+// cache. Tests read it to prove that N renders over an unchanged project tree do
+// the resolution work exactly once. Not concurrency-safe; statusline renders on
+// a single goroutine per process.
+var resolveProbes int
+
+// ResolveProbeCount returns the number of from-scratch project-dir resolutions
+// performed since the last ResetResolveProbes. Test-only observability hook.
+func ResolveProbeCount() int { return resolveProbes }
+
+// ResetResolveProbes zeroes the resolve-probe counter. Test-only.
+func ResetResolveProbes() { resolveProbes = 0 }
+
 // metrics holds computed status-line values.
 type metrics struct {
 	outputLevel   string
@@ -843,27 +908,47 @@ func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead,
 	cache := loadTranscriptCache(cachePath)
 	dirty := false
 
-	cwdToRepo := make(map[string]string)
+	// Per-dir cwd/repo resolution cache (issue #36). Keyed by project-dir mtime
+	// so unchanged dirs skip both the transcript file-open (readProjectCWD) and
+	// the git exec (resolveRepoKey) on every render.
+	resCachePath := filepath.Join(home, ".pakka", "resolve-cache.json")
+	resCache := loadResolveCache(resCachePath)
+	resDirty := false
+
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		dirPath := filepath.Join(projectsDir, e.Name())
 
-		// Prefer the embedded cwd from transcript contents (unambiguous);
-		// fall back to dash-decoding the directory name (ambiguous, used
-		// in tests with synthetic transcripts that don't include a cwd).
-		cwd := readProjectCWD(dirPath)
-		if cwd == "" {
-			cwd = decodeProjectDir(e.Name())
+		// Resolve this dir's cwd + repo key, reusing the mtime-keyed cache when
+		// the dir's entry set is unchanged. A cache hit does zero file opens and
+		// zero git execs.
+		var cwd, resolved string
+		var dirMtime int64
+		if info, err := e.Info(); err == nil {
+			dirMtime = info.ModTime().UnixNano()
+		}
+		if ce, ok := resCache.Entries[dirPath]; ok && ce.Mtime == dirMtime {
+			cwd, resolved = ce.CWD, ce.Resolved
+		} else {
+			// Cache miss — do the expensive resolution once and record it.
+			// Prefer the embedded cwd from transcript contents (unambiguous);
+			// fall back to dash-decoding the directory name (ambiguous, used
+			// in tests with synthetic transcripts that don't include a cwd).
+			cwd = readProjectCWD(dirPath)
+			if cwd == "" {
+				cwd = decodeProjectDir(e.Name())
+			}
+			if cwd != "" {
+				resolved = resolveRepoKey(cwd)
+			}
+			resolveProbes++
+			resCache.Entries[dirPath] = resolveCacheEntry{Mtime: dirMtime, CWD: cwd, Resolved: resolved}
+			resDirty = true
 		}
 		if cwd == "" {
 			continue
-		}
-		resolved, ok := cwdToRepo[cwd]
-		if !ok {
-			resolved = resolveRepoKey(cwd)
-			cwdToRepo[cwd] = resolved
 		}
 		if resolved != repo && !strings.HasPrefix(resolved, repo+"/") {
 			continue
@@ -910,6 +995,9 @@ func readAllTranscripts(projectsDir, repo string) (in, cacheCreation, cacheRead,
 
 	if dirty {
 		saveTranscriptCache(cachePath, cache)
+	}
+	if resDirty {
+		saveResolveCache(resCachePath, resCache)
 	}
 	return in, cacheCreation, cacheRead, out
 }

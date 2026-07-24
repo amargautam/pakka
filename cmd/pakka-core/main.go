@@ -1,78 +1,27 @@
-// Package main provides the pakka-core CLI.
+// Package main provides the pakka-core CLI — the full pakka binary.
 //
-// pakka-core is the single binary invoked by all pakka hooks and skills.
-// Subcommands are added incrementally across build passes (see DESIGN.md §10):
+// pakka-core serves every subcommand, including recall (index/query), which
+// links modernc.org/sqlite. The subcommand router and every command
+// implementation live in internal/cli so the lean hot-path binary
+// (cmd/pakka-hot) can reuse them without importing recall/sqlite.
 //
-//	Pass 1: status-line, audit
-//	Pass 2: compress, meter
-//	Pass 3: guard, install-git-hook
-//	Pass 3.1: commit-gate, help
-//	Pass 4: stack-detect, stack-gate, eval
-//	Pass 5: report, spec-generate
+// This main is intentionally thin: it wires the recall handlers (the only code
+// that imports internal/recall, and therefore the only sqlite link) into the
+// shared dispatcher, then delegates. See DESIGN.md §10 and
+// docs/specs/2026-07-24-hot-path-startup-floor.md.
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/amargautam/pakka/internal/cli"
 )
 
-const version = "0.5.0"
-
-
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "pakka-core %s — no subcommand\n", version)
-		os.Exit(2)
-	}
+	// Wire recall (sqlite-linked) into the shared dispatcher. Only pakka-core
+	// does this; pakka-hot leaves these nil so sqlite never links there.
+	cli.IndexFunc = func(args []string) error { return runRecallIndex() }
+	cli.QueryFunc = func(args []string) error { return runRecallQuery(args) }
 
-	switch os.Args[1] {
-	case "status-line":
-		_ = (&StatusLineCmd{}).Run(os.Args[2:])
-	case "audit":
-		_ = (&AuditCmd{}).Run(os.Args[2:])
-	case "compress":
-		_ = (&CompressCmd{}).Run(os.Args[2:])
-	case "meter":
-		_ = (&MeterCmd{}).Run(os.Args[2:])
-	case "guard":
-		_ = (&GuardCmd{}).Run(os.Args[2:])
-	case "commit-gate":
-		_ = (&CommitGateCmd{}).Run(os.Args[2:])
-	case "review-pass":
-		_ = (&ReviewPassCmd{}).Run(os.Args[2:])
-	case "help":
-		_ = (&HelpCmd{}).Run(os.Args[2:])
-	case "install-git-hook":
-		_ = (&InstallGitHookCmd{}).Run(os.Args[2:])
-	case "stack-detect":
-		_ = (&StackDetectCmd{}).Run(os.Args[2:])
-	case "stack-gate":
-		_ = (&StackGateCmd{}).Run(os.Args[2:])
-	case "eval":
-		_ = (&EvalCmd{}).Run(os.Args[2:])
-	case "report":
-		_ = (&ReportCmd{}).Run(os.Args[2:])
-	case "index":
-		_ = (&IndexCmd{}).Run(os.Args[2:])
-	case "query":
-		_ = (&QueryCmd{}).Run(os.Args[2:])
-	case "spec-find":
-		_ = (&SpecFindCmd{}).Run(os.Args[2:])
-	case "spec-generate":
-		_ = (&SpecGenerateCmd{}).Run(os.Args[2:])
-	case "output-rules":
-		_ = (&OutputRulesCmd{}).Run(os.Args[2:])
-	case "output-reinforce":
-		_ = (&OutputReinforceCmd{}).Run(os.Args[2:])
-	case "orchestrator-status":
-		runOrchestratorStatus()
-	case "backfill-output-tokens":
-		_ = (&BackfillOutputTokensCmd{}).Run(os.Args[2:])
-	case "bench":
-		_ = (&BenchCmd{}).Run(os.Args[2:])
-	default:
-		fmt.Fprintf(os.Stderr, "pakka-core %s — unknown subcommand %q\n", version, os.Args[1])
-		os.Exit(2)
-	}
+	os.Exit(cli.Dispatch(os.Args))
 }
-

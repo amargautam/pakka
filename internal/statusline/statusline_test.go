@@ -731,6 +731,91 @@ func TestReadAllTranscriptsVaries(t *testing.T) {
 	}
 }
 
+// --- issue #36: per-dir cwd/repo resolution cache ---------------------------
+
+// TestResolveCache_ResolvesOncePerUnchangedDir proves that N renders over an
+// unchanged project tree resolve each project dir exactly once — subsequent
+// renders serve cwd/repo from the mtime-keyed cache with zero file opens and
+// zero git execs (the resolve-probe counter stays at the first-render value).
+func TestResolveCache_ResolvesOncePerUnchangedDir(t *testing.T) {
+	home := t.TempDir()
+	useFakeHome(t, home)
+	useFakeRepoKey(t, map[string]string{"/r": "/r"})
+	writeTranscriptDir(t, home, "-r", "t.jsonl", []map[string]int64{
+		{"input_tokens": 200, "output_tokens": 3},
+	})
+	projects := filepath.Join(home, ".claude", "projects")
+
+	ResetResolveProbes()
+	var first int64
+	for i := 0; i < 5; i++ {
+		in, _, _, _ := readAllTranscripts(projects, "/r")
+		if i == 0 {
+			first = in
+		} else if in != first {
+			t.Fatalf("render %d: in=%d, want stable %d", i, in, first)
+		}
+	}
+	if got := ResolveProbeCount(); got != 1 {
+		t.Errorf("resolve probes after 5 renders = %d, want 1 (dir resolved once, then cached)", got)
+	}
+}
+
+// TestResolveCache_MtimeBumpInvalidatesOnlyThatDir proves that bumping one
+// project dir's mtime forces a re-resolve of ONLY that dir; the untouched dir
+// keeps serving from cache.
+func TestResolveCache_MtimeBumpInvalidatesOnlyThatDir(t *testing.T) {
+	home := t.TempDir()
+	useFakeHome(t, home)
+	useFakeRepoKey(t, map[string]string{"/r": "/r", "/r2": "/r2"})
+	writeTranscriptDir(t, home, "-r", "t.jsonl", []map[string]int64{
+		{"input_tokens": 100, "output_tokens": 1},
+	})
+	writeTranscriptDir(t, home, "-r2", "t.jsonl", []map[string]int64{
+		{"input_tokens": 50, "output_tokens": 1},
+	})
+	projects := filepath.Join(home, ".claude", "projects")
+
+	// Warm both dirs into the cache.
+	ResetResolveProbes()
+	readAllTranscripts(projects, "/r")
+	if got := ResolveProbeCount(); got != 2 {
+		t.Fatalf("cold render probes = %d, want 2 (both dirs resolved)", got)
+	}
+
+	// Bump only dir "-r2"'s mtime to a distinct value.
+	dir2 := filepath.Join(projects, "-r2")
+	future := time.Now().Add(3 * time.Second)
+	if err := os.Chtimes(dir2, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	ResetResolveProbes()
+	readAllTranscripts(projects, "/r")
+	if got := ResolveProbeCount(); got != 1 {
+		t.Errorf("after bumping one dir, probes = %d, want 1 (only the changed dir re-resolves)", got)
+	}
+}
+
+// TestResolveCache_WarmOutputByteIdenticalToCold proves the cache is a pure
+// performance optimization: the rendered status line is byte-identical whether
+// the resolve cache is cold (first render) or warm (second render).
+func TestResolveCache_WarmOutputByteIdenticalToCold(t *testing.T) {
+	home := t.TempDir()
+	useFakeHome(t, home)
+	useFakeRepoKey(t, map[string]string{"/r": "/r"})
+	writeTranscriptDir(t, home, "-r", "t.jsonl", []map[string]int64{
+		{"input_tokens": 321, "output_tokens": 7, "cache_read_input_tokens": 42},
+	})
+	event := &hookevent.Event{CWD: "/r"}
+
+	cold := run(t, event, "super-ultra")
+	warm := run(t, event, "super-ultra")
+	if cold != warm {
+		t.Errorf("warm render differs from cold:\ncold=%q\nwarm=%q", cold, warm)
+	}
+}
+
 func TestDecodeProjectDir(t *testing.T) {
 	cases := []struct{ enc, dec string }{
 		{"-repo-A", "/repo/A"},

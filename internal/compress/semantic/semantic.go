@@ -14,44 +14,34 @@ package semantic
 import (
 	"context"
 	"errors"
+
+	"github.com/amargautam/pakka/internal/compress/level"
 )
 
 // Level controls prompt template aggressiveness.
-type Level string
+//
+// It is a type alias over internal/compress/level.Level — the single source of
+// truth (#28) — kept dependency-light so the hot-path binary can resolve levels
+// without linking this (net/http-carrying) package. Existing callers that use
+// semantic.Level / semantic.LevelXxx / semantic.ParseLevel are unaffected.
+type Level = level.Level
 
 const (
-	LevelLite       Level = "lite"
-	LevelStrict     Level = "strict"
-	LevelUltra      Level = "ultra"
-	LevelSuperUltra Level = "super-ultra"
+	LevelLite       = level.Lite
+	LevelStrict     = level.Strict
+	LevelUltra      = level.Ultra
+	LevelSuperUltra = level.SuperUltra
 )
 
 // AllLevels lists every supported level in increasing aggressiveness.
-//
-// Purpose: Authoritative ordering for tests and CLI validation.
-// Errors: None.
 func AllLevels() []Level {
-	return []Level{LevelLite, LevelStrict, LevelUltra, LevelSuperUltra}
+	return level.All()
 }
 
 // ParseLevel converts a string to a Level, defaulting to LevelSuperUltra.
-//
-// LevelSuperUltra is pakka's brand default — decided v0.2.0 (2026-05-02); the
-// older "ultra (2026-04-29)" default is SUPERSEDED. Empty/unknown inputs fall
-// back to super-ultra so this resolver, resolveOutputLevel() in cmd/pakka-core,
-// and the orchestrator all converge on one tier (issue #28). This is the single
-// source of truth every other fallback must match.
-//
-// Purpose: Safe level parsing for CLI flag values and skill arguments.
-// Errors: Never errors; unknown strings map to LevelSuperUltra (intentional default).
+// Thin alias over level.Parse — see internal/compress/level for the policy.
 func ParseLevel(s string) Level {
-	switch Level(s) {
-	case LevelLite, LevelStrict, LevelUltra, LevelSuperUltra:
-		return Level(s)
-	default:
-		// super-ultra is the intentional default — see DECISIONS.md.
-		return LevelSuperUltra
-	}
+	return level.Parse(s)
 }
 
 // Rewriter is implemented by anything that can rewrite prose at a given Level.

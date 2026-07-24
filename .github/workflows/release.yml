@@ -48,8 +48,11 @@ jobs:
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/pakka-core -output dist/sbom.cdx.json .
-          # Cover the SBOM with SHA256SUMS too, so the checksum check verifies it.
-          ( cd dist && sha256sum sbom.cdx.json >> SHA256SUMS )
+          # Second SBOM for the lean hot-path binary (its dependency set differs —
+          # no sqlite/recall, no net/http/semantic — so it needs its own SBOM).
+          "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/pakka-hot -output dist/sbom-hot.cdx.json .
+          # Cover both SBOMs with SHA256SUMS too, so the checksum check verifies them.
+          ( cd dist && sha256sum sbom.cdx.json sbom-hot.cdx.json >> SHA256SUMS )
 
       - name: Verify release artifacts
         run: |
@@ -60,8 +63,14 @@ jobs:
             dist/pakka-core-linux-arm64 \
             dist/pakka-core-linux-amd64 \
             dist/pakka-core-windows-amd64.exe \
+            dist/pakka-hot-darwin-arm64 \
+            dist/pakka-hot-darwin-amd64 \
+            dist/pakka-hot-linux-arm64 \
+            dist/pakka-hot-linux-amd64 \
+            dist/pakka-hot-windows-amd64.exe \
             dist/SHA256SUMS \
-            dist/sbom.cdx.json; do
+            dist/sbom.cdx.json \
+            dist/sbom-hot.cdx.json; do
             if [ ! -s "$f" ]; then
               echo "release gate: missing or empty artifact: $f"
               exit 1
@@ -83,7 +92,8 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          # dist/ holds exactly the five binaries + SHA256SUMS + sbom.cdx.json.
+          # dist/ holds the five pakka-core + five pakka-hot binaries + SHA256SUMS
+          # + both SBOMs. The glob attests every one.
           subject-path: 'dist/*'
 
       - name: Publish release assets
@@ -95,5 +105,11 @@ jobs:
             dist/pakka-core-linux-arm64
             dist/pakka-core-linux-amd64
             dist/pakka-core-windows-amd64.exe
+            dist/pakka-hot-darwin-arm64
+            dist/pakka-hot-darwin-amd64
+            dist/pakka-hot-linux-arm64
+            dist/pakka-hot-linux-amd64
+            dist/pakka-hot-windows-amd64.exe
             dist/SHA256SUMS
             dist/sbom.cdx.json
+            dist/sbom-hot.cdx.json

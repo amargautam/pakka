@@ -20,7 +20,25 @@ case "$ARCH" in
   aarch64) ARCH=arm64 ;;
 esac
 
-BIN="${DIR}/pakka-core-${OS}-${ARCH}"
+CORE="${DIR}/pakka-core-${OS}-${ARCH}"
+
+# Hot-path routing (issue #36 / hot-path startup floor): guard, commit-gate, and
+# status-line fire on the session hot path. When a matching lean pakka-hot binary
+# is installed beside pakka-core, route those three to it — it links neither
+# recall/sqlite nor the semantic net/http client, dropping the process-startup
+# floor from ~8ms to ~3ms so guard and commit-gate stay inside budget. Any other
+# subcommand (and older caches with no pakka-hot binary) fall back to pakka-core,
+# so the wrapper is forward- and backward-compatible.
+HOT="${DIR}/pakka-hot-${OS}-${ARCH}"
+BIN="$CORE"
+case "${1:-}" in
+  guard|commit-gate|status-line)
+    if [ -x "$HOT" ]; then
+      BIN="$HOT"
+    fi
+    ;;
+esac
+
 if [ ! -x "$BIN" ]; then
   echo "pakka: no binary for ${OS}-${ARCH} at ${BIN}" >&2
   exit 1

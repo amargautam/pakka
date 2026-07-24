@@ -4,6 +4,8 @@
 GO     ?= go
 BIN    := bin/pakka-core
 PKG    := ./cmd/pakka-core
+HOTBIN := bin/pakka-hot
+HOTPKG := ./cmd/pakka-hot
 
 .PHONY: help build cross release test test-js bench bench-latency self-report clean
 
@@ -26,6 +28,7 @@ help:
 
 build:
 	$(GO) build -o $(BIN) $(PKG)
+	$(GO) build -o $(HOTBIN) $(HOTPKG)
 
 cross:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-darwin-arm64 $(PKG)
@@ -33,6 +36,11 @@ cross:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-linux-arm64 $(PKG)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-linux-amd64 $(PKG)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-core-windows-amd64.exe $(PKG)
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-hot-darwin-arm64 $(HOTPKG)
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-hot-darwin-amd64 $(HOTPKG)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-hot-linux-arm64 $(HOTPKG)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-hot-linux-amd64 $(HOTPKG)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o bin/pakka-hot-windows-amd64.exe $(HOTPKG)
 
 # release — reproducible cross-build with provenance stamping.
 #
@@ -69,15 +77,24 @@ release:
 	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-linux-arm64      $(PKG) || exit 1; \
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-linux-amd64      $(PKG) || exit 1; \
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-core-windows-amd64.exe $(PKG) || exit 1; \
-	mv $$tmp/pakka-core-* "$(RELEASE_DIR)"/; \
+		GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-hot-darwin-arm64      $(HOTPKG) || exit 1; \
+		GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-hot-darwin-amd64      $(HOTPKG) || exit 1; \
+		GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-hot-linux-arm64       $(HOTPKG) || exit 1; \
+		GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-hot-linux-amd64       $(HOTPKG) || exit 1; \
+		GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -o $$tmp/pakka-hot-windows-amd64.exe  $(HOTPKG) || exit 1; \
+	mv $$tmp/pakka-core-* $$tmp/pakka-hot-* "$(RELEASE_DIR)"/; \
 	rmdir $$tmp; \
 	( cd "$(RELEASE_DIR)" && shasum -a 256 \
 		pakka-core-darwin-arm64 pakka-core-darwin-amd64 \
 		pakka-core-linux-arm64 pakka-core-linux-amd64 \
-		pakka-core-windows-amd64.exe > SHA256SUMS ); \
+		pakka-core-windows-amd64.exe \
+		pakka-hot-darwin-arm64 pakka-hot-darwin-amd64 \
+		pakka-hot-linux-arm64 pakka-hot-linux-amd64 \
+		pakka-hot-windows-amd64.exe > SHA256SUMS ); \
 	echo ""; echo "$(RELEASE_DIR)/SHA256SUMS:"; cat "$(RELEASE_DIR)/SHA256SUMS"; \
 	echo ""; echo "Provenance (want vcs.modified=false, vcs.revision=$$rev):"; \
-	for b in pakka-core-darwin-arm64 pakka-core-darwin-amd64 pakka-core-linux-arm64 pakka-core-linux-amd64 pakka-core-windows-amd64.exe; do \
+	for b in pakka-core-darwin-arm64 pakka-core-darwin-amd64 pakka-core-linux-arm64 pakka-core-linux-amd64 pakka-core-windows-amd64.exe \
+		pakka-hot-darwin-arm64 pakka-hot-darwin-amd64 pakka-hot-linux-arm64 pakka-hot-linux-amd64 pakka-hot-windows-amd64.exe; do \
 		echo "== $$b =="; \
 		$(GO) version -m "$(RELEASE_DIR)/$$b" | grep -E 'vcs.revision|vcs.modified'; \
 	done
@@ -114,12 +131,12 @@ bench: build
 
 # bench-latency — hook hot-path wall-clock latency (spec: v0.12.0 consolidation
 # acceptance 5+6). Builds a fresh binary, feeds each hook realistic event JSON
-# on stdin, reports p50/p95 vs budget. Writes benchmarks/latency-v0.12.0.md.
+# on stdin, reports p50/p95 vs budget. Writes benchmarks/latency-v0.17.0.md.
 # Script exit: 0 = all budgets pass, 1 = a budget is over (report still
 # written — commit-gate <5ms is a documented miss deferred to #17), 2 = broken
 # harness (numbers stopped varying with input). Only 2 fails the target.
 bench-latency:
-	@python3 benchmarks/latency_bench.py --runs 50 --out benchmarks/latency-v0.12.0.md; \
+	@python3 benchmarks/latency_bench.py --runs 50 --out benchmarks/latency-v0.17.0.md; \
 	ec=$$?; \
 	if [ $$ec -eq 2 ]; then echo "bench-latency: harness broken — see above"; exit 1; fi; \
 	if [ $$ec -eq 1 ]; then echo "bench-latency: report written; a budget is over (documented in report)"; fi; \
@@ -131,4 +148,4 @@ self-report:
 	@echo "RECEIPTS.md generated."
 
 clean:
-	rm -f bin/pakka-core bin/pakka-core.exe
+	rm -f bin/pakka-core bin/pakka-core.exe bin/pakka-hot bin/pakka-hot.exe

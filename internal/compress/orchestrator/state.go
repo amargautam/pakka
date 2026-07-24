@@ -25,10 +25,14 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/amargautam/pakka/internal/compress/cstate"
 )
 
-// StateFileName is the on-disk filename used inside <repo>/.pakka/.
-const StateFileName = "compress-state.json"
+// StateFileName is the on-disk filename used inside <repo>/.pakka/. Aliased from
+// internal/compress/cstate so the filename has one definition shared with the
+// dependency-free stale reader.
+const StateFileName = cstate.FileName
 
 // Entry is one record in the state map.
 type Entry struct {
@@ -254,27 +258,12 @@ func jsonMarshalSorted(m map[string]Entry, keys []string) ([]byte, error) {
 }
 
 // CountStaleFromDisk reads the state file at repoDir and returns the stale
-// count without holding any orchestrator state in memory.
+// count without holding any orchestrator state in memory. It delegates to
+// internal/compress/cstate — the single, dependency-free decoder shared with
+// the hot-path binary — so there is no second parser to drift.
 //
 // Purpose: status-line invokes this without paying for a full Load+lock dance.
 // Errors: Returns 0 on any read or parse failure (status-line must never block).
 func CountStaleFromDisk(repoDir string) int {
-	if repoDir == "" {
-		return 0
-	}
-	data, err := os.ReadFile(statePath(repoDir))
-	if err != nil {
-		return 0
-	}
-	var raw map[string]Entry
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return 0
-	}
-	n := 0
-	for _, e := range raw {
-		if !e.ValidatorPasses {
-			n++
-		}
-	}
-	return n
+	return cstate.CountStaleFromDisk(repoDir)
 }

@@ -1,0 +1,579 @@
+package hotcli
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/amargautam/pakka/internal/audit"
+	"github.com/amargautam/pakka/internal/commitgate"
+	"github.com/amargautam/pakka/internal/compress/cstate"
+	"github.com/amargautam/pakka/internal/meter"
+	"github.com/amargautam/pakka/internal/statusline"
+)
+
+// CommitGateCmd implements the "commit-gate" subcommand.
+type CommitGateCmd struct{}
+
+func (c *CommitGateCmd) Name() string { return "commit-gate" }
+func (c *CommitGateCmd) Run(args []string) error {
+	runCommitGate()
+	return nil
+}
+
+// --- commit-gate (Pass 3.1) ---
+
+// settingsJSON mirrors the pakka section of settings.json for config loading.
+type settingsJSON struct {
+	Pakka struct {
+		Signature *bool `json:"signature"`
+		CoAuthor  *bool `json:"coAuthor"`
+		Review    struct {
+			ConfidenceThreshold *int     `json:"confidenceThreshold"`
+			AutoGate            *bool    `json:"autoGate"`
+			MaxDiffBytes        *int     `json:"maxDiffBytes"`
+			SkipPaths           []string `json:"skipPaths"`
+		} `json:"review"`
+		Compress struct {
+			Input               *bool    `json:"input"`
+			Output              *bool    `json:"output"`
+			OutputLevel         string   `json:"outputLevel"`
+			ToolResult          *bool    `json:"toolResult"`
+			ToolResultMaxBytes  *int     `json:"toolResultMaxBytes"`
+			ToolResultHeadLines *int     `json:"toolResultHeadLines"`
+			ToolResultTailLines *int     `json:"toolResultTailLines"`
+			SubagentReturn      *bool    `json:"subagentReturn"`
+			Semantic            *bool    `json:"semantic"`
+			SemanticTargets     []string `json:"semanticTargets"`
+			Engine              string   `json:"engine"`
+		} `json:"compress"`
+		Display struct {
+			StatusLine *bool `json:"statusLine"`
+		} `json:"display"`
+		Recall struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"recall"`
+		Guard struct {
+			DemoteThreshold *int `json:"demoteThreshold"`
+			DecayWindowDays *int `json:"decayWindowDays"`
+		} `json:"guard"`
+	} `json:"pakka"`
+}
+
+func runCommitGate() {
+	event, ok := parseStrict(os.Stdin, os.Stderr)
+	if !ok {
+		os.Exit(1)
+	}
+	if event == nil {
+		return // empty stdin — silent skip
+	}
+
+	if event.ToolName != "Bash" {
+		return
+	}
+
+	var input struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(event.ToolInput, &input); err != nil {
+		return // malformed input, don't block
+	}
+
+	cfg := loadCommitGateConfig()
+	cfg.SessionID = event.SessionID
+
+	// This hook fires on EVERY Bash command (ls, echo, npm test, …), but only
+	// the commit path consumes review state — and gathering it runs two `git
+	// diff --cached` subprocesses plus a file read. Skip that work unless the
+	// command could plausibly be a commit. Evaluate only routes into a state-
+	// consuming branch when the command contains "commit" (fast path requires
+	// `git commit`; the AST path is entered only on a "git commit" mention), so
+	// the substring check is a safe gate. Non-commit commands get an empty
+	// State that Evaluate never reads.
+	mightCommit := strings.Contains(input.Command, "commit")
+	reviewsDir := ".pakka/reviews"
+	state := &commitgate.State{}
+	var verdict *commitgate.ReviewVerdict
+	if mightCommit {
+		reviewsDir = resolveReviewsDir(input.Command)
+		state, verdict = gatherReviewState(cfg, input.Command)
+	}
+	d := commitgate.Evaluate(input.Command, cfg, state)
+
+	// Inject the per-session status trailer on allowed single-command commits.
+	// Restricted to the fast-path shape (IsGitCommit): the trailer is appended
+	// at end-of-line, which is correct only when the commit is the sole
+	// command. For chained/wrapped shapes the AST path has already spliced the
+	// Reviewed-by-pakka and Co-authored-by trailers into the commit node;
+	// appending here would attach the cosmetic session trailer to the last
+	// command in the chain (e.g. a trailing `git push`), so we skip it.
+	if d.Allow && commitgate.IsGitCommit(input.Command) {
+		level := loadOutputLevel()
+		cgCWD := event.CWD
+		if cgCWD == "" {
+			cgCWD, _ = os.Getwd()
+		}
+		cgStale := cstate.CountStaleFromDisk(meter.RepoKey(cgCWD))
+		summary := statusline.Summary(event, level, cgStale)
+		target := d.Command
+		if target == "" {
+			target = input.Command
+		}
+		d.Command = commitgate.InjectTrailer(target, "pakka-session: "+summary)
+	}
+
+	// Audit note (skip events, oversize, etc.)
+	if d.AuditNote != "" {
+		_ = audit.WriteNote(event.SessionID, "commit_gate", d.AuditNote)
+	}
+
+	// Write verdict for auto-gate decisions on any real commit — including
+	// chained/wrapped shapes recognised only by the AST path, which the old
+	// IsGitCommit-only guard skipped, leaving those commits with no verdict.
+	if d.IsCommit && cfg.AutoGate {
+		writeVerdict(event.SessionID, d, reviewsDir)
+	}
+
+	// On an authorized commit whose pass is bound to verified findings, append a
+	// "review-verdict" entry to the session audit log. Recall's Index picks it
+	// up with zero schema change; the concatenated rationale text is what makes
+	// "what did reviews flag about X" answerable via /pakka:recall.
+	maybeWriteReviewVerdict(event.SessionID, d, verdict)
+
+	if !d.Allow {
+		fmt.Fprint(os.Stderr, d.Stderr)
+		os.Exit(2)
+	}
+
+	if d.Command != "" {
+		_, _ = os.Stdout.Write(emitCommitRewrite(d.Command))
+	}
+}
+
+// emitCommitRewrite returns the JSON envelope Claude Code expects for a
+// PreToolUse Bash rewrite. The shape changed when Claude Code formalized the
+// hook contract: callers MUST emit
+//
+//	{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"..."}}}
+//
+// Pre-Pass-4.7 pakka emitted the legacy `{"tool_input":{"command":"..."}}`
+// shape. Claude Code silently ignored it, so every Claude-authored commit
+// from the introduction of auto-trailers through Pass 4.6 landed without
+// the Reviewed-by-pakka, Co-authored-by, or pakka-session trailers.
+// Diagnostic: `git log` showed 0 trailers across the entire history despite
+// the gate logging "passed" verdicts on every commit.
+//
+// Returns a complete line including the trailing newline emitted by
+// json.Encoder so callers can write the bytes directly to stdout.
+func emitCommitRewrite(cmd string) []byte {
+	out := map[string]interface{}{
+		"hookSpecificOutput": map[string]interface{}{
+			"hookEventName": "PreToolUse",
+			"updatedInput": map[string]string{
+				"command": cmd,
+			},
+		},
+	}
+	b, _ := json.Marshal(out)
+	return append(b, '\n')
+}
+
+func loadCommitGateConfig() *commitgate.Config {
+	cfg := commitgate.DefaultConfig()
+
+	root := pluginRoot()
+	data, err := os.ReadFile(filepath.Join(root, "settings.json"))
+	if err != nil {
+		return cfg
+	}
+
+	var s settingsJSON
+	if err := json.Unmarshal(data, &s); err != nil {
+		return cfg
+	}
+
+	if s.Pakka.Signature != nil {
+		cfg.Signature = *s.Pakka.Signature
+	}
+	if s.Pakka.CoAuthor != nil {
+		cfg.CoAuthor = *s.Pakka.CoAuthor
+	}
+	if s.Pakka.Review.ConfidenceThreshold != nil {
+		cfg.ConfidenceThreshold = *s.Pakka.Review.ConfidenceThreshold
+	}
+	if s.Pakka.Review.AutoGate != nil {
+		cfg.AutoGate = *s.Pakka.Review.AutoGate
+	}
+	if s.Pakka.Review.MaxDiffBytes != nil {
+		cfg.MaxDiffBytes = *s.Pakka.Review.MaxDiffBytes
+	}
+	if len(s.Pakka.Review.SkipPaths) > 0 {
+		cfg.SkipPaths = s.Pakka.Review.SkipPaths
+	}
+
+	return cfg
+}
+
+// repoRoot returns the absolute git repo root for the current working
+// directory, or "" if git cannot resolve one. Callers pass the result to
+// `git -C <root> ...` so commands behave the same regardless of which
+// subdirectory the hook is invoked from.
+func repoRoot() string {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// repoRootAt returns the absolute git repo root for the given directory,
+// or "" if git cannot resolve one.
+func repoRootAt(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// isCWS reports whether b is an ASCII whitespace character.
+func isCWS(b byte) bool { return b == ' ' || b == '\t' || b == '\n' }
+
+// parseCPath returns the path argument from "git -C <path>" or "cd <path> && git" in cmd, or "".
+func parseCPath(cmd string) string {
+	trimmed := strings.TrimLeft(cmd, " \t\n")
+	// cd <path> && git commit
+	if strings.HasPrefix(trimmed, "cd ") || strings.HasPrefix(trimmed, "cd\t") {
+		i := 2
+		for i < len(trimmed) && isCWS(trimmed[i]) {
+			i++
+		}
+		if i >= len(trimmed) {
+			return ""
+		}
+		arg, _ := readShellArg(trimmed, i)
+		return arg
+	}
+	// git -C <path> commit
+	if !strings.HasPrefix(trimmed, "git ") && !strings.HasPrefix(trimmed, "git\t") {
+		return ""
+	}
+	i := 3
+	for i < len(trimmed) && isCWS(trimmed[i]) {
+		i++
+	}
+	if !strings.HasPrefix(trimmed[i:], "-C") {
+		return ""
+	}
+	j := i + 2
+	for j < len(trimmed) && (isCWS(trimmed[j]) || trimmed[j] == '=') {
+		j++
+	}
+	if j >= len(trimmed) {
+		return ""
+	}
+	arg, _ := readShellArg(trimmed, j)
+	return arg
+}
+
+// readShellArg reads a single shell argument (double-quoted, single-quoted, or bare)
+// from s at position i. Returns the unquoted value and the position after the argument.
+func readShellArg(s string, i int) (string, int) {
+	if i >= len(s) {
+		return "", i
+	}
+	switch s[i] {
+	case '"':
+		i++
+		var b strings.Builder
+		for i < len(s) && s[i] != '"' {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				i++
+				continue
+			}
+			b.WriteByte(s[i])
+			i++
+		}
+		if i < len(s) {
+			i++
+		}
+		return b.String(), i
+	case '\'':
+		i++
+		start := i
+		for i < len(s) && s[i] != '\'' {
+			i++
+		}
+		val := s[start:i]
+		if i < len(s) {
+			i++
+		}
+		return val, i
+	default:
+		start := i
+		for i < len(s) && !isCWS(s[i]) {
+			i++
+		}
+		return s[start:i], i
+	}
+}
+
+// resolveReviewsDir returns the path to .pakka/reviews for the repo that the
+// given git command targets. It prefers the -C path (or cd path) embedded in
+// cmd over the process CWD repo root, because the hook may be invoked from a
+// session root that is itself a different git repo.
+func resolveReviewsDir(cmd string) string {
+	cmdDir := parseCPath(cmd)
+	var root string
+	if cmdDir != "" {
+		root = repoRootAt(cmdDir)
+		if root == "" {
+			root = cmdDir // last resort
+		}
+	}
+	if root == "" {
+		root = repoRoot()
+	}
+	if root != "" {
+		return filepath.Join(root, ".pakka", "reviews")
+	}
+	return ".pakka/reviews"
+}
+
+// gatherReviewState resolves the gate's view of review state for a commit
+// command. It returns the pure State that Evaluate/AST consume plus, on an
+// authorized findings-bound pass, the ReviewVerdict audit payload (nil
+// otherwise) — kept off State because no gate-decision code reads it; it is a
+// courier from this I/O layer to the audit writer in runCommitGate.
+func gatherReviewState(cfg *commitgate.Config, cmd string) (*commitgate.State, *commitgate.ReviewVerdict) {
+	state := &commitgate.State{}
+	var verdict *commitgate.ReviewVerdict
+
+	// Resolve the actual repo root: prefer -C path or cd path from the command,
+	// fall back to git rev-parse from process CWD. This matters when the hook
+	// runs via `git -C /path/to/repo commit` from a session root that is itself
+	// a different git repo.
+	reviewsDir := resolveReviewsDir(cmd)
+
+	cmdDir := parseCPath(cmd)
+	var root string
+	if cmdDir != "" {
+		root = repoRootAt(cmdDir)
+		if root == "" {
+			root = cmdDir // last resort
+		}
+	}
+	if root == "" {
+		root = repoRoot()
+	}
+
+	// Diff size + hash via git. The hash binds a review pass to the exact
+	// staged diff: the gate authorizes only when the marker's diffSHA256 still
+	// matches. Writer (review-pass) and gate must invoke git identically.
+	diff, diffErr := stagedDiff(root)
+	diffHash := ""
+	if diffErr == nil {
+		state.DiffBytes = len(diff)
+		diffHash = sha256Hex(diff)
+	}
+	// Carried into the authorized trailer as diff:<8hex> provenance.
+	state.DiffSHA256 = diffHash
+
+	// Pass-marker check: fresh JSON marker whose diffSHA256 matches the current
+	// staged diff authorizes the commit. Stale/mismatched/legacy markers do not
+	// — the gate blocks and names the reason.
+	data, err := os.ReadFile(filepath.Join(reviewsDir, "last-pass-ts"))
+	if err == nil {
+		switch commitgate.ClassifyMarker(string(data), diffHash, time.Now().Unix(), 300) {
+		case commitgate.MarkerPass:
+			verdict = bindFindingsToState(state, root, string(data), diffHash)
+		case commitgate.MarkerMismatch:
+			state.MarkerDiffMismatch = true
+		case commitgate.MarkerLegacy:
+			state.MarkerLegacy = true
+		}
+	}
+
+	// bindFindingsToState may have flagged a findings mismatch (evidence
+	// swapped after the pass) instead of authorizing — in that case
+	// HasRecentPass stays false and the gate blocks below.
+
+	// Load error findings from latest review (only if no recent pass).
+	// Filter by the changed-line set so pre-existing-code findings cannot
+	// block a commit that doesn't touch those lines. The unfiltered
+	// findings remain on disk (.pakka/reviews/<id>.jsonl) for debugging.
+	if !state.HasRecentPass {
+		state.ErrorFindings = loadLatestErrors(cfg.ConfidenceThreshold, scopeFromStagedDiff(root), reviewsDir)
+	}
+
+	return state, verdict
+}
+
+// maybeWriteReviewVerdict appends the "review-verdict" audit entry when the
+// commit is authorized and its pass is bound to verified findings (verdict
+// non-nil). No-op otherwise. Extracted from runCommitGate so tests can drive
+// the exact production write path (audit → recall Index → FTS5).
+func maybeWriteReviewVerdict(sessionID string, d *commitgate.Decision, verdict *commitgate.ReviewVerdict) {
+	if !d.Allow || !d.IsCommit || verdict == nil {
+		return
+	}
+	content, err := json.Marshal(verdict)
+	if err != nil {
+		return
+	}
+	_ = audit.WriteNote(sessionID, "review-verdict", string(content))
+}
+
+// bindFindingsToState handles a diff-matching MarkerPass. When the marker binds
+// a findings file, it re-resolves and re-hashes that file: a hash mismatch or a
+// missing file means the evidence was swapped after approval → flag
+// MarkerFindingsMismatch (gate blocks) and do NOT authorize. On a clean match
+// (or a marker with no findings binding) it authorizes the pass and sets the
+// trailer-provenance fields on state. Returns the review-verdict audit payload
+// when findings are bound (nil otherwise) — the caller couriers it to the audit
+// writer; no gate-decision code reads it, so it stays off State.
+func bindFindingsToState(state *commitgate.State, root, markerContent, diffHash string) *commitgate.ReviewVerdict {
+	m, ok := commitgate.ParseMarker(markerContent)
+	if !ok || m.FindingsSHA256 == "" {
+		// No findings binding — a plain diff-bound pass authorizes as before.
+		state.HasRecentPass = true
+		return nil
+	}
+
+	fpath := m.FindingsPath
+	if !filepath.IsAbs(fpath) {
+		fpath = filepath.Join(root, fpath)
+	}
+	fdata, err := os.ReadFile(fpath)
+	if err != nil || sha256Hex(fdata) != m.FindingsSHA256 {
+		state.MarkerFindingsMismatch = true
+		return nil
+	}
+
+	state.HasRecentPass = true
+	state.BoundFindingsSHA256 = m.FindingsSHA256
+	state.BoundCounts = m.FindingsCounts
+
+	counts := commitgate.FindingsCounts{}
+	if m.FindingsCounts != nil {
+		counts = *m.FindingsCounts
+	}
+	return &commitgate.ReviewVerdict{
+		DiffSHA256:     diffHash,
+		FindingsSHA256: m.FindingsSHA256,
+		Counts:         counts,
+		Rationales:     extractRationales(fdata),
+	}
+}
+
+// scopeFromStagedDiff returns the (file, line) set of additions/modifications
+// in the staged diff, used to scope review findings to changed lines only.
+// Returns an empty (non-nil) Scope on git failure or empty diff — the
+// resulting filter drops everything, which is the safe default for the gate
+// (no scope → no findings can fire → no false-positive block).
+func scopeFromStagedDiff(root string) commitgate.Scope {
+	args := []string{}
+	if root != "" {
+		args = append(args, "-C", root)
+	}
+	args = append(args, "diff", "--cached", "--unified=0")
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return commitgate.Scope{}
+	}
+	return commitgate.ChangedLines(string(out))
+}
+
+// loadLatestErrors reads the most recent findings file from .pakka/reviews/.
+// Naming convention:
+//   - verdict-*.jsonl — written by commit-gate, contains pass/fail verdicts
+//   - *.jsonl (without verdict- prefix) — written by /pakka:review, contains findings
+//
+// This function only reads findings files (skips verdict-* files). It applies
+// two filters: (1) severity=error AND confidence >= threshold, (2) (file, line)
+// must be in scope (staged-diff change set). Findings outside scope come from
+// pre-existing code that the current commit does not touch and must not block
+// it. The on-disk file is left intact so the audit trail keeps the unfiltered
+// findings for debugging.
+func loadLatestErrors(threshold int, scope commitgate.Scope, reviewsDir string) []commitgate.Finding {
+	entries, err := os.ReadDir(reviewsDir)
+	if err != nil {
+		return nil
+	}
+
+	var latest string
+	var latestTime time.Time
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		// Skip verdict files — they contain pass/fail verdicts, not findings.
+		if strings.HasPrefix(e.Name(), "verdict-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latestTime) {
+			latestTime = info.ModTime()
+			latest = e.Name()
+		}
+	}
+	if latest == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(filepath.Join(reviewsDir, latest))
+	if err != nil {
+		return nil
+	}
+
+	var findings []commitgate.Finding
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var f commitgate.Finding
+		if json.Unmarshal([]byte(line), &f) != nil {
+			continue
+		}
+		if f.Severity == "error" && f.Confidence >= threshold {
+			findings = append(findings, f)
+		}
+	}
+	// Scope filter: drop findings on lines the staged diff does not touch.
+	return commitgate.Filter(findings, scope)
+}
+
+// writeVerdict writes a verdict file to .pakka/reviews/.
+// Naming convention: verdict-<timestamp>.jsonl — distinguishes from findings files
+// written by /pakka:review (which use <sha-or-ts>.jsonl without a prefix).
+func writeVerdict(sessionID string, d *commitgate.Decision, reviewsDir string) {
+	dir := reviewsDir
+	_ = os.MkdirAll(dir, 0755)
+
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	verdict := "passed"
+	if !d.Allow {
+		verdict = "failed"
+	}
+
+	entry := map[string]interface{}{
+		"ts":      time.Now().UTC().Format(time.RFC3339),
+		"session": sessionID,
+		"verdict": verdict,
+	}
+
+	data, _ := json.Marshal(entry)
+	_ = os.WriteFile(filepath.Join(dir, "verdict-"+ts+".jsonl"), append(data, '\n'), 0644)
+}

@@ -7,24 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/amargautam/pakka/internal/cli"
 	"github.com/amargautam/pakka/internal/recall"
 )
 
-// IndexCmd implements the "index" subcommand.
-type IndexCmd struct{}
-
-func (c *IndexCmd) Name() string { return "index" }
-func (c *IndexCmd) Run(args []string) error {
-	return runRecallIndex()
-}
-
-// QueryCmd implements the "query" subcommand.
-type QueryCmd struct{}
-
-func (c *QueryCmd) Name() string { return "query" }
-func (c *QueryCmd) Run(args []string) error {
-	return runRecallQuery(args)
-}
+// recall_cmd.go is the ONLY file that imports internal/recall (and therefore the
+// only sqlite link in any pakka binary). It lives in cmd/pakka-core — not in
+// internal/cli — so the lean cmd/pakka-hot binary can import cli without pulling
+// modernc.org/sqlite in transitively. main() wires these handlers into the
+// shared dispatcher via cli.IndexFunc / cli.QueryFunc.
 
 // --- index (Pass 6) ---
 
@@ -34,7 +25,7 @@ func (c *QueryCmd) Run(args []string) error {
 // Skips gracefully if pakka.recall.enabled = false.
 // Exits 0 on success (or skip); exits 1 on error.
 func runRecallIndex() error {
-	if !isRecallEnabled() {
+	if !cli.RecallEnabled() {
 		return nil
 	}
 
@@ -65,7 +56,7 @@ func runRecallIndex() error {
 // Skips gracefully if pakka.recall.enabled = false.
 // Exits 0 always (no results is not an error).
 func runRecallQuery(args []string) error {
-	if !isRecallEnabled() {
+	if !cli.RecallEnabled() {
 		return nil
 	}
 
@@ -98,16 +89,6 @@ func runRecallQuery(args []string) error {
 }
 
 // --- helpers ---
-
-// isRecallEnabled checks pakka.recall.enabled in settings.json.
-// Defaults to true when key is absent.
-func isRecallEnabled() bool {
-	s := loadSettings()
-	if s.Pakka.Recall.Enabled == nil {
-		return true
-	}
-	return *s.Pakka.Recall.Enabled
-}
 
 // defaultAuditDir returns ~/.pakka/audit.
 func defaultAuditDir() (string, error) {
