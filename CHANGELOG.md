@@ -2,6 +2,20 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.17.0] — 2026-07-24
+
+Closes the v0.12.0 latency disclosure: every hook budget now passes, with the cause measured and named.
+
+### Added
+- **perf**: `pakka-hot` slim hook binary — guard, commit-gate, and status-line run without the fat binary's startup floor (measured: ~4ms modernc.org/sqlite init via recall + ~1.8ms net/http init via the semantic client). Floor p50 9.7ms → 3.8ms; guard p95 4.3–5.0ms (<10ms PASS); commit-gate passthrough p95 4.2ms (<5ms PASS, was 9.2–11.4ms). `bin/run` routes hot subcommands to `pakka-hot` when present, falls back to `pakka-core`. Report: `benchmarks/latency-v0.17.0.md` (ddfc775)
+- **statusline**: per-project-dir cwd/repo resolution cached by dir mtime — unchanged dirs cost zero file opens and zero git execs per render; closes #36 (ddfc775)
+
+### Changed
+- **internal**: command code moved `cmd/pakka-core` → `internal/cli`; hot commands → `internal/hotcli`; level parsing → `internal/compress/level`; compress-state stale decoding single-sourced in `internal/compress/cstate`. No behavior change; release ships five `pakka-hot-*` binaries alongside `pakka-core-*`, all covered by SHA256SUMS + attestation (ddfc775)
+
+### Triage (2026-07-24)
+- #33 closed — fixed by v0.15.0 trailer splice. #17 remains deferred (plugin split; no longer the latency tracker). #36 closed by this release. #14 deferred pending review-verdict corpus.
+
 ## [v0.16.0] — 2026-07-23
 
 Completes the gate-integrity arc: v0.15.0 proved what diff was reviewed; v0.16.0 proves what the review found.
