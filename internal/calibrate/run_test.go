@@ -553,3 +553,74 @@ func TestMaterializeSeed(t *testing.T) {
 		t.Errorf("staged diff missing the seed file:\n%s", diff)
 	}
 }
+
+// Regression: materializeSeed must apply a seed patch given a RELATIVE seedDir
+// from a working directory that is NOT the seed's location. git apply runs with
+// cmd.Dir = temp repo, so a relative patch path used to be resolved against the
+// temp dir and failed with exit 128. Mirrors production (calibrate --repo-root=.
+// → seedDir "benchmarks/seeds/<seed>").
+func TestMaterializeSeed_relativePathFromDifferentCWD(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := t.TempDir()
+	seedsRel := filepath.Join("benchmarks", "seeds")
+	writeSeed(t, filepath.Join(root, seedsRel), "s1",
+		makeSeedPatch(t, "pkg/x.go", "package pkg\n\nfunc X() {}\n"),
+		`{"kind":"correctness","file":"pkg/x.go","line_approx":3}`)
+
+	t.Chdir(root) // CWD is the repo root; seedDir is passed relative to it.
+
+	repo, cleanup, err := materializeSeed(filepath.Join(seedsRel, "s1"))
+	if err != nil {
+		t.Fatalf("materializeSeed with relative path failed: %v", err)
+	}
+	defer cleanup()
+	diff, err := runGit(repo, "diff", "--cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "pkg/x.go") {
+		t.Errorf("staged diff missing the seed file:\n%s", diff)
+	}
+}
+
+// Regression (full call path): Run with RepoRoot="." from a different CWD must
+// score seeds, not fail every one with git apply exit 128. This is the exact
+// production invocation (make calibrate → calibrate --repo-root=.).
+func TestRun_relativeRepoRootFromCWD(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := buildFixtureRoot(t)
+	t.Chdir(root)
+
+	fake := &fakeRunner{fn: func(ctx context.Context, workdir, sys, user string) (string, string, error) {
+		if stagedDiffContains(workdir, "svc/handler.go") {
+			return `{"kind":"correctness","file":"svc/handler.go","line":5,"severity":"error","confidence":90,"rationale":"x"}` + "\n", "m", nil
+		}
+		return "No issues found.\n", "m", nil
+	}}
+	opts := Options{
+		RepoRoot:   ".", // production shape
+		AgentFiles: []string{"agents/reviewer.md"},
+		Date:       "2026-07-27",
+		runner:     fake,
+		Stdout:     &strings.Builder{},
+		Stderr:     &strings.Builder{},
+	}
+	if err := Run(opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	art := loadArtifact(t, root, "2026-07-27")
+	if art.Aggregate.Counts.Error != 0 {
+		t.Fatalf("expected 0 errored seeds, got %d (git-apply-relative regression): seeds=%+v",
+			art.Aggregate.Counts.Error, art.Seeds)
+	}
+	if art.Aggregate.Counts.Scored != 2 {
+		t.Errorf("scored=%d, want 2", art.Aggregate.Counts.Scored)
+	}
+	if art.Aggregate.Recall != 1.0 {
+		t.Errorf("recall=%v, want 1.0", art.Aggregate.Recall)
+	}
+}

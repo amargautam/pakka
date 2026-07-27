@@ -35,7 +35,17 @@ func materializeSeed(seedDir string) (repo string, cleanup func(), err error) {
 		}
 	}
 
+	// Absolutize the patch path BEFORE the cwd switch: git apply runs with
+	// cmd.Dir = the temp repo, so a relative seed path (the production case —
+	// calibrate is invoked with --repo-root=. so seedDir is
+	// benchmarks/seeds/<seed>) would otherwise be resolved against the temp dir
+	// and fail with "can't find/open" (exit 128).
 	patch := filepath.Join(seedDir, "seed.patch")
+	patch, err = filepath.Abs(patch)
+	if err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("resolve patch path: %w", err)
+	}
 	// Apply into the working tree, then stage everything. The seed patches add
 	// new files from /dev/null, so a plain apply + add -A stages the change.
 	if out, e := runGit(repo, "apply", "--whitespace=nowarn", patch); e != nil {
