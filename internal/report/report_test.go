@@ -453,3 +453,148 @@ func TestFormatMarkdownInputSavingsVariesWithCacheMix(t *testing.T) {
 		t.Errorf("input-side savings gap $%.2f too small — blending not applied", gap)
 	}
 }
+
+// AC3: RECEIPTS gains a review-gate calibration section. With an artifact
+// present the section reports the artifact's rates; absent → "unmeasured".
+func TestFormatMarkdown_calibrationSection(t *testing.T) {
+	// Present: measured rates render.
+	withArtifact := &Stats{
+		CalibrationFound:     true,
+		CalibrationRecall:    0.8,
+		CalibrationPrecision: 0.75,
+		CalibrationFPRate:    0.33,
+		CalibrationN:         10,
+		CalibrationModel:     "claude-sonnet-4-6",
+		CalibrationDate:      "2026-07-27",
+	}
+	md := FormatMarkdown(withArtifact, "0.1.0-dev")
+	if !strings.Contains(md, "review gate calibration") {
+		t.Fatalf("missing calibration section:\n%s", md)
+	}
+	for _, want := range []string{"80%", "75%", "claude-sonnet-4-6", "2026-07-27"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("calibration section missing %q", want)
+		}
+	}
+	if strings.Contains(md, "unmeasured") {
+		t.Errorf("measured artifact must not render 'unmeasured'")
+	}
+
+	// Absent: the literal "unmeasured" string is asserted per AC3.
+	none := &Stats{CalibrationFound: false}
+	md2 := FormatMarkdown(none, "0.1.0-dev")
+	if !strings.Contains(md2, "review gate calibration") {
+		t.Fatalf("missing calibration section (absent case):\n%s", md2)
+	}
+	if !strings.Contains(md2, "unmeasured") {
+		t.Errorf("no-artifact case must contain 'unmeasured'")
+	}
+}
+
+// Finding 2: a degraded calibration run renders a warning banner and marks the
+// rate cells, instead of presenting bare numbers as reviewer performance.
+func TestFormatMarkdown_calibrationDegraded(t *testing.T) {
+	degraded := &Stats{
+		CalibrationFound:     true,
+		CalibrationRecall:    0.0,
+		CalibrationPrecision: 0.0,
+		CalibrationFPRate:    0.0,
+		CalibrationN:         10,
+		CalibrationModel:     "claude-sonnet-4-6",
+		CalibrationDate:      "2026-07-27",
+		CalibrationDegraded:  true,
+		CalibrationScored:    10,
+	}
+	md := FormatMarkdown(degraded, "0.1.0-dev")
+	if !strings.Contains(md, "DEGRADED RUN") {
+		t.Errorf("degraded run must render a DEGRADED banner:\n%s", md)
+	}
+	if !strings.Contains(md, "⚠️ degraded") {
+		t.Errorf("degraded run must mark the rate cells with an inline caveat")
+	}
+
+	// A healthy run carries neither the banner nor the inline mark.
+	healthy := *degraded
+	healthy.CalibrationDegraded = false
+	md2 := FormatMarkdown(&healthy, "0.1.0-dev")
+	if strings.Contains(md2, "DEGRADED RUN") || strings.Contains(md2, "⚠️ degraded") {
+		t.Errorf("healthy run must not render degraded annotations:\n%s", md2)
+	}
+}
+
+// Finding 1: the run-health counts (scored/timeout/error) surface in RECEIPTS.
+func TestFormatMarkdown_calibrationCounts(t *testing.T) {
+	s := &Stats{
+		CalibrationFound:   true,
+		CalibrationN:       8,
+		CalibrationScored:  8,
+		CalibrationTimeout: 1,
+		CalibrationErrors:  2,
+		CalibrationDate:    "2026-07-27",
+	}
+	md := FormatMarkdown(s, "0.1.0-dev")
+	if !strings.Contains(md, "seeds scored / timeout / error") || !strings.Contains(md, "8 / 1 / 2") {
+		t.Errorf("counts row missing or wrong:\n%s", md)
+	}
+}
+
+// AC3: Gather reads the newest calibration-*.json under repoRoot and populates
+// the Calibration* fields, choosing the lexically-latest (newest date) file.
+func TestGather_readsNewestCalibration(t *testing.T) {
+	root := t.TempDir()
+	meterDir := filepath.Join(root, ".meter")
+	auditDir := filepath.Join(root, ".audit")
+	os.MkdirAll(meterDir, 0755)
+	os.MkdirAll(auditDir, 0755)
+
+	resultsDir := filepath.Join(root, "benchmarks", "results")
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	older := `{"date":"2026-07-01","threshold":80,"aggregate":{"recall":0.5,"precision":0.5,"fpRate":0.1,"n":10,"model":"old-model"}}`
+	newer := `{"date":"2026-07-27","threshold":80,"aggregate":{"recall":0.9,"precision":0.8,"fpRate":0.2,"n":10,"model":"new-model","degraded":true,"counts":{"scored":10,"timeout":2,"error":1}}}`
+	if err := os.WriteFile(filepath.Join(resultsDir, "calibration-2026-07-01.json"), []byte(older), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resultsDir, "calibration-2026-07-27.json"), []byte(newer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Gather(meterDir, auditDir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stats.CalibrationFound {
+		t.Fatal("CalibrationFound=false, want true")
+	}
+	if stats.CalibrationModel != "new-model" {
+		t.Errorf("model=%q, want new-model (newest artifact)", stats.CalibrationModel)
+	}
+	if stats.CalibrationRecall != 0.9 {
+		t.Errorf("recall=%v, want 0.9", stats.CalibrationRecall)
+	}
+	if !stats.CalibrationDegraded {
+		t.Errorf("CalibrationDegraded=false, want true (artifact carries degraded)")
+	}
+	if stats.CalibrationScored != 10 || stats.CalibrationTimeout != 2 || stats.CalibrationErrors != 1 {
+		t.Errorf("counts scored/timeout/error = %d/%d/%d, want 10/2/1",
+			stats.CalibrationScored, stats.CalibrationTimeout, stats.CalibrationErrors)
+	}
+}
+
+// No artifact under repoRoot → CalibrationFound stays false.
+func TestGather_noCalibrationArtifact(t *testing.T) {
+	root := t.TempDir()
+	meterDir := filepath.Join(root, ".meter")
+	auditDir := filepath.Join(root, ".audit")
+	os.MkdirAll(meterDir, 0755)
+	os.MkdirAll(auditDir, 0755)
+
+	stats, err := Gather(meterDir, auditDir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CalibrationFound {
+		t.Errorf("CalibrationFound=true with no artifact")
+	}
+}

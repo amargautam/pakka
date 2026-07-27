@@ -93,6 +93,8 @@ func Dispatch(argv []string) int {
 		_ = (&BackfillOutputTokensCmd{}).Run(rest)
 	case "bench":
 		_ = (&BenchCmd{}).Run(rest)
+	case "calibrate":
+		_ = (&CalibrateCmd{}).Run(rest)
 	default:
 		return unknown(argv[1])
 	}

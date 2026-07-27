@@ -7,7 +7,7 @@ PKG    := ./cmd/pakka-core
 HOTBIN := bin/pakka-hot
 HOTPKG := ./cmd/pakka-hot
 
-.PHONY: help build cross release test test-js bench bench-latency self-report clean
+.PHONY: help build cross release test test-js bench bench-latency calibrate self-report clean
 
 # Compression levels measured by `make bench`. Override: make bench BENCH_LEVELS=ultra
 BENCH_LEVELS ?= lite strict ultra super-ultra
@@ -23,6 +23,7 @@ help:
 	@echo "  test-js       Run JS hook tests (node --test)."
 	@echo "  bench         Run A/B benchmark via claude -p OAuth.      (issue #13)"
 	@echo "  bench-latency Measure hook hot-path latency (p50/p95).    (v0.12.0)"
+	@echo "  calibrate     Measure reviewer precision/recall via claude -p OAuth."
 	@echo "  self-report   Emit RECEIPTS.md from pakka's own audit.    (Pass 5)"
 	@echo "  clean         Remove built binaries."
 
@@ -141,6 +142,18 @@ bench-latency:
 	if [ $$ec -eq 2 ]; then echo "bench-latency: harness broken — see above"; exit 1; fi; \
 	if [ $$ec -eq 1 ]; then echo "bench-latency: report written; a budget is over (documented in report)"; fi; \
 	exit 0
+
+# calibrate — reviewer precision/recall against the seeded-bug corpus
+# (spec: docs/specs/2026-07-27-reviewer-calibration.md).
+#
+# Runs each of the 16 seeds (benchmarks/seeds) through the four reviewer agents
+# (agents/*.md) headless via `claude -p` with the inherited OAuth session — NO
+# API key is used, read, or required. Scores findings against expected.json and
+# writes benchmarks/results/calibration-<date>.json (per-seed verdicts + recall/
+# precision/fp-rate + model + agent-file SHAs). claude CLI absent → named skip,
+# exit 0, nothing written. Explicit invocation only — never per-commit.
+calibrate: build
+	./bin/pakka-core calibrate --repo-root=.
 
 self-report:
 	@./bin/pakka-core-$$(uname -s | tr 'A-Z' 'a-z')-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') report \

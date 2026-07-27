@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/amargautam/pakka/internal/benchratio"
+	"github.com/amargautam/pakka/internal/calibrate"
 	"github.com/amargautam/pakka/internal/data"
 	"github.com/amargautam/pakka/internal/meter"
 	"github.com/amargautam/pakka/internal/pricing"
@@ -52,6 +54,25 @@ type Stats struct {
 	OutputRatioMeasured bool
 	OutputReduction     float64 // measured reduction fraction, [0,1)
 	OutputRatioSamples  int
+
+	// Reviewer-gate calibration, resolved from the newest
+	// benchmarks/results/calibration-*.json under repoRoot. When
+	// CalibrationFound is false the review-gate calibration section reports
+	// "unmeasured".
+	CalibrationFound     bool
+	CalibrationRecall    float64
+	CalibrationPrecision float64
+	CalibrationFPRate    float64
+	CalibrationN         int
+	CalibrationModel     string
+	CalibrationDate      string
+	// Degraded is true when a majority of scored seeds parsed no findings — the
+	// rates are then annotated as untrustworthy rather than shown bare.
+	CalibrationDegraded bool
+	// Run health counts disclosed alongside the rates.
+	CalibrationScored  int
+	CalibrationTimeout int
+	CalibrationErrors  int
 }
 
 // meterEntry mirrors one line in a meter JSONL file.
@@ -130,12 +151,100 @@ func Gather(meterDir, auditDir, repoRoot string) (*Stats, error) {
 		}
 	}
 
+	// Reviewer-gate calibration from the newest artifact under repoRoot's
+	// benchmarks/results. Absence leaves the section "unmeasured".
+	gatherCalibration(s, repoRoot)
+
 	// If both dirs are unreadable, report an error.
 	if meterErr != nil && auditErr != nil {
 		return nil, fmt.Errorf("meter: %v; audit: %v", meterErr, auditErr)
 	}
 
 	return s, nil
+}
+
+// gatherCalibration loads the newest calibration-<date>.json and populates the
+// Calibration* fields. Best-effort: no artifact / unreadable / malformed →
+// leaves CalibrationFound false so the report shows "unmeasured".
+//
+// The artifact lives under the pakka repo's benchmarks/results, but the report
+// is invoked with --repo-root pointing at the workspace parent (make
+// self-report passes "..") whose meter/transcript keys differ. So we probe
+// several candidate roots — the passed root, the CWD (where make runs), and the
+// git toplevel — and take the newest artifact found across them.
+func gatherCalibration(s *Stats, repoRoot string) {
+	seen := map[string]bool{}
+	var candidates []string
+	add := func(root string) {
+		if root == "" {
+			return
+		}
+		dir := filepath.Join(root, "benchmarks", "results")
+		if !seen[dir] {
+			seen[dir] = true
+			candidates = append(candidates, dir)
+		}
+	}
+	add(repoRoot)
+	if wd, err := os.Getwd(); err == nil {
+		add(wd)
+	}
+	add(gitToplevel(repoRoot))
+
+	newestName, newestDir := "", ""
+	for _, dir := range candidates {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			n := e.Name()
+			if e.IsDir() || !strings.HasPrefix(n, "calibration-") || !strings.HasSuffix(n, ".json") {
+				continue
+			}
+			// Filenames embed an ISO date (calibration-YYYY-MM-DD.json), so a
+			// lexical compare picks the newest regardless of which dir it's in.
+			if n > newestName {
+				newestName, newestDir = n, dir
+			}
+		}
+	}
+	if newestName == "" {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(newestDir, newestName))
+	if err != nil {
+		return
+	}
+	var art calibrate.Artifact
+	if json.Unmarshal(data, &art) != nil {
+		return
+	}
+	s.CalibrationFound = true
+	s.CalibrationRecall = art.Aggregate.Recall
+	s.CalibrationPrecision = art.Aggregate.Precision
+	s.CalibrationFPRate = art.Aggregate.FPRate
+	s.CalibrationN = art.Aggregate.N
+	s.CalibrationModel = art.Aggregate.Model
+	s.CalibrationDate = art.Date
+	s.CalibrationDegraded = art.Aggregate.Degraded
+	s.CalibrationScored = art.Aggregate.Counts.Scored
+	s.CalibrationTimeout = art.Aggregate.Counts.Timeout
+	s.CalibrationErrors = art.Aggregate.Counts.Error
+}
+
+// gitToplevel returns the git working-tree root containing root (or the CWD
+// when root is empty/"."), or "" when not in a repo.
+func gitToplevel(root string) string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	if root != "" && root != "." {
+		cmd.Dir = root
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // repoMatches reports whether a meter entry's repo tag belongs to canonRepo
@@ -373,10 +482,56 @@ func FormatMarkdown(s *Stats, version string) string {
 		b.WriteString("| pass rate | — |\n")
 	}
 
+	// Review gate calibration section — measured reviewer precision/recall
+	// against the seeded-bug corpus (spec 2026-07-27-reviewer-calibration).
+	b.WriteString("\n## review gate calibration\n\n")
+	if s.CalibrationFound {
+		b.WriteString("Measured reviewer recall/precision against the seeded-bug corpus " +
+			"(benchmarks/seeds), scored by `pakka-core calibrate`. Rates carry n and model — no averaging across models.\n\n")
+		if s.CalibrationDegraded {
+			// A majority of scored seeds parsed no findings: the rates reflect a
+			// systemic parse/format failure, not reviewer quality. Say so
+			// loudly instead of presenting bare numbers as performance.
+			b.WriteString("> ⚠️ **DEGRADED RUN — rates are not trustworthy.** A majority of scored seeds returned a " +
+				"non-empty reviewer response but zero parseable findings, the signature of a format/parse failure. " +
+				"Treat the numbers below as a broken-harness signal, not reviewer performance. Re-run `make calibrate` " +
+				"after fixing the finding format.\n\n")
+		}
+		b.WriteString("| metric | value |\n")
+		b.WriteString("|---|---|\n")
+		b.WriteString(fmt.Sprintf("| recall | %.0f%%%s |\n", s.CalibrationRecall*100, degradedMark(s.CalibrationDegraded)))
+		b.WriteString(fmt.Sprintf("| precision | %.0f%%%s |\n", s.CalibrationPrecision*100, degradedMark(s.CalibrationDegraded)))
+		b.WriteString(fmt.Sprintf("| false-positive rate | %.2f findings/clean-run |\n", s.CalibrationFPRate))
+		b.WriteString(fmt.Sprintf("| n (bug seeds) | %d |\n", s.CalibrationN))
+		b.WriteString(fmt.Sprintf("| seeds scored / timeout / error | %d / %d / %d |\n",
+			s.CalibrationScored, s.CalibrationTimeout, s.CalibrationErrors))
+		model := s.CalibrationModel
+		if model == "" {
+			model = "unknown"
+		}
+		b.WriteString(fmt.Sprintf("| model | %s |\n", model))
+		if s.CalibrationDate != "" {
+			b.WriteString(fmt.Sprintf("| date | %s |\n", s.CalibrationDate))
+		}
+	} else {
+		b.WriteString("Reviewer precision/recall is **unmeasured** — run `make calibrate` " +
+			"(requires the claude CLI / OAuth session) to score the four reviewer agents against the seeded-bug corpus.\n")
+	}
+
 	b.WriteString("\n---\n\n")
 	b.WriteString("Generated by `pakka-core report`. Apache-2.0.\n")
 
 	return b.String()
+}
+
+// degradedMark returns a " ⚠️ degraded" suffix when the calibration run was
+// flagged degraded, so the annotation rides alongside each rate cell (not only
+// the banner) and a copy-pasted number can't shed its caveat.
+func degradedMark(degraded bool) string {
+	if degraded {
+		return " ⚠️ degraded"
+	}
+	return ""
 }
 
 // fmtInt formats an integer with comma separators.
