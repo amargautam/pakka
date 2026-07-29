@@ -1,1 +1,1 @@
-{"kind":"correctness","severity":"error","file":"util/slice.go","line_approx":4,"bug_class":"off-by-one","description":"Off-by-one: returns n+1 items instead of n"}
+{"kind":"correctness","severity":"error","file":"util/slice.go","line_approx":12,"bug_class":"off-by-one","description":"Off-by-one: returns n+1 items instead of n"}
