@@ -5,10 +5,12 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -374,7 +376,81 @@ func gatherVerdicts(s *Stats) {
 	}
 }
 
+// ResolveVersion resolves the plugin version for the RECEIPTS header from a
+// .claude-plugin/plugin.json manifest, prefixed with "v" (e.g. "v0.19.0").
+//
+// Candidate roots are probed in order: the passed repoRoot, the CWD, and the
+// CWD's git toplevel. The fallbacks matter because the production invocation
+// (`make self-report`) passes --repo-root=.. — the workspace parent, which
+// carries no manifest — while the invoking repo (the CWD) does.
+//
+// Purpose: Resolve the version at generation time instead of a hardcoded
+// constant that goes stale between releases.
+// Errors: None — missing/unparseable manifests or invalid version strings
+// fall back to "unknown", never a stale literal.
+func ResolveVersion(repoRoot string) string {
+	seen := map[string]bool{}
+	var candidates []string
+	add := func(root string) {
+		if root == "" || seen[root] {
+			return
+		}
+		seen[root] = true
+		candidates = append(candidates, root)
+	}
+	add(repoRoot)
+	if wd, err := os.Getwd(); err == nil {
+		add(wd)
+		add(gitToplevel(wd))
+	}
+	for _, root := range candidates {
+		if v := manifestVersion(filepath.Join(root, ".claude-plugin", "plugin.json")); v != "" {
+			return "v" + v
+		}
+	}
+	return "unknown"
+}
+
+// manifestVersionMax caps how much of a plugin manifest is read; anything
+// larger is rejected outright.
+const manifestVersionMax = 64 << 10 // 64 KiB
+
+// versionPattern is the shape a manifest version must match to be rendered in
+// the RECEIPTS header: alphanumeric start, then version-ish characters only.
+// Anything else (newlines, backticks, markdown pipes, ...) could smuggle
+// content into the generated markdown and is rejected.
+var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+
+// manifestVersion reads a plugin.json and returns its validated "version"
+// field, or "" when the file is missing, oversized, unparseable, or the
+// version fails validation (empty, >64 chars, or not matching versionPattern).
+func manifestVersion(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, manifestVersionMax+1))
+	if err != nil || len(raw) > manifestVersionMax {
+		return ""
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(raw, &manifest) != nil {
+		return ""
+	}
+	v := manifest.Version
+	if v == "" || len(v) > 64 || !versionPattern.MatchString(v) {
+		return ""
+	}
+	return v
+}
+
 // FormatMarkdown renders Stats as a RECEIPTS.md markdown string.
+//
+// version is the already-resolved display string (e.g. "v0.19.0" or
+// "unknown" from ResolveVersion) and is rendered verbatim.
 //
 // Purpose: Produce human-readable markdown summarizing build statistics.
 // Errors: None (pure formatting).
@@ -382,7 +458,7 @@ func FormatMarkdown(s *Stats, version string) string {
 	var b strings.Builder
 
 	b.WriteString("# RECEIPTS.md — pakka built with pakka\n\n")
-	b.WriteString(fmt.Sprintf("version: v%s\n", version))
+	b.WriteString(fmt.Sprintf("version: %s\n", version))
 	b.WriteString(fmt.Sprintf("generated: %s\n\n", time.Now().UTC().Format(time.RFC3339)))
 
 	// Build stats table.
@@ -486,8 +562,16 @@ func FormatMarkdown(s *Stats, version string) string {
 	// against the seeded-bug corpus (spec 2026-07-27-reviewer-calibration).
 	b.WriteString("\n## review gate calibration\n\n")
 	if s.CalibrationFound {
-		b.WriteString("Measured reviewer recall/precision against the seeded-bug corpus " +
-			"(benchmarks/seeds), scored by `pakka-core calibrate`. Rates carry n and model — no averaging across models.\n\n")
+		// The methodology sentence must not overclaim: when the artifact
+		// carries no model, saying "rates carry ... model" would contradict the
+		// table row below.
+		if s.CalibrationModel != "" {
+			b.WriteString("Measured reviewer recall/precision against the seeded-bug corpus " +
+				"(benchmarks/seeds), scored by `pakka-core calibrate`. Rates carry n and model — no averaging across models.\n\n")
+		} else {
+			b.WriteString("Measured reviewer recall/precision against the seeded-bug corpus " +
+				"(benchmarks/seeds), scored by `pakka-core calibrate`. Rates carry n; model is recorded when the headless runner reports it — no averaging across models.\n\n")
+		}
 		if s.CalibrationDegraded {
 			// A majority of scored seeds parsed no findings: the rates reflect a
 			// systemic parse/format failure, not reviewer quality. Say so
@@ -507,7 +591,7 @@ func FormatMarkdown(s *Stats, version string) string {
 			s.CalibrationScored, s.CalibrationTimeout, s.CalibrationErrors))
 		model := s.CalibrationModel
 		if model == "" {
-			model = "unknown"
+			model = "not recorded"
 		}
 		b.WriteString(fmt.Sprintf("| model | %s |\n", model))
 		if s.CalibrationDate != "" {

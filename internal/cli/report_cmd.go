@@ -61,5 +61,7 @@ func runReport() {
 		os.Exit(1)
 	}
 
-	fmt.Print(report.FormatMarkdown(stats, version))
+	// Version comes from the repo's plugin manifest at generation time, never
+	// the CLI's compiled-in constant (which goes stale between releases).
+	fmt.Print(report.FormatMarkdown(stats, report.ResolveVersion(repoRoot)))
 }

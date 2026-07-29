@@ -305,7 +305,7 @@ func TestFormatMarkdown(t *testing.T) {
 	stats.FirstSession, _ = parseTime("2026-04-20T10:00:00Z")
 	stats.LastSession, _ = parseTime("2026-04-24T18:00:00Z")
 
-	output := FormatMarkdown(stats, "0.1.0-dev")
+	output := FormatMarkdown(stats, "v0.1.0-dev")
 
 	// Check required sections.
 	checks := []string{
@@ -519,6 +519,213 @@ func TestFormatMarkdown_calibrationDegraded(t *testing.T) {
 	md2 := FormatMarkdown(&healthy, "0.1.0-dev")
 	if strings.Contains(md2, "DEGRADED RUN") || strings.Contains(md2, "⚠️ degraded") {
 		t.Errorf("healthy run must not render degraded annotations:\n%s", md2)
+	}
+}
+
+// Version header resolves from the plugin manifest at generation time and
+// must VARY with plugin.json content — never a stale literal. Missing or
+// malformed manifest → "unknown".
+func TestResolveVersion_variesWithManifest(t *testing.T) {
+	writeManifest := func(t *testing.T, content string) string {
+		t.Helper()
+		root := t.TempDir()
+		dir := filepath.Join(root, ".claude-plugin")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+
+	// Isolate from the real repo: the cwd/git-toplevel fallback must not pick
+	// up pakka's own manifest.
+	t.Chdir(t.TempDir())
+
+	rootA := writeManifest(t, `{"name":"pakka","version":"0.19.0"}`)
+	rootB := writeManifest(t, `{"name":"pakka","version":"1.2.3"}`)
+
+	gotA := ResolveVersion(rootA)
+	gotB := ResolveVersion(rootB)
+	if gotA != "v0.19.0" {
+		t.Errorf("ResolveVersion(rootA) = %q, want v0.19.0", gotA)
+	}
+	if gotB != "v1.2.3" {
+		t.Errorf("ResolveVersion(rootB) = %q, want v1.2.3", gotB)
+	}
+	if gotA == gotB {
+		t.Errorf("version must vary with manifest content; both = %q", gotA)
+	}
+
+	// Missing manifest → unknown.
+	if got := ResolveVersion(t.TempDir()); got != "unknown" {
+		t.Errorf("missing manifest: ResolveVersion = %q, want unknown", got)
+	}
+	// Malformed JSON → unknown.
+	if got := ResolveVersion(writeManifest(t, `{not json`)); got != "unknown" {
+		t.Errorf("malformed manifest: ResolveVersion = %q, want unknown", got)
+	}
+	// Empty version field → unknown.
+	if got := ResolveVersion(writeManifest(t, `{"name":"pakka"}`)); got != "unknown" {
+		t.Errorf("empty version field: ResolveVersion = %q, want unknown", got)
+	}
+
+	// The rendered header carries the resolved string verbatim.
+	s := &Stats{}
+	if md := FormatMarkdown(s, gotA); !strings.Contains(md, "version: v0.19.0") {
+		t.Errorf("header must render resolved manifest version:\n%s", md)
+	}
+	if md := FormatMarkdown(s, gotB); !strings.Contains(md, "version: v1.2.3") {
+		t.Errorf("header must render resolved manifest version:\n%s", md)
+	}
+	if md := FormatMarkdown(s, "unknown"); !strings.Contains(md, "version: unknown") {
+		t.Errorf("header must render unknown when manifest unresolvable:\n%s", md)
+	}
+}
+
+// Production shape: `make self-report` invokes the report with --repo-root=..
+// (the workspace parent, which has NO .claude-plugin/) while the CWD is the
+// pakka repo itself. ResolveVersion must fall back to the invoking repo's
+// manifest (from CWD) instead of rendering "unknown" on every real run, and
+// the result must VARY with that manifest's content.
+func TestResolveVersion_fallsBackToCwdManifest(t *testing.T) {
+	parent := t.TempDir() // repoRoot passed in — no manifest here
+	child := filepath.Join(parent, "repo")
+	dir := filepath.Join(child, ".claude-plugin")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(dir, "plugin.json")
+	if err := os.WriteFile(manifest, []byte(`{"name":"pakka","version":"7.7.7"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(child)
+
+	if got := ResolveVersion(parent); got != "v7.7.7" {
+		t.Errorf("repoRoot without manifest, cwd with manifest: ResolveVersion = %q, want v7.7.7", got)
+	}
+
+	// Behavioral: result varies with the cwd manifest's content.
+	if err := os.WriteFile(manifest, []byte(`{"name":"pakka","version":"8.8.8"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveVersion(parent); got != "v8.8.8" {
+		t.Errorf("after manifest change: ResolveVersion = %q, want v8.8.8", got)
+	}
+
+	// repoRoot manifest still wins over the cwd fallback when present.
+	rootDir := filepath.Join(parent, ".claude-plugin")
+	if err := os.MkdirAll(rootDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "plugin.json"), []byte(`{"version":"9.9.9"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveVersion(parent); got != "v9.9.9" {
+		t.Errorf("repoRoot manifest present: ResolveVersion = %q, want v9.9.9 (repoRoot wins)", got)
+	}
+}
+
+// Hardening: a malformed or hostile manifest must not smuggle newlines,
+// markdown, or unbounded content into the RECEIPTS header — invalid version
+// strings and oversized manifests resolve to "unknown".
+func TestResolveVersion_rejectsHostileManifest(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		root := t.TempDir()
+		dir := filepath.Join(root, ".claude-plugin")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+
+	cases := map[string]string{
+		"newline":       `{"version":"0.1.0\nversion: v9.9.9"}`,
+		"backticks":     "{\"version\":\"0.1.0`rm -rf`\"}",
+		"markdown pipe": `{"version":"0.1.0 | pwned"}`,
+		"leading dash":  `{"version":"-0.1.0"}`,
+		"too long":      `{"version":"` + strings.Repeat("1", 65) + `"}`,
+	}
+	for name, content := range cases {
+		if got := ResolveVersion(write(t, content)); got != "unknown" {
+			t.Errorf("%s: ResolveVersion = %q, want unknown", name, got)
+		}
+	}
+
+	// Oversized manifest (>64KiB) is rejected without reading it all.
+	big := `{"padding":"` + strings.Repeat("x", 70*1024) + `","version":"1.0.0"}`
+	if got := ResolveVersion(write(t, big)); got != "unknown" {
+		t.Errorf("oversized manifest: ResolveVersion = %q, want unknown", got)
+	}
+
+	// Sanity: a well-formed version at the 64-char limit still resolves.
+	ok := `{"version":"` + strings.Repeat("1", 64) + `"}`
+	if got := ResolveVersion(write(t, ok)); got != "v"+strings.Repeat("1", 64) {
+		t.Errorf("64-char version: ResolveVersion = %q, want it accepted", got)
+	}
+}
+
+// The calibration methodology sentence and model row must agree: with a model
+// present the sentence claims rates carry model; without one the row reads
+// "not recorded" and the sentence does not claim a model. The two cases must
+// render DIFFERENT output.
+func TestFormatMarkdown_calibrationModelSentenceVaries(t *testing.T) {
+	base := Stats{
+		CalibrationFound:     true,
+		CalibrationRecall:    0.8,
+		CalibrationPrecision: 0.75,
+		CalibrationFPRate:    0.33,
+		CalibrationN:         10,
+		CalibrationDate:      "2026-07-27",
+	}
+
+	withModel := base
+	withModel.CalibrationModel = "claude-sonnet-4-6"
+	mdWith := FormatMarkdown(&withModel, "v0.1.0")
+
+	withoutModel := base // CalibrationModel empty
+	mdWithout := FormatMarkdown(&withoutModel, "v0.1.0")
+
+	const sentenceWith = "Rates carry n and model — no averaging across models."
+	const sentenceWithout = "Rates carry n; model is recorded when the headless runner reports it — no averaging across models."
+
+	// With model: original sentence + real model row.
+	if !strings.Contains(mdWith, sentenceWith) {
+		t.Errorf("with-model case missing sentence %q:\n%s", sentenceWith, mdWith)
+	}
+	if strings.Contains(mdWith, sentenceWithout) {
+		t.Errorf("with-model case must not render the no-model sentence")
+	}
+	if !strings.Contains(mdWith, "| model | claude-sonnet-4-6 |") {
+		t.Errorf("with-model case missing model row:\n%s", mdWith)
+	}
+	if strings.Contains(mdWith, "not recorded") {
+		t.Errorf("with-model case must not render 'not recorded'")
+	}
+
+	// Without model: honest sentence + "not recorded" row, no overclaim.
+	if !strings.Contains(mdWithout, sentenceWithout) {
+		t.Errorf("no-model case missing sentence %q:\n%s", sentenceWithout, mdWithout)
+	}
+	if strings.Contains(mdWithout, sentenceWith) {
+		t.Errorf("no-model case must not claim rates carry model")
+	}
+	if !strings.Contains(mdWithout, "| model | not recorded |") {
+		t.Errorf("no-model case missing 'not recorded' model row:\n%s", mdWithout)
+	}
+	if strings.Contains(mdWithout, "| model | unknown |") {
+		t.Errorf("no-model case must not render 'unknown' model row")
+	}
+
+	if mdWith == mdWithout {
+		t.Errorf("calibration section must vary with model presence")
 	}
 }
 
