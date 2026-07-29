@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/auth/login.py
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,27 @@
 +import sqlite3
 +import hashlib
 +from dataclasses import dataclass

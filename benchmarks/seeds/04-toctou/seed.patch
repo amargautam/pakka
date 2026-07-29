@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/fileutil.py
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,26 @@
 +import os
 +import json
 +import logging

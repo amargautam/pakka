@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/format/sanitize.ts
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,31 @@
 +const ALLOWED_CHARS = /^[a-zA-Z0-9\s.,!?@#\-_]+$/;
 +
 +interface SanitizeResult {
