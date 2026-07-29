@@ -1,0 +1,1001 @@
+{
+  "date": "2026-07-29",
+  "commit": "7ef161004c4cce75b36359187975c77387550e5d",
+  "threshold": 80,
+  "agents": [
+    {
+      "file": "agents/reviewer.md",
+      "sha256": "e12bcb55581267d2b109579efc5950aaf67aecd833dbeca50a07297028c092d2"
+    },
+    {
+      "file": "agents/security.md",
+      "sha256": "fa3a55441dc11f309fe19ef53b063bbafe6eea4f7cce4fad3f4af239906120c5"
+    },
+    {
+      "file": "agents/performance.md",
+      "sha256": "b5ff3e66166c469cd31426abe1966230850c5f6ae392dbfea1c81479a4baff3c"
+    },
+    {
+      "file": "agents/architect.md",
+      "sha256": "9de9049bc158decafb215b9c1000bd3aa763e587d05a83d67f969d34017ee360"
+    }
+  ],
+  "seeds": [
+    {
+      "seed": "01-n-plus-1",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "correctness",
+        "severity": "error",
+        "file": "handlers/users.go",
+        "line_approx": 29,
+        "bug_class": "n-plus-1-query",
+        "description": "SQL query inside loop creates N+1 query pattern"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "handlers/users.go",
+          "line": 32,
+          "confidence": 98,
+          "rationale": "Function is missing its closing brace — gofmt reports `expected '}', found 'EOF'` at 32:35, so the package does not compile."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 27,
+          "confidence": 90,
+          "rationale": "rows.Scan error is ignored, so a scan failure (type mismatch, NULL into non-pointer) silently yields a zero-value User in the response."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 29,
+          "confidence": 88,
+          "rationale": "QueryRow(...).Scan error is swallowed — a user with no roles row returns sql.ErrNoRows and silently gets an empty Role, and real query errors are also lost."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 31,
+          "confidence": 85,
+          "rationale": "rows.Err() is never checked after the loop, so an iteration error (e.g. dropped connection) truncates the result set and still returns 200 with partial data."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 19,
+          "confidence": 85,
+          "rationale": "http.Error(w, err.Error(), 500) leaks raw database error text (driver details, query fragments) to the client."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 32,
+          "confidence": 75,
+          "rationale": "When the table is empty, `users` is a nil slice and encodes as JSON `null` instead of `[]`, breaking clients expecting an array; the Encode error is also ignored."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 16,
+          "confidence": 80,
+          "rationale": "New handler with branching logic and DB access has no accompanying test change."
+        },
+        {
+          "kind": "security",
+          "severity": "warn",
+          "file": "handlers/users.go",
+          "line": 19,
+          "confidence": 80,
+          "rationale": "Raw database error text from err.Error() is returned to the HTTP client, disclosing internal details (driver, schema, DSN fragments) useful for reconnaissance."
+        },
+        {
+          "kind": "performance",
+          "severity": "error",
+          "file": "handlers/users.go",
+          "line": 29,
+          "confidence": 98,
+          "rationale": "N+1 query pattern — one `SELECT role` per user inside the rows loop, so at 10K users the handler issues 10K extra round-trips per request instead of one."
+        },
+        {
+          "kind": "architecture",
+          "severity": "error",
+          "file": "handlers/users.go",
+          "line": 4,
+          "confidence": 88,
+          "rationale": "HTTP handler imports database/sql and executes raw SQL directly, coupling the handler layer to storage and making it untestable without a real DB."
+        },
+        {
+          "kind": "architecture",
+          "severity": "error",
+          "file": "handlers/users.go",
+          "line": 19,
+          "confidence": 85,
+          "rationale": "http.Error writes the raw database error string to the client, leaking internal implementation details (driver, schema, query text) through the public API."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "02-null-deref",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "correctness",
+        "severity": "error",
+        "file": "db/user.go",
+        "line_approx": 19,
+        "bug_class": "null-deref",
+        "description": "Removed error check on sql.Row.Scan; nil row causes zero-value dereference"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "db/user.go",
+          "line": 19,
+          "confidence": 95,
+          "rationale": "row.Scan error is discarded, so sql.ErrNoRows and any query/scan failure (connection error, type mismatch) are silently swallowed and misreported as \"user not found\"."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "db/user.go",
+          "line": 21,
+          "confidence": 85,
+          "rationale": "Using u.ID == 0 as a not-found sentinel conflates a legitimate row with id 0 (or any failed scan) with absence, and cannot distinguish infrastructure errors from missing users."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "db/user.go",
+          "line": 16,
+          "confidence": 80,
+          "rationale": "New data-access logic is added with no accompanying test, leaving the not-found and error paths unverified."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "db/user.go",
+          "line": 19,
+          "confidence": 95,
+          "rationale": "row.Scan error is discarded, so sql.ErrNoRows and real DB/scan failures are silently swallowed and all surface as a misleading zero-value struct."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "db/user.go",
+          "line": 21,
+          "confidence": 85,
+          "rationale": "Using u.ID == 0 as a not-found proxy conflates connection errors, scan mismatches, and missing rows into one 'user not found' result, hiding operational failures from callers."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "03-off-by-one",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "correctness",
+        "severity": "error",
+        "file": "util/slice.go",
+        "line_approx": 12,
+        "bug_class": "off-by-one",
+        "description": "Off-by-one: returns n+1 items instead of n"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "util/slice.go",
+          "line": 12,
+          "confidence": 98,
+          "rationale": "Off-by-one: `items[len(items)-n-1:]` returns n+1 elements instead of n (e.g. LastN([]int{1,2,3,4}, 2) returns [2,3,4])."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "util/slice.go",
+          "line": 22,
+          "confidence": 98,
+          "rationale": "FirstN is truncated — missing final return and closing brace, file fails to parse (gofmt: `expected '}', found 'EOF'`), so the package will not compile."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "util/slice.go",
+          "line": 10,
+          "confidence": 80,
+          "rationale": "LastN (and FirstN) return the original slice when n \u003e= len(items), aliasing the caller's backing array while the truncating path also aliases it; callers mutating the result mutate the input — risky invariant if a copy is expected."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "util/slice.go",
+          "line": 5,
+          "confidence": 85,
+          "rationale": "New generic slice helpers with a known bug (comment admits it) land with no accompanying tests to catch the off-by-one."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "util/slice.go",
+          "line": 12,
+          "confidence": 98,
+          "rationale": "LastN slices from len(items)-n-1, returning n+1 elements instead of n (off-by-one acknowledged in the comment on line 4)."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "04-toctou",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "security",
+        "severity": "warn",
+        "file": "fileutil.py",
+        "line_approx": 15,
+        "bug_class": "toctou",
+        "description": "Time-of-check-to-time-of-use race between isfile() and open()"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "fileutil.py",
+          "line": 19,
+          "confidence": 90,
+          "rationale": "TOCTOU race: file deleted/replaced between os.path.isfile() and open() raises unhandled FileNotFoundError, violating the documented contract of returning {} for missing files."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "fileutil.py",
+          "line": 20,
+          "confidence": 80,
+          "rationale": "json.load raises json.JSONDecodeError on malformed config content, which propagates uncaught with no context about the file."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "fileutil.py",
+          "line": 8,
+          "confidence": 70,
+          "rationale": "New load_config logic (missing-file fallback, type validation) lands with no accompanying tests in the diff."
+        },
+        {
+          "kind": "security",
+          "severity": "warn",
+          "file": "fileutil.py",
+          "line": 15,
+          "confidence": 75,
+          "rationale": "TOCTOU race between os.path.isfile() check and open() — the file can be deleted (unhandled FileNotFoundError) or swapped for a symlink to an attacker-chosen file between check and use if the path is in a shared/writable directory."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "05-sql-injection",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "security",
+        "severity": "error",
+        "file": "auth/login.py",
+        "line_approx": 20,
+        "bug_class": "sql-injection",
+        "description": "SQL injection via f-string interpolation of user input"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "auth/login.py",
+          "line": 20,
+          "confidence": 98,
+          "rationale": "SQL injection: user-supplied username (and pw_hash) interpolated into query via f-string, allowing auth bypass with input like ' OR '1'='1' --."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "auth/login.py",
+          "line": 17,
+          "confidence": 92,
+          "rationale": "Passwords hashed with unsalted single-round SHA-256, which is trivially crackable via rainbow tables and GPU brute force."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "auth/login.py",
+          "line": 15,
+          "confidence": 80,
+          "rationale": "New authentication logic added with no accompanying tests for success, failure, or malicious-input paths."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "auth/login.py",
+          "line": 20,
+          "confidence": 98,
+          "rationale": "User-supplied username is interpolated into the SQL query via f-string, allowing SQL injection (e.g. username `' OR '1'='1' --`) to bypass authentication entirely."
+        },
+        {
+          "kind": "security",
+          "severity": "warn",
+          "file": "auth/login.py",
+          "line": 17,
+          "confidence": 90,
+          "rationale": "Passwords are hashed with unsalted single-round SHA-256, which is fast and rainbow-table-attackable, so a database leak exposes user passwords."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "auth/login.py",
+          "line": 20,
+          "confidence": 98,
+          "rationale": "User-supplied username and hash are interpolated into the SQL string via f-string, allowing SQL injection (e.g. username `' OR '1'='1' --` bypasses authentication)."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "auth/login.py",
+          "line": 17,
+          "confidence": 92,
+          "rationale": "Passwords are hashed with a single unsalted SHA-256, which is fast and rainbow-table attackable — unsuitable for password storage."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "06-shell-injection",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "security",
+        "severity": "error",
+        "file": "lint/runner.ts",
+        "line_approx": 16,
+        "bug_class": "shell-injection",
+        "description": "Shell injection via unescaped filename in exec()"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "lint/runner.ts",
+          "line": 16,
+          "confidence": 98,
+          "rationale": "Filename is interpolated directly into a shell command, so a filename containing shell metacharacters (e.g. `foo.js; rm -rf ~`) executes arbitrary commands."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "lint/runner.ts",
+          "line": 16,
+          "confidence": 92,
+          "rationale": "eslint exits with code 1 when lint errors exist, which makes execAsync reject, so lintFile throws instead of ever returning passed:false for files with errors."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "lint/runner.ts",
+          "line": 18,
+          "confidence": 75,
+          "rationale": "JSON.parse(stdout) throws an unhandled SyntaxError if eslint emits non-JSON output (e.g. config error banner or empty stdout)."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "lint/runner.ts",
+          "line": 16,
+          "confidence": 95,
+          "rationale": "Unsanitized filename is interpolated into a shell command via exec, so a filename like `foo.js; rm -rf ~` executes arbitrary commands."
+        },
+        {
+          "kind": "performance",
+          "severity": "warn",
+          "file": "lint/runner.ts",
+          "line": 16,
+          "confidence": 75,
+          "rationale": "Per-file subprocess spawn: lintFile launches a fresh eslint process for each file, so linting N files pays N eslint startup/config-load costs (~0.5–1s each — at 500 files that is hundreds of redundant spawns), where eslint accepts many files in one invocation."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "lint/runner.ts",
+          "line": 16,
+          "confidence": 98,
+          "rationale": "Shell injection: filename is interpolated directly into a shell command string passed to exec, so a filename like `foo.js; rm -rf /` executes arbitrary commands."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "lint/runner.ts",
+          "line": 16,
+          "confidence": 88,
+          "rationale": "eslint exits with code 1 when lint errors are found, which makes execAsync reject, so the function throws instead of ever returning passed:false with an error count."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "lint/runner.ts",
+          "line": 18,
+          "confidence": 80,
+          "rationale": "JSON.parse(stdout) and parsed[0] assume well-formed, non-empty eslint JSON output; empty or partial stdout (e.g. eslint crash) throws an unhandled SyntaxError or TypeError."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "07-secret-literal",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "security",
+        "severity": "error",
+        "file": "config/api.ts",
+        "line_approx": 2,
+        "bug_class": "secret-literal",
+        "description": "API key hardcoded in source code"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "config/api.ts",
+          "line": 2,
+          "confidence": 95,
+          "rationale": "Live-format payments API key hardcoded in source and committed to git, leaking the secret to anyone with repo access."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "config/api.ts",
+          "line": 30,
+          "confidence": 95,
+          "rationale": "File is truncated mid-expression — the fetch call, createCharge body, and URLSearchParams are never closed and the function never checks resp.ok, parses JSON, or returns a ChargeResponse, so the module fails to compile."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "config/api.ts",
+          "line": 2,
+          "confidence": 92,
+          "rationale": "Payments API key hardcoded in source and committed to git, exposing the credential to anyone with repo access and to version history even after removal."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "config/api.ts",
+          "line": 2,
+          "confidence": 98,
+          "rationale": "Payments API key is hardcoded in source and committed to git, exposing the credential to anyone with repo access and to history forever."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "config/api.ts",
+          "line": 30,
+          "confidence": 95,
+          "rationale": "File is truncated mid-expression — createCharge never closes the fetch call or function, has no return statement, and the module will not compile."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "config/api.ts",
+          "line": 19,
+          "confidence": 85,
+          "rationale": "fetch does not reject on HTTP error statuses, so a declined charge or 4xx/5xx from Stripe would be silently treated as success once the function is completed."
+        },
+        {
+          "kind": "architecture",
+          "severity": "warn",
+          "file": "config/api.ts",
+          "line": 18,
+          "confidence": 82,
+          "rationale": "A module under config/ takes on payment-client responsibility (HTTP calls, request/response types), mixing configuration with domain logic in one file."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "08-ignored-err",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "correctness",
+        "severity": "error",
+        "file": "config/writer.go",
+        "line_approx": 20,
+        "bug_class": "ignored-error",
+        "description": "Error return from os.Create and Write discarded"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "config/writer.go",
+          "line": 20,
+          "confidence": 95,
+          "rationale": "os.Create and both f.Write errors are discarded, so config write failures (permissions, disk full, bad path) are completely silent and callers proceed with a missing/truncated config file."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "config/writer.go",
+          "line": 21,
+          "confidence": 85,
+          "rationale": "defer f.Close() ignores the close error, which is where OS write-back failures surface for file writers, and if os.Create failed f is nil so Close/Write silently return ErrInvalid."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "config/writer.go",
+          "line": 15,
+          "confidence": 80,
+          "rationale": "New WriteConfig/DefaultConfig logic is added with no accompanying test file covering serialization output or write behavior."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "config/writer.go",
+          "line": 20,
+          "confidence": 95,
+          "rationale": "os.Create error is discarded, so on failure f is nil and the deferred f.Close()/f.Write calls panic (nil pointer dereference), and config writes fail silently otherwise."
+        },
+        {
+          "kind": "security",
+          "severity": "warn",
+          "file": "config/writer.go",
+          "line": 28,
+          "confidence": 72,
+          "rationale": "Default Host \"0.0.0.0\" binds the service to all network interfaces, exposing it beyond localhost in unhardened deployments."
+        },
+        {
+          "kind": "architecture",
+          "severity": "error",
+          "file": "config/writer.go",
+          "line": 15,
+          "confidence": 85,
+          "rationale": "Public API WriteConfig has no error return, so creation/write failures are structurally invisible to callers and adding an error later breaks every call site."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "09-race",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "correctness",
+        "severity": "error",
+        "file": "metrics/counter.go",
+        "line_approx": 18,
+        "bug_class": "race-condition",
+        "description": "Shared counter modified without mutex or atomic"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "metrics/counter.go",
+          "line": 3,
+          "confidence": 95,
+          "rationale": "fmt is imported but never used, which is a compile error in Go (\"imported and not used: fmt\")."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "metrics/counter.go",
+          "line": 18,
+          "confidence": 95,
+          "rationale": "Package-level requestCount is read and written from Metrics methods without synchronization, causing a data race when called from multiple goroutines (also lines 23, 27, 31)."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "metrics/counter.go",
+          "line": 13,
+          "confidence": 80,
+          "rationale": "Metrics instances share one package-level counter, so NewMetrics(\"a\") and NewMetrics(\"b\") report and reset each other's counts, breaking the per-instance API contract implied by the Name field."
+        },
+        {
+          "kind": "security",
+          "severity": "warn",
+          "file": "metrics/counter.go",
+          "line": 18,
+          "confidence": 85,
+          "rationale": "Unsynchronized read-modify-write of package-level requestCount from multiple goroutines is a data race (CWE-362), producing lost updates and undefined behavior under the Go memory model; also RecordRequest/RecordBatch/Count/Reset in this new file all mutate shared unguarded state."
+        },
+        {
+          "kind": "performance",
+          "severity": "warn",
+          "file": "metrics/counter.go",
+          "line": 23,
+          "confidence": 82,
+          "rationale": "RecordBatch performs n individual increments in a loop where a single constant-time `requestCount += n` suffices, so a call with n=1M does 1M operations instead of one."
+        },
+        {
+          "kind": "architecture",
+          "severity": "error",
+          "file": "metrics/counter.go",
+          "line": 7,
+          "confidence": 92,
+          "rationale": "Metrics presents an instance-based API but all methods read and mutate a single package-level requestCount, so separate Metrics instances silently share state and Count/Reset on one instance affects all others, hiding the global behind a misleading abstraction."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "10-permission-escalation",
+      "kind": "seeded-bug",
+      "expected": {
+        "kind": "security",
+        "severity": "error",
+        "file": "setup/dirs.py",
+        "line_approx": 19,
+        "bug_class": "permission-escalation",
+        "description": "chmod 777 on data directory allows arbitrary access"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "setup/dirs.py",
+          "line": 19,
+          "confidence": 95,
+          "rationale": "os.chmod(d, 0o777) makes data, log, and cache directories world-writable, letting any local user tamper with or replace application data and cache files (the code comment itself flags this)."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "setup/dirs.py",
+          "line": 29,
+          "confidence": 75,
+          "rationale": "cleanup_cache has no error handling: a file deleted concurrently between scandir and stat/remove raises FileNotFoundError (likely in a world-writable dir), aborting the whole cleanup loop."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "setup/dirs.py",
+          "line": 29,
+          "confidence": 75,
+          "rationale": "cleanup_cache has no error handling: a file deleted concurrently between scandir and stat/remove raises FileNotFoundError (likely in a world-writable dir), aborting the whole cleanup loop."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "setup/dirs.py",
+          "line": 13,
+          "confidence": 70,
+          "rationale": "New directory-setup and cache-cleanup logic lands with no accompanying tests in the diff."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "setup/dirs.py",
+          "line": 19,
+          "confidence": 95,
+          "rationale": "os.chmod(d, 0o777) makes data, log, and cache directories world-writable, allowing any local user to tamper with application data, plant malicious files, or delete/replace logs."
+        },
+        {
+          "kind": "security",
+          "severity": "error",
+          "file": "setup/dirs.py",
+          "line": 19,
+          "confidence": 98,
+          "rationale": "os.chmod(d, 0o777) makes data, log, and cache directories world-writable, letting any local user tamper with or plant files in application data and logs."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "setup/dirs.py",
+          "line": 29,
+          "confidence": 72,
+          "rationale": "os.remove races with concurrent deletion or cleanup runs; a file removed between scandir and remove raises FileNotFoundError and aborts the rest of the cleanup loop."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "clean-01",
+      "kind": "clean",
+      "expected": {
+        "kind": "none",
+        "description": "Clean code, no bugs expected"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "store/user.go",
+          "line": 37,
+          "confidence": 80,
+          "rationale": "RowsAffected error is discarded with `_`, so a driver error yields n=0 and gets misreported as ErrNotFound instead of the real failure."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "store/user.go",
+          "line": 37,
+          "confidence": 72,
+          "rationale": "On MySQL (default CLIENT_FOUND_ROWS off), updating an existing user's email to its current value reports 0 rows affected, so this returns a false ErrNotFound for an existing user."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "store/user.go",
+          "line": 17,
+          "confidence": 75,
+          "rationale": "New query/update logic (GetUser, UpdateEmail) is added with no accompanying tests for the ErrNotFound and error-wrapping paths."
+        }
+      ],
+      "recalled": false,
+      "falsePositive": true,
+      "scored": true
+    },
+    {
+      "seed": "clean-02",
+      "kind": "clean",
+      "expected": {
+        "kind": "none",
+        "description": "Clean code, no bugs expected"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "format/sanitize.ts",
+          "line": 15,
+          "confidence": 78,
+          "rationale": "The tag-stripping regex `/\u003c[^\u003e]*\u003e/g` deletes any text between `\u003c` and `\u003e`, so legitimate content like \"if a \u003c b and c \u003e d\" loses \" b and c \" entirely rather than just the angle brackets."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "format/sanitize.ts",
+          "line": 13,
+          "confidence": 80,
+          "rationale": "New exported sanitizeInput logic (tag stripping, allow-list filtering, whitespace collapsing, wasModified flag) ships with no accompanying tests in the diff."
+        },
+        {
+          "kind": "performance",
+          "severity": "warn",
+          "file": "format/sanitize.ts",
+          "line": 20,
+          "confidence": 75,
+          "rationale": "Per-character allocation and regex test — split(\"\") materializes one string object per character and runs ALLOWED_CHARS.test once per char, so a 10K-char input allocates 10K single-char strings plus an array and executes 10K regex evaluations per call where a single-pass replace would do one."
+        }
+      ],
+      "recalled": false,
+      "falsePositive": true,
+      "scored": true
+    },
+    {
+      "seed": "clean-03",
+      "kind": "clean",
+      "expected": {
+        "kind": "none",
+        "description": "Clean code, no bugs expected"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "db/products.py",
+          "line": 14,
+          "confidence": 72,
+          "rationale": "New query logic (category filter, limit, id lookup) lands with no tests anywhere in the repo, so row-unpacking order and None-handling are unverified."
+        }
+      ],
+      "recalled": false,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "perf-01-n-plus-1",
+      "kind": "performance",
+      "expected": {
+        "kind": "performance",
+        "severity": "error",
+        "file": "handlers/orders.go",
+        "line_approx": 29,
+        "bug_class": "n-plus-1-query",
+        "description": "SQL query inside loop issues one SELECT per order — at 10K orders this is 10K+1 queries instead of one JOIN"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "handlers/orders.go",
+          "line": 28,
+          "confidence": 92,
+          "rationale": "rows.Scan error is discarded, so a scan failure yields a zero-value Order appended silently to the result set."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "handlers/orders.go",
+          "line": 30,
+          "confidence": 88,
+          "rationale": "QueryRow(...).Scan error (including sql.ErrNoRows) is discarded, so shipping lookup failures silently leave Shipping empty instead of surfacing an error."
+        },
+        {
+          "kind": "correctness",
+          "severity": "error",
+          "file": "handlers/orders.go",
+          "line": 32,
+          "confidence": 85,
+          "rationale": "Missing rows.Err() check after the loop, so a mid-iteration failure silently truncates the order list and returns 200 with partial data."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/orders.go",
+          "line": 33,
+          "confidence": 72,
+          "rationale": "When no rows match, orders is nil and encodes as JSON null rather than [], breaking clients expecting an array."
+        },
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "handlers/orders.go",
+          "line": 16,
+          "confidence": 80,
+          "rationale": "New handler with query, scan, and encode logic added with no accompanying test change."
+        },
+        {
+          "kind": "security",
+          "severity": "warn",
+          "file": "handlers/orders.go",
+          "line": 19,
+          "confidence": 75,
+          "rationale": "Raw database error text from err.Error() is written to the HTTP response, disclosing internal schema/driver details to clients."
+        },
+        {
+          "kind": "performance",
+          "severity": "error",
+          "file": "handlers/orders.go",
+          "line": 29,
+          "confidence": 97,
+          "rationale": "N+1 query pattern — a shipping lookup is issued per order inside the rows.Next loop, so at 10K orders this handler issues 10K+1 queries per request."
+        },
+        {
+          "kind": "architecture",
+          "severity": "error",
+          "file": "handlers/orders.go",
+          "line": 16,
+          "confidence": 92,
+          "rationale": "HTTP handler takes *sql.DB and embeds raw SQL directly, coupling the transport layer to the storage layer and making the handler untestable without a real database."
+        },
+        {
+          "kind": "architecture",
+          "severity": "warn",
+          "file": "handlers/orders.go",
+          "line": 19,
+          "confidence": 85,
+          "rationale": "Raw database error text (err.Error()) is written to the HTTP response, leaking storage-layer internals to external callers."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "perf-02-quadratic-scan",
+      "kind": "performance",
+      "expected": {
+        "kind": "performance",
+        "severity": "error",
+        "file": "report/dedupe.go",
+        "line_approx": 16,
+        "bug_class": "quadratic-on-unbounded-input",
+        "description": "Nested linear scan over accumulator makes dedupe O(n^2) on unbounded audit trail — at 10K events this is ~50M comparisons instead of a map lookup per event"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "report/dedupe.go",
+          "line": 11,
+          "confidence": 82,
+          "rationale": "New dedupe logic added with no accompanying test file — the report package has no _test.go, so ID-dedupe semantics (first-occurrence wins, order preserved, empty input) are unverified."
+        },
+        {
+          "kind": "performance",
+          "severity": "error",
+          "file": "report/dedupe.go",
+          "line": 16,
+          "confidence": 95,
+          "rationale": "Superlinear work on unbounded input: linear scan of `out` inside the loop over `events` makes DedupeEvents O(n²) — at the documented 10K+ events this performs ~50M comparisons."
+        },
+        {
+          "kind": "performance",
+          "severity": "error",
+          "file": "report/dedupe.go",
+          "line": 16,
+          "confidence": 95,
+          "rationale": "DedupeEvents linearly scans the accumulated output slice for every input event, making dedupe O(n^2) on an unbounded audit trail (10K+ events → ~100M comparisons)."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    },
+    {
+      "seed": "perf-03-alloc-in-loop",
+      "kind": "performance",
+      "expected": {
+        "kind": "performance",
+        "severity": "error",
+        "file": "ingest/scan.go",
+        "line_approx": 22,
+        "bug_class": "alloc-in-loop",
+        "description": "regexp.MustCompile inside the per-line loop recompiles the pattern on every iteration — at 1M log lines this is 1M compiles and allocations instead of one hoisted package-level regex"
+      },
+      "findings": [
+        {
+          "kind": "correctness",
+          "severity": "warn",
+          "file": "ingest/scan.go",
+          "line": 11,
+          "confidence": 82,
+          "rationale": "New exported function ScanLines adds matching logic with no accompanying test change in the diff."
+        },
+        {
+          "kind": "perf",
+          "severity": "error",
+          "file": "ingest/scan.go",
+          "line": 22,
+          "confidence": 98,
+          "rationale": "regexp.MustCompile runs inside the per-line loop, recompiling the same pattern for every one of millions of lines — compilation dominates runtime versus a one-time compile."
+        },
+        {
+          "kind": "performance",
+          "severity": "error",
+          "file": "ingest/scan.go",
+          "line": 22,
+          "confidence": 95,
+          "rationale": "regexp.MustCompile executed inside the per-line scan loop recompiles the same pattern on every line — at millions of lines per file this adds millions of regex compilations (each ~10-100µs plus allocations) to a path that should only pay match cost."
+        }
+      ],
+      "recalled": true,
+      "falsePositive": false,
+      "scored": true
+    }
+  ],
+  "aggregate": {
+    "recall": 1,
+    "precision": 0.7536231884057971,
+    "fpRate": 0.6666666666666666,
+    "n": 13,
+    "nClean": 3,
+    "counts": {
+      "scored": 16,
+      "timeout": 0,
+      "error": 0
+    }
+  }
+}
