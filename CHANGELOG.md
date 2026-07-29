@@ -2,6 +2,17 @@
 
 All notable changes to pakka. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.20.0] — 2026-07-29
+
+The gate's last unmeasured claim becomes a measured rate. First published calibration: recall 1.00, precision 0.75, FP rate 0.67 (n=13 seeded bugs + 3 clean fixtures, zero infrastructure errors).
+
+### Added
+- **calibrate**: `make calibrate` runs the four live reviewer agents headless (Claude Code OAuth only — no API-key path exists, test-enforced) over the 16-seed corpus and scores against ground truth; artifacts carry per-seed verdicts, agent-prompt SHAs, and run counts; RECEIPTS gains a "review gate calibration" section with recall/precision/FP rate/n/model, or "unmeasured" when no run exists. Infrastructure failures never pose as reviewer performance: timeout/error seeds are excluded from denominators and majority parse-failure marks the run degraded (1c5473f)
+
+### Fixed
+- **calibrate**: seed patch path resolved before the temp-repo cwd switch — first live run errored all 16 seeds (42ce29e)
+- **seeds**: four corpus patches had overdeclared @@ line counts ("corrupt patch", latent since v0.11) and ten expected.json line_approx values pointed at comment/header regions instead of the planted bug — both classes now guarded by corpus tests that apply every seed and validate every ground-truth location (5ffd877, 7ef1610)
+
 ## [v0.19.0] — 2026-07-24
 
 Enterprise + DX release: the gate becomes org-enforceable, and re-review follows content instead of a timer.
