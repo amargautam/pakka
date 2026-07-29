@@ -1,16 +1,16 @@
 # RECEIPTS.md — pakka built with pakka
 
-version: v0.5.0
-generated: 2026-07-24T19:09:23Z
+version: v0.20.0
+generated: 2026-07-29T16:14:06Z
 
 ## build stats
 
 | metric | value |
 |---|---|
-| sessions | 1305 |
+| sessions | 1486 |
 | first session | 2026-04-24 |
-| last session | 2026-07-24 |
-| total tokens used | 64,631,956 |
+| last session | 2026-07-29 |
+| total tokens used | 65,681,288 |
 | bytes saved (V2+V3+V4 compression) | 484,644 |
 | est. tokens saved (bytes ÷ 3.5) | 138,922 |
 
@@ -28,22 +28,22 @@ Output compression is the largest savings vector but cannot be measured from met
 At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million output tokens vs uncompressed baseline.
 
 **Estimated total output savings across this build:**
-- Output tokens measured across 1305 sessions: 1,247,918
+- Output tokens measured across 1486 sessions: 2,493,597
 - Output-ratio source: default calibration
-- At 66% output reduction (default calibration): ~823,456 tokens avoided
-- At $15/MTok: **~$12.35 saved on output tokens alone**
-- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3.00/MTok × 0.13 blended cache rate): ~$0.05
-- **Total estimated savings: ~$12.41**
+- At 66% output reduction (default calibration): ~1,645,434 tokens avoided
+- At $15/MTok: **~$24.68 saved on output tokens alone**
+- Input savings (V2+V3+V4, bytes_saved÷3.5 × $3.00/MTok × 0.13 blended cache rate): ~$0.06
+- **Total estimated savings: ~$24.74**
 
 ## tool usage
 
 | tool | calls |
 |---|---|
-| Bash | 18,861 |
-| Read | 7,869 |
-| Edit | 5,994 |
-| Write | 1,414 |
-| Agent | 1,076 |
+| Bash | 19,402 |
+| Read | 7,928 |
+| Edit | 6,090 |
+| Write | 1,430 |
+| Agent | 1,096 |
 | Grep | 600 |
 | WebFetch | 159 |
 | Glob | 126 |
@@ -54,9 +54,23 @@ At Sonnet 4.6 pricing ($15/MTok output): super-ultra saves ~$9.90 per million ou
 
 | metric | value |
 |---|---|
-| verdicts run | 153 |
-| verdicts passed | 119 |
-| pass rate | 77.8% |
+| verdicts run | 166 |
+| verdicts passed | 130 |
+| pass rate | 78.3% |
+
+## review gate calibration
+
+Measured reviewer recall/precision against the seeded-bug corpus (benchmarks/seeds), scored by `pakka-core calibrate`. Rates carry n; model is recorded when the headless runner reports it — no averaging across models.
+
+| metric | value |
+|---|---|
+| recall | 100% |
+| precision | 75% |
+| false-positive rate | 0.67 findings/clean-run |
+| n (bug seeds) | 13 |
+| seeds scored / timeout / error | 16 / 0 / 0 |
+| model | not recorded |
+| date | 2026-07-29 |
 
 ---
 

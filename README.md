@@ -60,19 +60,19 @@ Pakka injects discipline into every session. Commands infer what you need from c
 
 **skill-check:** `UserPromptSubmit` hook keyword-scans every message. if a build/plan/review signal matches, targeted alert fires before the model responds. no more relying on model memory.
 
-**Status line:** `pakka [super-ultra] · ~$72.47 saved · 21 bugs caught` — compression level, token savings, and bugs caught, always visible. Savings priced per model — Fable 5, Mythos 5, and Opus 4.x covered; dated model IDs resolve by prefix. Input-side savings are priced **cache-aware** — a blended fresh/cache-write/cache-read rate from session telemetry, not the flat fresh-input rate (which overstated cached environments ~10x); falls back to the flat rate when telemetry is absent.
+**Status line:** `pakka [super-ultra] · ~$24.74 saved (est) · 21 bugs caught` — compression level, token savings, and bugs caught, always visible. Savings priced per model — Fable 5, Mythos 5, and Opus 4.x covered; dated model IDs resolve by prefix. Input-side savings are priced **cache-aware** — a blended fresh/cache-write/cache-read rate from session telemetry, not the flat fresh-input rate (which overstated cached environments ~10x); falls back to the flat rate when telemetry is absent.
 
 **Kill-switch:** `PAKKA_DISABLED=1` turns off every pakka hook for the session. Used by `make bench` to isolate the raw arm; works anywhere.
 
 **Benchmarks:** `make bench` A/Bs pakka vs raw Claude Code via `claude -p` on your existing OAuth session. No API key.
 
-## Results (v0.8.0)
+## Results (v0.20.0)
 
 Three absolute numbers, each verifiable from artifacts in this repo.
 
-1. **Bug catch rate: 9/10.** Combined reviewer + security + architect agents caught 9 of 10 seeded bugs on the Pass 5b in-session corpus.
+1. **Reviewer calibration: recall 1.00, precision 0.75.** The four live review agents, run headless over the seeded-bug corpus (13 bug seeds + 3 clean fixtures, zero infrastructure errors), caught 13/13 planted bugs at 0.67 false positives per clean run. Reproduce: `make calibrate` (Claude Code OAuth only — no API-key path). Artifact: `benchmarks/results/calibration-2026-07-29.json`.
 
-2. **Bytes saved: 307,451 cumulative** since 2026-04-24. Estimated tokens: 88,073 (bytes ÷ 3.5). Total estimated savings: ~$72.47. Source: `RECEIPTS.md`, regenerated via `make self-report`.
+2. **Bytes saved: 484,644 cumulative** since 2026-04-24. Estimated tokens: 138,922 (sum of per-event bytes ÷ 3.5). Total estimated savings: ~$24.74. Source: `RECEIPTS.md`, regenerated via `make self-report`.
 
 3. **Gate enforcement: every Claude-authored commit path.** Architectural claim — gate runs and blocks on findings. Verify: `git log --format='%H' | while read sha; do git show -s --format='%(trailers:key=Reviewed-by-pakka,valueonly=true)' "$sha" | grep -q . && echo "$sha"; done | wc -l`.
 
